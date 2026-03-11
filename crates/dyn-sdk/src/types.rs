@@ -3,7 +3,7 @@
 //! These types define the contract between a dynamically loaded plugin (`.so`/`.dylib`)
 //! and the host backend. All types are serializable to JSON for crossing the FFI boundary.
 
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
 /// ABI version constant. The host checks this before loading a plugin.
@@ -111,6 +111,9 @@ pub enum DynResult {
     Err(String),
 }
 
+/// Canonical tool handler output before it is wrapped in [`DynResult`].
+pub type DynToolResult = Result<Value, String>;
+
 impl DynResult {
     /// Create a successful result from a serializable value.
     pub fn ok(value: impl Serialize) -> Self {
@@ -186,6 +189,39 @@ pub trait DynRuntime: Send + Sync {
     /// This function may block (e.g. for HTTP calls). The host calls it
     /// from a blocking-capable context.
     fn execute_tool(&self, name: &str, args_json: &str, ctx_json: &str) -> DynResult;
+}
+
+/// Parse a tool argument payload from JSON.
+pub fn parse_tool_args<T: DeserializeOwned>(args_json: &str) -> Result<T, String> {
+    serde_json::from_str(args_json).map_err(|e| format!("invalid args: {e}"))
+}
+
+/// Parse a tool context payload from JSON.
+pub fn parse_tool_ctx<T: DeserializeOwned>(ctx_json: &str) -> Result<T, String> {
+    serde_json::from_str(ctx_json).map_err(|e| format!("invalid ctx: {e}"))
+}
+
+/// Execute a typed tool handler after parsing JSON args and context.
+pub fn execute_typed_tool<R, Args, Ctx>(
+    runtime: &R,
+    args_json: &str,
+    ctx_json: &str,
+    handler: fn(&R, Args, Ctx) -> DynToolResult,
+) -> DynResult
+where
+    Args: DeserializeOwned,
+    Ctx: DeserializeOwned,
+{
+    let result = (|| {
+        let args = parse_tool_args(args_json)?;
+        let ctx = parse_tool_ctx(ctx_json)?;
+        handler(runtime, args, ctx)
+    })();
+
+    match result {
+        Ok(value) => DynResult::ok(value),
+        Err(err) => DynResult::err(err),
+    }
 }
 
 #[cfg(test)]

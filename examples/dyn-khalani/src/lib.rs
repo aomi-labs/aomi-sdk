@@ -1,5 +1,6 @@
 use aomi_dyn_sdk::*;
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::time::Duration;
 
@@ -468,44 +469,48 @@ pub struct SubmitKhalaniOrderArgs {
     pub signature: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct GetKhalaniOrderStatusArgs {
+    #[schemars(description = "Khalani order ID.")]
     pub order_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct GetKhalaniOrdersByAddressArgs {
+    #[schemars(description = "Wallet address to query.")]
     pub address: String,
+    #[schemars(description = "Optional status filter.")]
     pub status: Option<String>,
+    #[schemars(description = "Optional page size.")]
     pub limit: Option<u32>,
+    #[schemars(description = "Optional pagination offset.")]
     pub offset: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct GetKhalaniTokensArgs {
+    #[schemars(description = "Optional chain id filter.")]
     pub chain_id: Option<u64>,
+    #[schemars(description = "Optional page size.")]
     pub limit: Option<u32>,
+    #[schemars(description = "Optional pagination offset.")]
     pub offset: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct SearchKhalaniTokensArgs {
+    #[schemars(description = "Token symbol/name/address query.")]
     pub query: String,
+    #[schemars(description = "Optional chain id filter.")]
     pub chain_id: Option<u64>,
+    #[schemars(description = "Optional page size.")]
     pub limit: Option<u32>,
+    #[schemars(description = "Optional pagination offset.")]
     pub offset: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, JsonSchema)]
 pub struct GetKhalaniChainsArgs {}
-
-fn parse_args<T: DeserializeOwned>(args_json: &str) -> Result<T, String> {
-    serde_json::from_str(args_json).map_err(|e| format!("invalid args: {e}"))
-}
-
-fn parse_ctx(ctx_json: &str) -> Result<DynCtx, String> {
-    serde_json::from_str(ctx_json).map_err(|e| format!("invalid ctx: {e}"))
-}
 
 fn slippage_to_bps(slippage: Option<f64>) -> Option<u32> {
     slippage.map(|s| (s * 10_000.0).round()).and_then(|bps| {
@@ -823,53 +828,6 @@ fn submit_schema() -> Value {
     })
 }
 
-fn order_status_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "order_id": { "type": "string", "description": "Khalani order ID." }
-        },
-        "required": ["order_id"]
-    })
-}
-
-fn orders_by_address_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "address": { "type": "string", "description": "Wallet address to query." },
-            "status": { "type": "string", "description": "Optional status filter." },
-            "limit": { "type": "integer", "description": "Optional page size." },
-            "offset": { "type": "integer", "description": "Optional pagination offset." }
-        },
-        "required": ["address"]
-    })
-}
-
-fn tokens_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "chain_id": { "type": "integer", "description": "Optional chain id filter." },
-            "limit": { "type": "integer", "description": "Optional page size." },
-            "offset": { "type": "integer", "description": "Optional pagination offset." }
-        }
-    })
-}
-
-fn search_tokens_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "query": { "type": "string", "description": "Token symbol/name/address query." },
-            "chain_id": { "type": "integer", "description": "Optional chain id filter." },
-            "limit": { "type": "integer", "description": "Optional page size." },
-            "offset": { "type": "integer", "description": "Optional pagination offset." }
-        },
-        "required": ["query"]
-    })
-}
-
 #[derive(Clone)]
 pub struct KhalaniRuntime {
     client: KhalaniClient,
@@ -892,26 +850,12 @@ impl Default for KhalaniRuntime {
     }
 }
 
-type ToolHandler = fn(&KhalaniRuntime, &str, &str) -> Result<Value, String>;
-
 impl KhalaniRuntime {
-    fn route_tool(name: &str) -> Option<ToolHandler> {
-        match name {
-            "get_khalani_quote" => Some(Self::handle_get_khalani_quote),
-            "build_khalani_order" => Some(Self::handle_build_khalani_order),
-            "submit_khalani_order" => Some(Self::handle_submit_khalani_order),
-            "get_khalani_order_status" => Some(Self::handle_get_khalani_order_status),
-            "get_khalani_orders_by_address" => Some(Self::handle_get_khalani_orders_by_address),
-            "get_khalani_tokens" => Some(Self::handle_get_khalani_tokens),
-            "search_khalani_tokens" => Some(Self::handle_search_khalani_tokens),
-            "get_khalani_chains" => Some(Self::handle_get_khalani_chains),
-            _ => None,
-        }
-    }
-
-    fn handle_get_khalani_quote(&self, args_json: &str, ctx_json: &str) -> Result<Value, String> {
-        let args: GetKhalaniQuoteArgs = parse_args(args_json)?;
-        let ctx = parse_ctx(ctx_json)?;
+    fn handle_get_khalani_quote(
+        &self,
+        args: GetKhalaniQuoteArgs,
+        ctx: DynCtx,
+    ) -> Result<Value, String> {
         let sender_address =
             resolve_sender_address(ctx.user_address, args.sender_address.as_deref())?;
         let to_chain = args
@@ -934,9 +878,11 @@ impl KhalaniRuntime {
         })
     }
 
-    fn handle_build_khalani_order(&self, args_json: &str, ctx_json: &str) -> Result<Value, String> {
-        let args: BuildKhalaniOrderArgs = parse_args(args_json)?;
-        let ctx = parse_ctx(ctx_json)?;
+    fn handle_build_khalani_order(
+        &self,
+        args: BuildKhalaniOrderArgs,
+        ctx: DynCtx,
+    ) -> Result<Value, String> {
         let sender_address =
             resolve_sender_address(ctx.user_address, args.sender_address.as_deref())?;
         let to_chain = args
@@ -1130,10 +1076,9 @@ impl KhalaniRuntime {
 
     fn handle_submit_khalani_order(
         &self,
-        args_json: &str,
-        _ctx_json: &str,
+        args: SubmitKhalaniOrderArgs,
+        _ctx: DynCtx,
     ) -> Result<Value, String> {
-        let args: SubmitKhalaniOrderArgs = parse_args(args_json)?;
         let submit_type = args.submit_type.to_uppercase();
         let payload = match submit_type.as_str() {
             "SIGNED_EIP712" => {
@@ -1190,19 +1135,17 @@ impl KhalaniRuntime {
 
     fn handle_get_khalani_order_status(
         &self,
-        args_json: &str,
-        _ctx_json: &str,
+        args: GetKhalaniOrderStatusArgs,
+        _ctx: DynCtx,
     ) -> Result<Value, String> {
-        let args: GetKhalaniOrderStatusArgs = parse_args(args_json)?;
         self.client.get_order_khalani(&args.order_id)
     }
 
     fn handle_get_khalani_orders_by_address(
         &self,
-        args_json: &str,
-        _ctx_json: &str,
+        args: GetKhalaniOrdersByAddressArgs,
+        _ctx: DynCtx,
     ) -> Result<Value, String> {
-        let args: GetKhalaniOrdersByAddressArgs = parse_args(args_json)?;
         self.client.get_orders_by_address_khalani(
             &args.address,
             args.status.as_deref(),
@@ -1211,107 +1154,115 @@ impl KhalaniRuntime {
         )
     }
 
-    fn handle_get_khalani_tokens(&self, args_json: &str, _ctx_json: &str) -> Result<Value, String> {
-        let args: GetKhalaniTokensArgs = parse_args(args_json)?;
+    fn handle_get_khalani_tokens(
+        &self,
+        args: GetKhalaniTokensArgs,
+        _ctx: DynCtx,
+    ) -> Result<Value, String> {
         self.client
             .get_tokens_khalani(args.chain_id, args.limit, args.offset, None)
     }
 
     fn handle_search_khalani_tokens(
         &self,
-        args_json: &str,
-        _ctx_json: &str,
+        args: SearchKhalaniTokensArgs,
+        _ctx: DynCtx,
     ) -> Result<Value, String> {
-        let args: SearchKhalaniTokensArgs = parse_args(args_json)?;
         self.client
             .search_tokens_khalani(&args.query, args.chain_id, args.limit, args.offset)
     }
 
-    fn handle_get_khalani_chains(&self, args_json: &str, _ctx_json: &str) -> Result<Value, String> {
-        let _: GetKhalaniChainsArgs = parse_args(args_json)?;
+    fn handle_get_khalani_chains(
+        &self,
+        _args: GetKhalaniChainsArgs,
+        _ctx: DynCtx,
+    ) -> Result<Value, String> {
         self.client.get_chains_khalani()
     }
 }
 
-impl DynRuntime for KhalaniRuntime {
-    fn manifest(&self) -> DynManifest {
-        DynManifest {
-            abi_version: DYN_ABI_VERSION,
-            name: "khalani_dyn".into(),
-            version: "0.1.0".into(),
-            preamble: "You are the Khalani Agent. Use Khalani tools for quotes, build, submit, status, and metadata. Respect SYSTEM_NEXT_ACTION sequencing when present.".into(),
+dyn_runtime! {
+    impl DynRuntime for KhalaniRuntime {
+        manifest {
+            name: "khalani_dyn",
+            version: "0.1.0",
+            preamble: "You are the Khalani Agent. Use Khalani tools for quotes, build, submit, status, and metadata. Respect SYSTEM_NEXT_ACTION sequencing when present.",
             model_preference: DynModelPreference::default(),
-            tools: vec![
-                DynToolDescriptor {
-                    name: "get_khalani_quote".into(),
-                    namespace: "khalani_dyn".into(),
-                    description: "Fetch a Khalani quote for same-chain or cross-chain swap routes.".into(),
-                    parameters_schema: quote_schema(),
-                    is_async: false,
-                },
-                DynToolDescriptor {
-                    name: "build_khalani_order".into(),
-                    namespace: "khalani_dyn".into(),
-                    description: "Build a Khalani execution step and return explicit next wallet actions.".into(),
-                    parameters_schema: quote_schema(),
-                    is_async: false,
-                },
-                DynToolDescriptor {
-                    name: "submit_khalani_order".into(),
-                    namespace: "khalani_dyn".into(),
-                    description: "Submit a wallet-completed Khalani order using tx hash or EIP-712 signature.".into(),
-                    parameters_schema: submit_schema(),
-                    is_async: false,
-                },
-                DynToolDescriptor {
-                    name: "get_khalani_order_status".into(),
-                    namespace: "khalani_dyn".into(),
-                    description: "Fetch a Khalani order by order_id.".into(),
-                    parameters_schema: order_status_schema(),
-                    is_async: false,
-                },
-                DynToolDescriptor {
-                    name: "get_khalani_orders_by_address".into(),
-                    namespace: "khalani_dyn".into(),
-                    description: "List Khalani orders by wallet address.".into(),
-                    parameters_schema: orders_by_address_schema(),
-                    is_async: false,
-                },
-                DynToolDescriptor {
-                    name: "get_khalani_tokens".into(),
-                    namespace: "khalani_dyn".into(),
-                    description: "List Khalani supported tokens.".into(),
-                    parameters_schema: tokens_schema(),
-                    is_async: false,
-                },
-                DynToolDescriptor {
-                    name: "search_khalani_tokens".into(),
-                    namespace: "khalani_dyn".into(),
-                    description: "Search Khalani tokens by query.".into(),
-                    parameters_schema: search_tokens_schema(),
-                    is_async: false,
-                },
-                DynToolDescriptor {
-                    name: "get_khalani_chains".into(),
-                    namespace: "khalani_dyn".into(),
-                    description: "List Khalani supported chains.".into(),
-                    parameters_schema: json!({ "type": "object", "properties": {} }),
-                    is_async: false,
-                },
-            ],
         }
-    }
-
-    fn execute_tool(&self, name: &str, args_json: &str, ctx_json: &str) -> DynResult {
-        let result = match Self::route_tool(name) {
-            Some(handler) => handler(self, args_json, ctx_json),
-            None => Err(format!("unknown tool: {name}")),
-        };
-
-        match result {
-            Ok(value) => DynResult::ok(value),
-            Err(err) => DynResult::err(err),
-        }
+        tools [
+            {
+                name: "get_khalani_quote",
+                description: "Fetch a Khalani quote for same-chain or cross-chain swap routes.",
+                schema: quote_schema,
+                args: GetKhalaniQuoteArgs,
+                ctx: DynCtx,
+                handler: Self::handle_get_khalani_quote,
+                is_async: false,
+            },
+            {
+                name: "build_khalani_order",
+                description: "Build a Khalani execution step and return explicit next wallet actions.",
+                schema: quote_schema,
+                args: BuildKhalaniOrderArgs,
+                ctx: DynCtx,
+                handler: Self::handle_build_khalani_order,
+                is_async: false,
+            },
+            {
+                name: "submit_khalani_order",
+                description: "Submit a wallet-completed Khalani order using tx hash or EIP-712 signature.",
+                schema: submit_schema,
+                args: SubmitKhalaniOrderArgs,
+                ctx: DynCtx,
+                handler: Self::handle_submit_khalani_order,
+                is_async: false,
+            },
+            {
+                name: "get_khalani_order_status",
+                description: "Fetch a Khalani order by order_id.",
+                schema: derive,
+                args: GetKhalaniOrderStatusArgs,
+                ctx: DynCtx,
+                handler: Self::handle_get_khalani_order_status,
+                is_async: false,
+            },
+            {
+                name: "get_khalani_orders_by_address",
+                description: "List Khalani orders by wallet address.",
+                schema: derive,
+                args: GetKhalaniOrdersByAddressArgs,
+                ctx: DynCtx,
+                handler: Self::handle_get_khalani_orders_by_address,
+                is_async: false,
+            },
+            {
+                name: "get_khalani_tokens",
+                description: "List Khalani supported tokens.",
+                schema: derive,
+                args: GetKhalaniTokensArgs,
+                ctx: DynCtx,
+                handler: Self::handle_get_khalani_tokens,
+                is_async: false,
+            },
+            {
+                name: "search_khalani_tokens",
+                description: "Search Khalani tokens by query.",
+                schema: derive,
+                args: SearchKhalaniTokensArgs,
+                ctx: DynCtx,
+                handler: Self::handle_search_khalani_tokens,
+                is_async: false,
+            },
+            {
+                name: "get_khalani_chains",
+                description: "List Khalani supported chains.",
+                schema: derive,
+                args: GetKhalaniChainsArgs,
+                ctx: DynCtx,
+                handler: Self::handle_get_khalani_chains,
+                is_async: false,
+            }
+        ]
     }
 }
 

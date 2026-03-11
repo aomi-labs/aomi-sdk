@@ -74,11 +74,13 @@
 //! Drop this file into the backend's plugin directory and it's live.
 
 mod ffi;
+mod macros;
 mod types;
 
 pub use types::*;
 
 // Re-export serde_json for convenience in plugin code
+pub use serde;
 pub use serde_json;
 
 /// Internal helpers for the `declare_dyn!` macro. Do not use directly.

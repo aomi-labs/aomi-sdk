@@ -9,5 +9,6 @@ crate-type = ["cdylib"]
 [dependencies]
 aomi-dyn-sdk = { path = "../../crates/dyn-sdk" }
 reqwest = { workspace = true, features = ["blocking"] }
+schemars = { version = "1", features = ["derive"] }
 serde.workspace = true
 serde_json.workspace = true
