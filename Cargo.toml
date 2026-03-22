@@ -1,0 +1,36 @@
+[workspace]
+members = [
+    "sdk",
+    "sdk/examples/hello-app",
+    "apps/defi",
+    "apps/delta",
+    "apps/khalani",
+    "apps/molinar",
+    "apps/para",
+    "apps/polymarket",
+    "apps/prediction",
+    "apps/social",
+    "apps/x",
+    "sdk/examples/app-template-http",
+    "xtask",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+license = "MIT"
+rust-version = "1.85"
+
+[workspace.dependencies]
+aomi-sdk = { path = "sdk" }
+base64 = "0.22"
+chrono = "0.4"
+eyre = "0.6.12"
+hmac = "0.12"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
+schemars = "1.0.4"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = "1.0.141"
+sha2 = "0.10"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+uuid = { version = "1.0", features = ["v4"] }

@@ -1,0 +1,15 @@
+[package]
+name = "app-template-http"
+version = "0.1.0"
+edition = "2024"
+description = "Reference Aomi app showing the recommended HTTP + tools layout"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+aomi-sdk = { workspace = true }
+reqwest = { workspace = true }
+schemars = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

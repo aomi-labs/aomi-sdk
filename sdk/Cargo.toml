@@ -1,0 +1,15 @@
+[package]
+name = "aomi-sdk"
+version = "0.1.0"
+edition = "2024"
+description = "Lightweight SDK for building dynamic Aomi plugins (cdylib)"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+schemars = "1.0.4"
+eyre.workspace = true
+libloading = "0.8"
+
+[dev-dependencies]
+tempfile = "3"

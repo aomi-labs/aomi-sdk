@@ -1,0 +1,561 @@
+//! Core types for the Aomi dynamic plugin system.
+//!
+//! These types define the contract between a dynamically loaded plugin (`.so`/`.dylib`)
+//! and the host backend. All types are serializable to JSON for crossing the FFI boundary.
+
+use std::collections::VecDeque;
+use std::sync::{
+    Arc, Mutex,
+    atomic::{AtomicBool, Ordering},
+};
+
+use schemars::{JsonSchema, schema_for};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::{Map, Value};
+
+/// ABI version constant. The host checks this before loading a plugin.
+///
+/// ABI v2 introduces async tool execution primitives:
+/// - `aomi_async_tool_start`
+/// - `aomi_dyn_exec_poll`
+/// - `aomi_dyn_exec_cancel`
+///
+/// ABI v3 adds namespace declarations to the manifest:
+/// - `DynManifest::namespaces` — host-side namespaces the plugin needs
+pub const DYN_ABI_VERSION: u32 = 3;
+
+// ============================================================================
+// Tool Context (crosses FFI boundary as JSON)
+// ============================================================================
+
+/// Simplified tool execution context passed across the FFI boundary.
+///
+/// This is a projection of the host-side `ToolCallCtx` — contains only
+/// what the plugin needs to execute a tool call.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DynToolCallCtx {
+    /// Session identifier (unique per chat session)
+    pub session_id: String,
+    /// Name of the tool being called
+    pub tool_name: String,
+    /// Unique identifier for this specific tool invocation
+    pub call_id: String,
+    /// Business/domain-specific runtime attributes copied from host context.
+    #[serde(default)]
+    pub state_attributes: Map<String, Value>,
+}
+
+impl DynToolCallCtx {
+    /// Read a nested attribute by object path.
+    pub fn attribute_path(&self, path: &[&str]) -> Option<&Value> {
+        let (first, rest) = path.split_first()?;
+        let mut current = self.state_attributes.get(*first)?;
+        for key in rest {
+            current = current.as_object()?.get(*key)?;
+        }
+        Some(current)
+    }
+
+    /// Shorthand: read a `u64` attribute by object path.
+    pub fn attribute_u64(&self, path: &[&str]) -> Option<u64> {
+        self.attribute_path(path).and_then(Value::as_u64)
+    }
+
+    /// Shorthand: read a `String` attribute by object path.
+    pub fn attribute_string(&self, path: &[&str]) -> Option<String> {
+        self.attribute_path(path)
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+    }
+}
+
+// ============================================================================
+// Tool Metadata (declarative metadata)
+// ============================================================================
+
+/// Core metadata shared with the host-side `ToolMetadata` (in `aomi-tools`).
+///
+/// This mirrors the shape so both sides speak the same language,
+/// without forcing `dyn-sdk` to depend on `aomi-tools`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DynToolMetadata {
+    /// Unique tool name (e.g. "delta_create_quote")
+    pub name: String,
+    /// App that owns this tool (e.g. "delta")
+    pub app: String,
+    /// Human-readable description shown to the LLM
+    pub description: String,
+    /// JSON Schema for the tool's parameters
+    pub parameters_schema: Value,
+    /// Whether the tool supports async/streaming execution
+    pub supports_async: bool,
+    /// Optional namespace override. Defaults to the manifest name if absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+}
+
+// ============================================================================
+// Plugin Manifest
+// ============================================================================
+
+/// Complete manifest describing a dynamic plugin.
+///
+/// The host reads this once after loading the plugin to understand
+/// what tools it provides and how to configure the LLM agent.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DynManifest {
+    /// ABI version — must match [`DYN_ABI_VERSION`]
+    pub abi_version: u32,
+    /// Plugin name (used as the app key, e.g. "delta", "hello")
+    pub name: String,
+    /// Plugin version (semver, e.g. "0.1.0")
+    pub version: String,
+    /// System prompt / preamble for the LLM agent
+    pub preamble: String,
+    /// Tools provided by this plugin
+    pub tools: Vec<DynToolMetadata>,
+    /// Host-side namespaces the plugin needs (e.g. `["database"]`, `["forge"]`).
+    /// The host injects these namespaces' tools alongside the plugin's own tools.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub namespaces: Option<Vec<String>>,
+}
+
+// ============================================================================
+// Tool Execution Result
+// ============================================================================
+
+/// Result of a tool execution across the FFI boundary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum DynToolResult {
+    /// Successful execution with a JSON value result
+    Ok(Value),
+    /// Failed execution with an error message
+    Err(String),
+}
+
+impl DynToolResult {
+    /// Create a successful result from a serializable value.
+    pub fn ok(value: impl Serialize) -> Self {
+        DynToolResult::Ok(serde_json::to_value(value).unwrap_or(Value::Null))
+    }
+
+    /// Create an error result.
+    pub fn err(msg: impl Into<String>) -> Self {
+        DynToolResult::Err(msg.into())
+    }
+
+    /// Check if the result is successful.
+    pub fn is_ok(&self) -> bool {
+        matches!(self, DynToolResult::Ok(_))
+    }
+
+    /// Check if the result is an error.
+    pub fn is_err(&self) -> bool {
+        matches!(self, DynToolResult::Err(_))
+    }
+}
+
+// ============================================================================
+// Execution lifecycle envelopes (ABI v2)
+// ============================================================================
+
+/// Start response for `aomi_async_tool_start`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum DynToolStart {
+    /// Tool finished immediately.
+    Ready { result: DynToolResult },
+    /// Tool accepted and is running asynchronously.
+    AsyncQueued { execution_id: u64 },
+}
+
+/// Poll response for `aomi_dyn_exec_poll`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum AsyncExecPool {
+    /// No new update yet.
+    Pending,
+    /// Tool produced an update. `has_more=false` indicates terminal success.
+    Update { value: Value, has_more: bool },
+    /// Tool failed.
+    Error { message: String },
+    /// Tool was canceled.
+    Canceled,
+    /// Execution id is not known.
+    NotFound,
+}
+
+/// Cancel response for `aomi_dyn_exec_cancel`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DynExecCancel {
+    pub canceled: bool,
+}
+
+/// Internal start result used by app/tool dispatch.
+#[derive(Debug, Clone)]
+pub enum DynToolDispatch {
+    Ready(DynToolResult),
+    AsyncQueued,
+}
+
+/// Internal execution queue for async poll events.
+#[doc(hidden)]
+#[derive(Default)]
+pub struct AsyncExecQueue {
+    events: Mutex<VecDeque<AsyncExecPool>>,
+    canceled: AtomicBool,
+}
+
+impl AsyncExecQueue {
+    #[doc(hidden)]
+    pub fn push(&self, event: AsyncExecPool) {
+        if let Ok(mut guard) = self.events.lock() {
+            guard.push_back(event);
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn poll(&self) -> AsyncExecPool {
+        if self.canceled.load(Ordering::Acquire) {
+            return AsyncExecPool::Canceled;
+        }
+        match self.events.lock() {
+            Ok(mut guard) => guard.pop_front().unwrap_or(AsyncExecPool::Pending),
+            Err(_) => AsyncExecPool::Error {
+                message: "execution queue poisoned".to_string(),
+            },
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn cancel(&self) {
+        self.canceled.store(true, Ordering::Release);
+        self.push(AsyncExecPool::Canceled);
+    }
+
+    #[doc(hidden)]
+    pub fn is_canceled(&self) -> bool {
+        self.canceled.load(Ordering::Acquire)
+    }
+}
+
+/// Sink for streaming updates from async tool executions.
+///
+/// Passed to [`DynAomiTool::run_async`]. The tool pushes intermediate
+/// results with [`emit`](Self::emit), signals completion with
+/// [`complete`](Self::complete), and checks for host cancellation with
+/// [`is_canceled`](Self::is_canceled).
+#[derive(Clone)]
+pub struct DynAsyncSink {
+    queue: Arc<AsyncExecQueue>,
+}
+
+impl DynAsyncSink {
+    #[doc(hidden)]
+    pub fn __from_queue(queue: Arc<AsyncExecQueue>) -> Self {
+        Self { queue }
+    }
+
+    /// Emit a non-terminal update.
+    pub fn emit(&self, value: impl Serialize) -> Result<(), String> {
+        if self.queue.is_canceled() {
+            return Err("execution canceled".to_string());
+        }
+        let value = serde_json::to_value(value)
+            .map_err(|e| format!("failed to serialize async update: {e}"))?;
+        self.queue.push(AsyncExecPool::Update {
+            value,
+            has_more: true,
+        });
+        Ok(())
+    }
+
+    /// Emit a terminal success update.
+    pub fn complete(&self, value: impl Serialize) -> Result<(), String> {
+        if self.queue.is_canceled() {
+            return Err("execution canceled".to_string());
+        }
+        let value = serde_json::to_value(value)
+            .map_err(|e| format!("failed to serialize async completion: {e}"))?;
+        self.queue.push(AsyncExecPool::Update {
+            value,
+            has_more: false,
+        });
+        Ok(())
+    }
+
+    /// Emit a terminal error.
+    pub fn fail(&self, msg: impl Into<String>) {
+        self.queue.push(AsyncExecPool::Error {
+            message: msg.into(),
+        });
+    }
+
+    /// Check whether the host canceled this execution.
+    pub fn is_canceled(&self) -> bool {
+        self.queue.is_canceled()
+    }
+}
+
+// ============================================================================
+// DynAomi authoring traits
+// ============================================================================
+
+/// App-level trait that every dynamic plugin must implement.
+///
+/// This trait declares the plugin's identity, system prompt, and tool set.
+/// It is typically implemented automatically by the [`dyn_aomi_app!`] macro
+/// rather than by hand.
+///
+/// # Requirements
+///
+/// The implementing type must be `Clone + Default + Send + Sync + 'static`.
+/// A simple unit or marker struct works well:
+///
+/// ```ignore
+/// #[derive(Clone, Default)]
+/// struct MyApp;
+/// ```
+pub trait DynAomiApp: Clone + Default + Send + Sync + 'static {
+    /// Unique plugin name (e.g. `"delta"`, `"defi"`).
+    fn name(&self) -> &'static str;
+    /// Semver version string (e.g. `"0.1.0"`).
+    fn version(&self) -> &'static str;
+    /// System prompt / preamble injected into the LLM context.
+    fn preamble(&self) -> &'static str;
+
+    /// Descriptors for every tool this plugin exposes.
+    fn tools(&self) -> Vec<DynToolMetadata>;
+
+    /// Dispatch a tool call. Called by the generated FFI entry point.
+    fn start_tool(
+        &self,
+        name: &str,
+        args_json: &str,
+        ctx_json: &str,
+        sink: DynAsyncSink,
+    ) -> DynToolDispatch;
+
+    /// Host-side namespaces this plugin requires (e.g. `["database"]`).
+    /// Override to request namespace injection from the host.
+    fn namespaces(&self) -> Option<Vec<String>> {
+        None
+    }
+
+    /// Build the full [`DynManifest`] for host consumption.
+    fn manifest(&self) -> DynManifest {
+        DynManifest {
+            abi_version: DYN_ABI_VERSION,
+            name: self.name().to_string(),
+            version: self.version().to_string(),
+            preamble: self.preamble().to_string(),
+            tools: self.tools(),
+            namespaces: self.namespaces(),
+        }
+    }
+}
+
+/// Trait for individual tool implementations inside a dynamic plugin.
+///
+/// Each tool is a separate struct that implements this trait. The macro
+/// [`dyn_aomi_app!`] wires all registered tools into the dispatch router.
+///
+/// # Sync vs Async
+///
+/// By default tools are synchronous — override [`run`](Self::run) and leave
+/// `IS_ASYNC` as `false`. For streaming/long-running tools set `IS_ASYNC = true`
+/// and override [`run_async`](Self::run_async) instead.
+///
+/// # Example
+///
+/// ```ignore
+/// struct GetPrice;
+///
+/// impl DynAomiTool for GetPrice {
+///     type App = MyApp;
+///     type Args = GetPriceArgs;
+///     const NAME: &'static str = "get_price";
+///     const DESCRIPTION: &'static str = "Fetch the current token price.";
+///
+///     fn run(_app: &MyApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
+///         Ok(serde_json::json!({ "price": 42.0 }))
+///     }
+/// }
+/// ```
+pub trait DynAomiTool: Send + Sync + 'static {
+    /// The app type this tool belongs to.
+    type App: DynAomiApp;
+    /// Typed arguments deserialized from the incoming JSON.
+    type Args: DeserializeOwned + JsonSchema + Send + 'static;
+
+    /// Unique tool name (e.g. `"get_token_price"`).
+    const NAME: &'static str;
+    /// Human-readable description shown to the LLM for tool selection.
+    const DESCRIPTION: &'static str;
+    /// Set to `true` for streaming/async tools that use [`DynAsyncSink`].
+    const IS_ASYNC: bool = false;
+
+    /// Synchronous tool execution. Override this for non-streaming tools.
+    fn run(_app: &Self::App, _args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
+        Err(format!(
+            "tool '{}' does not support sync execution",
+            Self::NAME
+        ))
+    }
+
+    /// Asynchronous tool execution. Override this when `IS_ASYNC = true`.
+    ///
+    /// Use `sink.emit()` for intermediate updates, `sink.complete()` for the
+    /// terminal result, and `sink.is_canceled()` to check for host cancellation.
+    fn run_async(
+        _app: &Self::App,
+        _args: Self::Args,
+        _ctx: DynToolCallCtx,
+        _sink: DynAsyncSink,
+    ) -> Result<(), String> {
+        Err(format!(
+            "tool '{}' does not support async execution",
+            Self::NAME
+        ))
+    }
+
+    /// Build the [`DynToolMetadata`] descriptor for this tool.
+    /// Called at manifest time; normally you don't need to override this.
+    fn descriptor(app: &Self::App) -> DynToolMetadata {
+        let schema = schema_for!(Self::Args);
+        DynToolMetadata {
+            name: Self::NAME.to_string(),
+            app: app.name().to_string(),
+            description: Self::DESCRIPTION.to_string(),
+            parameters_schema: serde_json::to_value(schema).unwrap_or(Value::Null),
+            supports_async: Self::IS_ASYNC,
+            namespace: None,
+        }
+    }
+}
+
+/// Parse JSON args into a strongly typed args struct.
+pub fn parse_dyn_args<T: DeserializeOwned>(args_json: &str) -> Result<T, String> {
+    serde_json::from_str(args_json).map_err(|e| format!("invalid args_json: {e}"))
+}
+
+/// Parse JSON tool context.
+pub fn parse_dyn_ctx(ctx_json: &str) -> Result<DynToolCallCtx, String> {
+    serde_json::from_str(ctx_json).map_err(|e| format!("invalid ctx_json: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::Deserialize;
+
+    #[derive(Debug, Clone, Deserialize, JsonSchema)]
+    struct Args {
+        name: String,
+    }
+
+    #[derive(Clone, Default)]
+    struct App;
+
+    impl DynAomiApp for App {
+        fn name(&self) -> &'static str {
+            "test"
+        }
+
+        fn version(&self) -> &'static str {
+            "0.0.0"
+        }
+
+        fn preamble(&self) -> &'static str {
+            "test preamble"
+        }
+
+        fn tools(&self) -> Vec<DynToolMetadata> {
+            vec![Tool::descriptor(self)]
+        }
+
+        fn start_tool(
+            &self,
+            _name: &str,
+            _args_json: &str,
+            _ctx_json: &str,
+            _sink: DynAsyncSink,
+        ) -> DynToolDispatch {
+            DynToolDispatch::Ready(DynToolResult::err("not needed in this test"))
+        }
+    }
+
+    struct Tool;
+
+    impl DynAomiTool for Tool {
+        type App = App;
+        type Args = Args;
+        const NAME: &'static str = "echo";
+        const DESCRIPTION: &'static str = "echo input";
+
+        fn run(_app: &Self::App, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
+            Ok(serde_json::json!({"name": args.name}))
+        }
+    }
+
+    #[test]
+    fn test_descriptor_schema_generation() {
+        let descriptor = Tool::descriptor(&App);
+        assert_eq!(descriptor.name, "echo");
+        assert_eq!(descriptor.app, "test");
+        assert!(!descriptor.supports_async);
+        assert_eq!(
+            descriptor
+                .parameters_schema
+                .get("type")
+                .and_then(Value::as_str),
+            Some("object")
+        );
+    }
+
+    #[test]
+    fn test_exec_envelopes_roundtrip() {
+        let start = DynToolStart::AsyncQueued { execution_id: 42 };
+        let start_json = serde_json::to_string(&start).unwrap();
+        let parsed_start: DynToolStart = serde_json::from_str(&start_json).unwrap();
+        assert!(matches!(
+            parsed_start,
+            DynToolStart::AsyncQueued { execution_id: 42 }
+        ));
+
+        let poll = AsyncExecPool::Update {
+            value: serde_json::json!({"step": 1}),
+            has_more: false,
+        };
+        let poll_json = serde_json::to_string(&poll).unwrap();
+        let parsed_poll: AsyncExecPool = serde_json::from_str(&poll_json).unwrap();
+        assert!(matches!(
+            parsed_poll,
+            AsyncExecPool::Update {
+                has_more: false,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_async_sink_pushes_updates() {
+        let queue = Arc::new(AsyncExecQueue::default());
+        let sink = DynAsyncSink::__from_queue(queue.clone());
+
+        sink.emit(serde_json::json!({"n": 1})).unwrap();
+        sink.complete(serde_json::json!({"n": 2})).unwrap();
+
+        assert!(matches!(
+            queue.poll(),
+            AsyncExecPool::Update { has_more: true, .. }
+        ));
+        assert!(matches!(
+            queue.poll(),
+            AsyncExecPool::Update {
+                has_more: false,
+                ..
+            }
+        ));
+    }
+}
