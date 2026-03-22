@@ -2,14 +2,17 @@ mod common;
 
 use aomi_sdk::{
     AOMI_DYN_EXEC_CANCEL, AOMI_DYN_EXEC_POLL, AOMI_FREE_STRING, AsyncExecPool, DynExecCancel,
-    DynFreeStringFn, DynToolCancelFn, DynToolPollFn, DynToolResult, DynToolStart,
-    DynToolStartFn, SYM_AOMI_ASYNC_TOOL_START,
+    DynFreeStringFn, DynToolCancelFn, DynToolPollFn, DynToolResult, DynToolStart, DynToolStartFn,
+    SYM_AOMI_ASYNC_TOOL_START,
 };
 use libloading::Library;
 use std::ffi::CStr;
 
 fn read_and_free_string(raw: *mut std::ffi::c_char, free_string: DynFreeStringFn) -> String {
-    assert!(!raw.is_null(), "ffi function should return a non-null string");
+    assert!(
+        !raw.is_null(),
+        "ffi function should return a non-null string"
+    );
     let text = unsafe { CStr::from_ptr(raw) }
         .to_str()
         .expect("ffi string should be utf-8")
@@ -29,12 +32,22 @@ fn malformed_requests_return_ready_errors() {
             r#"{"session_id":"ffi-bad","tool_name":"greet","call_id":"bad-args","state_attributes":{}}"#,
         )
         .expect("invalid args should still produce a JSON envelope");
-    assert!(matches!(invalid_args, DynToolStart::Ready { result: DynToolResult::Err(_) }));
+    assert!(matches!(
+        invalid_args,
+        DynToolStart::Ready {
+            result: DynToolResult::Err(_)
+        }
+    ));
 
     let invalid_ctx = handle
         .call_tool_start("greet", r#"{"name":"Alice"}"#, "{not-json")
         .expect("invalid ctx should still produce a JSON envelope");
-    assert!(matches!(invalid_ctx, DynToolStart::Ready { result: DynToolResult::Err(_) }));
+    assert!(matches!(
+        invalid_ctx,
+        DynToolStart::Ready {
+            result: DynToolResult::Err(_)
+        }
+    ));
 
     let unknown = handle
         .call_tool_start(
@@ -43,7 +56,12 @@ fn malformed_requests_return_ready_errors() {
             r#"{"session_id":"ffi-bad","tool_name":"does_not_exist","call_id":"unknown","state_attributes":{}}"#,
         )
         .expect("unknown tool should still produce a JSON envelope");
-    assert!(matches!(unknown, DynToolStart::Ready { result: DynToolResult::Err(_) }));
+    assert!(matches!(
+        unknown,
+        DynToolStart::Ready {
+            result: DynToolResult::Err(_)
+        }
+    ));
 }
 
 #[test]
@@ -62,10 +80,16 @@ fn async_failures_surface_as_terminal_error_events() {
         other => panic!("expected queued async failure, got {other:?}"),
     };
 
-    match handle.call_tool_poll(execution_id).expect("poll should succeed") {
+    match handle
+        .call_tool_poll(execution_id)
+        .expect("poll should succeed")
+    {
         AsyncExecPool::Pending => {
             std::thread::sleep(std::time::Duration::from_millis(10));
-            match handle.call_tool_poll(execution_id).expect("second poll should succeed") {
+            match handle
+                .call_tool_poll(execution_id)
+                .expect("second poll should succeed")
+            {
                 AsyncExecPool::Error { message } => {
                     assert!(message.contains("boom"));
                     assert!(message.contains("ffi-fail"));
@@ -81,7 +105,9 @@ fn async_failures_surface_as_terminal_error_events() {
     }
 
     assert!(matches!(
-        handle.call_tool_poll(execution_id).expect("errored execution should be removed"),
+        handle
+            .call_tool_poll(execution_id)
+            .expect("errored execution should be removed"),
         AsyncExecPool::NotFound
     ));
 }
@@ -98,7 +124,9 @@ fn panic_sync_is_contained_inside_the_ffi_start_envelope() {
         .expect("panic should be converted into an error envelope");
 
     match start {
-        DynToolStart::Ready { result: DynToolResult::Err(message) } => {
+        DynToolStart::Ready {
+            result: DynToolResult::Err(message),
+        } => {
             assert!(message.contains("plugin panicked during start of tool 'panic_sync'"));
         }
         other => panic!("expected panic to be contained as a ready error, got {other:?}"),

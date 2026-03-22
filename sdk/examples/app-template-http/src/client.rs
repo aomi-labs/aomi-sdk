@@ -25,11 +25,7 @@ impl CoinGeckoClient {
         Ok(Self { http })
     }
 
-    pub(crate) fn get_json(
-        &self,
-        path: &str,
-        query: &[(&str, &str)],
-    ) -> Result<Value, String> {
+    pub(crate) fn get_json(&self, path: &str, query: &[(&str, &str)]) -> Result<Value, String> {
         let url = format!("{API_BASE}{path}");
         let response = self
             .http

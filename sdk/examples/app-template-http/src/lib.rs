@@ -21,8 +21,5 @@ dyn_aomi_app!(
     name = "http-json-example",
     version = "0.1.0",
     preamble = PREAMBLE,
-    tools = [
-        client::SearchCoins,
-        client::GetCoinPrice,
-    ]
+    tools = [client::SearchCoins, client::GetCoinPrice,]
 );

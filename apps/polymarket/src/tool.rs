@@ -2,7 +2,7 @@ use crate::client::*;
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 impl DynAomiTool for SearchPolymarket {
@@ -292,10 +292,10 @@ impl DynAomiTool for BuildPolymarketOrderPreview {
     fn run(_app: &PolymarketApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let size_mode = match (args.size_usd, args.shares) {
             (Some(_), Some(_)) => {
-                return Err("Provide either size_usd or shares, not both.".to_string())
+                return Err("Provide either size_usd or shares, not both.".to_string());
             }
             (None, None) => {
-                return Err("Missing order size. Provide either size_usd or shares.".to_string())
+                return Err("Missing order size. Provide either size_usd or shares.".to_string());
             }
             (Some(v), None) if v > 0.0 => ("usd", v),
             (None, Some(v)) if v > 0.0 => ("shares", v),

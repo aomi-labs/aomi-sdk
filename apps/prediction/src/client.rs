@@ -3,7 +3,7 @@ use aomi_sdk::*;
 use chrono::Local;
 use hmac::{Hmac, Mac};
 use serde::Deserialize;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::time::Duration;
 
 pub(crate) fn build_preamble() -> String {

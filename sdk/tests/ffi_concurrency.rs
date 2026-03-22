@@ -10,7 +10,9 @@ use std::time::Duration;
 fn concurrent_cross_ffi_calls_stay_isolated_on_one_plugin_instance() {
     let handle = common::load_dyn_hello();
     let exec_ids = Arc::new(Mutex::new(Vec::new()));
-    let outputs = Arc::new(Mutex::new(BTreeMap::<String, Vec<(i64, bool, String)>>::new()));
+    let outputs = Arc::new(Mutex::new(
+        BTreeMap::<String, Vec<(i64, bool, String)>>::new(),
+    ));
 
     std::thread::scope(|scope| {
         for idx in 0..12 {
@@ -45,7 +47,10 @@ fn concurrent_cross_ffi_calls_stay_isolated_on_one_plugin_instance() {
                 exec_ids.lock().unwrap().push(execution_id);
 
                 loop {
-                    match handle.call_tool_poll(execution_id).expect("poll should succeed") {
+                    match handle
+                        .call_tool_poll(execution_id)
+                        .expect("poll should succeed")
+                    {
                         AsyncExecPool::Pending => std::thread::sleep(Duration::from_millis(5)),
                         AsyncExecPool::Update { value, has_more } => {
                             let call_id = value
@@ -73,7 +78,9 @@ fn concurrent_cross_ffi_calls_stay_isolated_on_one_plugin_instance() {
                                 break;
                             }
                         }
-                        other => panic!("expected pending/update while polling concurrent call, got {other:?}"),
+                        other => panic!(
+                            "expected pending/update while polling concurrent call, got {other:?}"
+                        ),
                     }
                 }
             });
@@ -89,7 +96,10 @@ fn concurrent_cross_ffi_calls_stay_isolated_on_one_plugin_instance() {
     for idx in 0..12 {
         let call_id = format!("ffi-conc-{idx}");
         let expected_tag = format!("tag-{idx}");
-        let mut entries = outputs.get(&call_id).cloned().expect("missing outputs for call");
+        let mut entries = outputs
+            .get(&call_id)
+            .cloned()
+            .expect("missing outputs for call");
         entries.sort_by_key(|entry| entry.0);
         assert_eq!(
             entries.iter().map(|entry| entry.0).collect::<Vec<_>>(),
@@ -175,7 +185,9 @@ fn concurrent_sync_calls_stay_isolated_on_one_plugin_instance() {
 fn mixed_sync_and_async_calls_share_one_plugin_instance_safely() {
     let handle = common::load_dyn_hello();
     let sync_outputs = Arc::new(Mutex::new(BTreeMap::<String, String>::new()));
-    let async_outputs = Arc::new(Mutex::new(BTreeMap::<String, Vec<(i64, bool, String)>>::new()));
+    let async_outputs = Arc::new(Mutex::new(
+        BTreeMap::<String, Vec<(i64, bool, String)>>::new(),
+    ));
 
     std::thread::scope(|scope| {
         for idx in 0..12 {
@@ -248,7 +260,10 @@ fn mixed_sync_and_async_calls_share_one_plugin_instance_safely() {
                 };
 
                 loop {
-                    match handle.call_tool_poll(execution_id).expect("poll should succeed") {
+                    match handle
+                        .call_tool_poll(execution_id)
+                        .expect("poll should succeed")
+                    {
                         AsyncExecPool::Pending => std::thread::sleep(Duration::from_millis(5)),
                         AsyncExecPool::Update { value, has_more } => {
                             let call_id = value
@@ -275,7 +290,9 @@ fn mixed_sync_and_async_calls_share_one_plugin_instance_safely() {
                                 break;
                             }
                         }
-                        other => panic!("expected pending/update while polling mixed async call, got {other:?}"),
+                        other => panic!(
+                            "expected pending/update while polling mixed async call, got {other:?}"
+                        ),
                     }
                 }
             });
@@ -288,7 +305,9 @@ fn mixed_sync_and_async_calls_share_one_plugin_instance_safely() {
         let call_id = format!("ffi-mixed-sync-{idx}");
         let expected_tag = format!("mixed-sync-tag-{idx}");
         assert_eq!(
-            sync_outputs.get(&call_id).expect("missing mixed sync result"),
+            sync_outputs
+                .get(&call_id)
+                .expect("missing mixed sync result"),
             &expected_tag
         );
     }

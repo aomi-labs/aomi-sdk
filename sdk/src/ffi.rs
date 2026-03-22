@@ -58,7 +58,10 @@ macro_rules! declare_dyn {
             app: $app_type,
             next_execution_id: ::std::sync::atomic::AtomicU64,
             executions: ::std::sync::Mutex<
-                ::std::collections::HashMap<u64, ::std::sync::Arc<$crate::__private::AsyncExecQueue>>,
+                ::std::collections::HashMap<
+                    u64,
+                    ::std::sync::Arc<$crate::__private::AsyncExecQueue>,
+                >,
             >,
         }
 

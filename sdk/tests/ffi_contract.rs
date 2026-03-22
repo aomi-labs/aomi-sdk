@@ -2,9 +2,9 @@ mod common;
 
 use aomi_sdk::{
     AOMI_ABI_VERSION, AOMI_CREATE, AOMI_DESTROY, AOMI_DYN_EXEC_CANCEL, AOMI_DYN_EXEC_POLL,
-    AOMI_FREE_STRING, AOMI_MANIFEST, AsyncExecPool, DYN_ABI_VERSION, DynAbiVersionFn,
-    DynCreateFn, DynDestroyFn, DynFreeStringFn, DynManifestFn, DynToolCancelFn, DynToolPollFn,
-    DynToolStart, DynToolStartFn, SYM_AOMI_ASYNC_TOOL_START,
+    AOMI_FREE_STRING, AOMI_MANIFEST, AsyncExecPool, DYN_ABI_VERSION, DynAbiVersionFn, DynCreateFn,
+    DynDestroyFn, DynFreeStringFn, DynManifestFn, DynToolCancelFn, DynToolPollFn, DynToolStart,
+    DynToolStartFn, SYM_AOMI_ASYNC_TOOL_START,
 };
 use libloading::Library;
 
@@ -41,7 +41,10 @@ fn raw_ffi_symbols_match_the_documented_abi_surface() {
             .expect("missing aomi_free_string");
 
         let instance = create();
-        assert!(!instance.is_null(), "create should return a non-null instance");
+        assert!(
+            !instance.is_null(),
+            "create should return a non-null instance"
+        );
         assert_eq!(abi_version(), DYN_ABI_VERSION);
 
         let manifest_raw = manifest(instance);
@@ -60,8 +63,14 @@ fn raw_ffi_symbols_match_the_documented_abi_surface() {
 #[test]
 fn envelope_status_tags_match_current_wire_format() {
     let start = serde_json::to_value(DynToolStart::AsyncQueued { execution_id: 7 }).unwrap();
-    assert_eq!(start.get("status").and_then(|value| value.as_str()), Some("async_queued"));
+    assert_eq!(
+        start.get("status").and_then(|value| value.as_str()),
+        Some("async_queued")
+    );
 
     let poll = serde_json::to_value(AsyncExecPool::Pending).unwrap();
-    assert_eq!(poll.get("status").and_then(|value| value.as_str()), Some("pending"));
+    assert_eq!(
+        poll.get("status").and_then(|value| value.as_str()),
+        Some("pending")
+    );
 }

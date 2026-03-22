@@ -2,7 +2,7 @@ use crate::client::*;
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 impl DynAomiTool for GetLammaTokenPrice {
     type App = DefiApp;

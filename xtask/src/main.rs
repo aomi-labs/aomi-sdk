@@ -76,10 +76,10 @@ fn cmd_build_plugins(args: &[String]) {
     for manifest_path in app_manifests {
         let pkg_name = package_name(&manifest_path);
 
-        if let Some(ref filter) = app_filter {
-            if pkg_name != *filter {
-                continue;
-            }
+        if let Some(ref filter) = app_filter
+            && pkg_name != *filter
+        {
+            continue;
         }
 
         if should_skip(&manifest_path) {

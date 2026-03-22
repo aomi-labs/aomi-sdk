@@ -318,7 +318,7 @@ impl PolymarketClient {
                     return Err(
                         "CLOB credentials are required when auto_create_or_derive is disabled."
                             .to_string(),
-                    )
+                    );
                 }
             };
 
