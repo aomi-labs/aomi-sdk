@@ -438,8 +438,7 @@ serde_json = {{ workspace = true }}
         format!(
             r#"#[derive(Clone, Default)]
 pub(crate) struct {struct_name};
-"#,
-            struct_name = struct_name
+"#
         ),
     )
     .expect("failed to write client.rs");
@@ -481,7 +480,6 @@ impl DynAomiTool for ExampleTool {{
     }}
 }}
 "#,
-            struct_name = struct_name,
             name = name.replace('-', "_")
         ),
     )
