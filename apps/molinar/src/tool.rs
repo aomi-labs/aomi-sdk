@@ -46,65 +46,25 @@ impl DynAomiTool for MolinarLook {
 pub(crate) struct MolinarMove;
 
 #[derive(Debug, Deserialize, JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum MolinarMoveDirection {
-    North,
-    South,
-    East,
-    West,
-    Forward,
-    Backward,
-    Left,
-    Right,
-    ForwardLeft,
-    ForwardRight,
-    BackwardLeft,
-    BackwardRight,
-}
-
-impl MolinarMoveDirection {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::North => "north",
-            Self::South => "south",
-            Self::East => "east",
-            Self::West => "west",
-            Self::Forward => "forward",
-            Self::Backward => "backward",
-            Self::Left => "left",
-            Self::Right => "right",
-            Self::ForwardLeft => "forward_left",
-            Self::ForwardRight => "forward_right",
-            Self::BackwardLeft => "backward_left",
-            Self::BackwardRight => "backward_right",
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct MolinarMoveArgs {
-    /// Move exactly 1 tile in this direction.
-    direction: Option<MolinarMoveDirection>,
-    /// Set true to stop all movement.
-    stop: Option<bool>,
+    /// Direction to move (required) — moves exactly 1 tile per call.
+    /// Valid: forward, backward, left, right, forward_left, forward_right,
+    /// backward_left, backward_right, north, south, east, west.
+    direction: String,
 }
 
 impl DynAomiTool for MolinarMove {
     type App = MolinarApp;
     type Args = MolinarMoveArgs;
     const NAME: &'static str = "molinar_move";
-    const DESCRIPTION: &'static str = "Move exactly 1 tile in a direction, or stop movement. Call multiple times to move farther. Returns updated world state with the latest action.";
+    const DESCRIPTION: &'static str = "Move the character exactly 1 tile in the specified direction. Call multiple times to travel further distances. Valid directions: forward, backward, left, right, forward_left, forward_right, backward_left, backward_right, north, south, east, west.";
 
     fn run(_app: &MolinarApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
         let bot_id = get_bot_id(&ctx)?;
         let client = MolinarClient::new()?;
-        let mut payload = json!({});
-        if let Some(dir) = &args.direction {
-            payload["direction"] = Value::String(dir.as_str().to_string());
-        }
-        if let Some(stop) = args.stop {
-            payload["stop"] = json!(stop);
-        }
+        let payload = json!({
+            "direction": args.direction
+        });
         client.move_bot(&bot_id, payload)
     }
 }
@@ -153,12 +113,7 @@ impl DynAomiTool for MolinarChat {
     fn run(_app: &MolinarApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
         let bot_id = get_bot_id(&ctx)?;
         let client = MolinarClient::new()?;
-        let msg = if args.message.len() > 200 {
-            &args.message[..200]
-        } else {
-            &args.message
-        };
-        client.send_chat(&bot_id, msg)
+        client.send_chat(&bot_id, &args.message)
     }
 }
 
@@ -263,12 +218,12 @@ impl DynAomiTool for MolinarExplore {
     type App = MolinarApp;
     type Args = MolinarExploreArgs;
     const NAME: &'static str = "molinar_explore";
-    const DESCRIPTION: &'static str = "Take 1 random cardinal step to explore the world. Call repeatedly to keep wandering. Returns updated world state.";
+    const DESCRIPTION: &'static str = "Explore the world by stepping 1 tile in a random cardinal direction. Call multiple times to wander and discover new areas. Returns updated world state.";
 
     fn run(_app: &MolinarApp, _args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
         let bot_id = get_bot_id(&ctx)?;
         let client = MolinarClient::new()?;
-        client.explore(&bot_id)
+        client.explore(&bot_id, json!({}))
     }
 }
 
