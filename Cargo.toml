@@ -19,7 +19,7 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 license = "MIT"
-rust-version = "1.85"
+rust-version = "1.87"
 
 [workspace.dependencies]
 aomi-sdk = { path = "sdk" }
