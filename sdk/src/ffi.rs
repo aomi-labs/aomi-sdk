@@ -75,7 +75,25 @@ pub fn log_poll_error(execution_id: u64, error: &str) {
     tracing::error!(execution_id = execution_id, error = error, "poll error");
 }
 
-/// Generate ABI v2 C entry points for a dynamic plugin app.
+/// Generate the C ABI entry points for a dynamic plugin app.
+///
+/// This macro is called automatically by `dyn_aomi_app!` — you typically
+/// don't need to invoke it directly.
+///
+/// # Generated symbols
+///
+/// | Symbol                      | Purpose                           |
+/// |-----------------------------|-----------------------------------|
+/// | `aomi_abi_version`          | Returns [`DYN_ABI_VERSION`]       |
+/// | `aomi_create`               | Allocates a new plugin instance   |
+/// | `aomi_manifest`             | Serializes the plugin manifest    |
+/// | `aomi_async_tool_start`     | Dispatches a tool call            |
+/// | `aomi_dyn_exec_poll`        | Polls an async execution          |
+/// | `aomi_dyn_exec_cancel`      | Cancels an async execution        |
+/// | `aomi_destroy`              | Frees the plugin instance         |
+/// | `aomi_free_string`          | Frees a returned C string         |
+///
+/// [`DYN_ABI_VERSION`]: crate::DYN_ABI_VERSION
 #[macro_export]
 macro_rules! declare_dyn {
     ($app_type:ty) => {
@@ -282,18 +300,26 @@ macro_rules! declare_dyn {
     };
 }
 
-/// Define a dynamic app and compile tool list into manifest+router+FFI exports.
+/// Define a dynamic app and compile tool list into manifest, router, and FFI exports.
+///
+/// This is the main entry point for plugin authors. A single invocation at the
+/// crate root generates:
+///
+/// - A [`DynAomiApp`](crate::DynAomiApp) impl for your app struct (manifest,
+///   tool descriptors, dispatch router)
+/// - All C ABI entry points via [`declare_dyn!`] (see that macro for the full
+///   symbol table)
 ///
 /// # Forms
 ///
-/// Basic (tools only):
-/// ```ignore
+/// **Basic** (tools only):
+/// ```rust,ignore
 /// dyn_aomi_app!(app = MyApp, name = "my", version = "0.1.0",
 ///     preamble = "...", tools = [ToolA, ToolB]);
 /// ```
 ///
-/// With host-side namespaces (tools can be empty for namespace-only apps):
-/// ```ignore
+/// **With host-side namespaces** (tools can be empty for namespace-only apps):
+/// ```rust,ignore
 /// dyn_aomi_app!(app = MyApp, name = "my", version = "0.1.0",
 ///     preamble = "...", tools = [], namespaces = ["database"]);
 /// ```

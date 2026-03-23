@@ -1,4 +1,25 @@
 //! Host-side dynamic library loader for Aomi plugins.
+//!
+//! This module is for **host integrators** who load plugin `.so`/`.dylib`
+//! files at runtime. The main entry point is [`DynFnHandle`].
+//!
+//! # Usage
+//!
+//! ```rust,ignore
+//! use aomi_sdk::DynFnHandle;
+//! use std::path::Path;
+//!
+//! // Load the plugin (validates ABI version and resolves symbols)
+//! let handle = unsafe { DynFnHandle::load(Path::new("./libmy_plugin.so"))? };
+//!
+//! // Read the manifest to discover tools
+//! let manifest = handle.call_manifest()?;
+//! println!("Plugin '{}' exposes {} tools", manifest.name, manifest.tools.len());
+//!
+//! // Execute a tool (blocks until completion, 300s timeout)
+//! let result = handle.call_exec_tool("greet", r#"{"name":"world"}"#, "{}")?;
+//! println!("Result: {result}");
+//! ```
 
 use std::ffi::{CStr, CString, c_char};
 use std::path::Path;
@@ -16,6 +37,17 @@ use crate::{
 };
 
 /// Handle to a loaded dynamic plugin library.
+///
+/// Wraps a `libloading::Library` and the resolved C ABI function pointers.
+/// Manages the plugin instance lifecycle: the instance is created on
+/// [`load`](Self::load) and destroyed when the handle is dropped.
+///
+/// # Safety
+///
+/// The loaded library must be a valid aomi-sdk plugin compiled against a
+/// compatible ABI version. The handle is `Send + Sync` because plugin
+/// instances are designed to be thread-safe (the generated code uses
+/// `Mutex` for shared state).
 pub struct DynFnHandle {
     instance: DynInstancePtr,
     fn_manifest: DynManifestFn,
@@ -164,7 +196,13 @@ impl DynFnHandle {
         serde_json::from_str(&json_str).context("failed to parse DynExecCancel JSON")
     }
 
-    /// Execute a tool and wait until terminal completion.
+    /// Execute a tool synchronously, blocking until terminal completion.
+    ///
+    /// This is a convenience wrapper around [`call_tool_start`](Self::call_tool_start)
+    /// and [`call_tool_poll`](Self::call_tool_poll). For sync tools the result is
+    /// returned immediately. For async tools it polls in a loop (25 ms interval)
+    /// with a **300-second timeout** — if the tool doesn't complete in time, it is
+    /// automatically canceled and an error is returned.
     pub fn call_exec_tool(&self, name: &str, args_json: &str, ctx_json: &str) -> Result<Value> {
         match self.call_tool_start(name, args_json, ctx_json)? {
             DynToolStart::Ready { result } => match result {

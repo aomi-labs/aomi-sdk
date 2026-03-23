@@ -1,6 +1,6 @@
 //! Test utilities for plugin authors.
 //!
-//! Provides helpers to unit-test [`DynAomiTool`](crate::DynAomiTool)
+//! Provides helpers to unit-test [`DynAomiTool`]
 //! implementations without loading the full FFI plugin.
 //!
 //! # Example
