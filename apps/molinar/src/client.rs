@@ -151,9 +151,9 @@ impl MolinarClient {
     }
 
     /// POST /{botId}/explore
-    pub fn explore(&self, bot_id: &str) -> Result<Value, String> {
+    pub fn explore(&self, bot_id: &str, payload: Value) -> Result<Value, String> {
         let url = format!("{}/{}/explore", self.api_endpoint, bot_id);
-        let value = self.post_json(&url, &json!({}), "explore")?;
+        let value = self.post_json(&url, &payload, "explore")?;
         Ok(Self::with_source(value))
     }
 

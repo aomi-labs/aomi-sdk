@@ -1,6 +1,6 @@
 use crate::client::*;
 use aomi_sdk::*;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 pub(crate) struct SearchCoins;
 
@@ -8,8 +8,7 @@ impl DynAomiTool for SearchCoins {
     type App = HttpJsonExampleApp;
     type Args = SearchCoinsArgs;
     const NAME: &'static str = "search_coins";
-    const DESCRIPTION: &'static str =
-        "Search CoinGecko for matching assets and return coin ids developers can use in follow-up price calls.";
+    const DESCRIPTION: &'static str = "Search CoinGecko for matching assets and return coin ids developers can use in follow-up price calls.";
 
     fn run(
         _app: &HttpJsonExampleApp,
@@ -50,8 +49,7 @@ impl DynAomiTool for GetCoinPrice {
     type App = HttpJsonExampleApp;
     type Args = GetCoinPriceArgs;
     const NAME: &'static str = "get_coin_price";
-    const DESCRIPTION: &'static str =
-        "Fetch the current USD price for a CoinGecko asset id.";
+    const DESCRIPTION: &'static str = "Fetch the current USD price for a CoinGecko asset id.";
 
     fn run(
         _app: &HttpJsonExampleApp,

@@ -1,4 +1,4 @@
-use crate::client::{para_client, ParaApp};
+use crate::client::{ParaApp, para_client};
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
 use serde::Deserialize;
@@ -47,8 +47,7 @@ impl DynAomiTool for CreateParaWallet {
     type Args = CreateParaWalletArgs;
 
     const NAME: &'static str = "create_para_wallet";
-    const DESCRIPTION: &'static str =
-        "Create a new Para MPC wallet. Supports EVM, Solana, and Cosmos chains. The wallet is created asynchronously — status starts as 'creating' and transitions to 'ready' once MPC key generation completes. Use wait_for_para_wallet_ready to poll until ready.";
+    const DESCRIPTION: &'static str = "Create a new Para MPC wallet. Supports EVM, Solana, and Cosmos chains. The wallet is created asynchronously — status starts as 'creating' and transitions to 'ready' once MPC key generation completes. Use wait_for_para_wallet_ready to poll until ready.";
 
     fn run(_app: &Self::App, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = para_client()?;
@@ -84,8 +83,7 @@ impl DynAomiTool for GetParaWallet {
     type Args = GetParaWalletArgs;
 
     const NAME: &'static str = "get_para_wallet";
-    const DESCRIPTION: &'static str =
-        "Fetch details for a single Para wallet by ID. Returns status, address, publicKey, and type.";
+    const DESCRIPTION: &'static str = "Fetch details for a single Para wallet by ID. Returns status, address, publicKey, and type.";
 
     fn run(_app: &Self::App, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         para_client()?.get_wallet(&args.api_key, &args.wallet_id)
@@ -107,8 +105,7 @@ impl DynAomiTool for ListParaWallets {
     type Args = ListParaWalletsArgs;
 
     const NAME: &'static str = "list_para_wallets";
-    const DESCRIPTION: &'static str =
-        "Batch-fetch multiple Para wallets by their IDs (max 10). Para has no native list endpoint, so wallets are fetched individually. Each result includes the wallet data or a per-item error.";
+    const DESCRIPTION: &'static str = "Batch-fetch multiple Para wallets by their IDs (max 10). Para has no native list endpoint, so wallets are fetched individually. Each result includes the wallet data or a per-item error.";
 
     fn run(_app: &Self::App, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = para_client()?;
@@ -119,10 +116,12 @@ impl DynAomiTool for ListParaWallets {
 
         let wallets: Vec<Value> = wallet_ids
             .iter()
-            .map(|wallet_id| match client.get_wallet(&args.api_key, wallet_id) {
-                Ok(data) => json!({ "wallet_id": wallet_id, "data": data }),
-                Err(error) => json!({ "wallet_id": wallet_id, "error": error }),
-            })
+            .map(
+                |wallet_id| match client.get_wallet(&args.api_key, wallet_id) {
+                    Ok(data) => json!({ "wallet_id": wallet_id, "data": data }),
+                    Err(error) => json!({ "wallet_id": wallet_id, "error": error }),
+                },
+            )
             .collect();
 
         let count = wallets.len();
@@ -147,8 +146,7 @@ impl DynAomiTool for SignRawWithParaWallet {
     type Args = SignRawWithParaWalletArgs;
 
     const NAME: &'static str = "sign_raw_with_para_wallet";
-    const DESCRIPTION: &'static str =
-        "Sign arbitrary raw data with a Para MPC wallet. The data must be a 0x-prefixed hex string. The wallet must have status 'ready' before signing.";
+    const DESCRIPTION: &'static str = "Sign arbitrary raw data with a Para MPC wallet. The data must be a 0x-prefixed hex string. The wallet must have status 'ready' before signing.";
 
     fn run(_app: &Self::App, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         validate_sign_raw_data(&args.data)?;
@@ -173,8 +171,7 @@ impl DynAomiTool for WaitForParaWalletReady {
     type Args = WaitForParaWalletReadyArgs;
 
     const NAME: &'static str = "wait_for_para_wallet_ready";
-    const DESCRIPTION: &'static str =
-        "Poll a Para wallet every 2 seconds until its status becomes 'ready' (MPC key generation complete). Returns wallet details when ready, or an error on timeout or wallet creation failure.";
+    const DESCRIPTION: &'static str = "Poll a Para wallet every 2 seconds until its status becomes 'ready' (MPC key generation complete). Returns wallet details when ready, or an error on timeout or wallet creation failure.";
 
     fn run(_app: &Self::App, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = para_client()?;
@@ -201,7 +198,9 @@ impl DynAomiTool for WaitForParaWalletReady {
             if Instant::now() >= deadline {
                 return Err(format!(
                     "Wallet '{}' did not become ready within {}ms. Current status is still '{}'. You can call wait_for_para_wallet_ready again to keep polling.",
-                    args.wallet_id, args.max_wait_ms.unwrap_or(30_000), status
+                    args.wallet_id,
+                    args.max_wait_ms.unwrap_or(30_000),
+                    status
                 ));
             }
 
@@ -256,17 +255,30 @@ mod tests {
             "userIdentifierType": "EMAIL",
         });
         println!("\n>>> POST /v1/wallets");
-        println!("    request body: {}", serde_json::to_string_pretty(&body).unwrap());
+        println!(
+            "    request body: {}",
+            serde_json::to_string_pretty(&body).unwrap()
+        );
 
-        let created = client.create_wallet(&key, body).expect("create_wallet failed");
-        println!("    response: {}", serde_json::to_string_pretty(&created).unwrap());
+        let created = client
+            .create_wallet(&key, body)
+            .expect("create_wallet failed");
+        println!(
+            "    response: {}",
+            serde_json::to_string_pretty(&created).unwrap()
+        );
 
         let wallet_id = created["id"].as_str().expect("response missing 'id'");
         assert!(!wallet_id.is_empty(), "wallet id should not be empty");
 
         println!("\n>>> GET /v1/wallets/{wallet_id}");
-        let fetched = client.get_wallet(&key, wallet_id).expect("get_wallet failed");
-        println!("    response: {}", serde_json::to_string_pretty(&fetched).unwrap());
+        let fetched = client
+            .get_wallet(&key, wallet_id)
+            .expect("get_wallet failed");
+        println!(
+            "    response: {}",
+            serde_json::to_string_pretty(&fetched).unwrap()
+        );
 
         assert_eq!(fetched["id"].as_str(), Some(wallet_id));
         assert!(
@@ -296,7 +308,10 @@ mod tests {
             "userIdentifierType": "EMAIL",
         });
         println!("\n>>> POST /v1/wallets (bad api key)");
-        println!("    request body: {}", serde_json::to_string_pretty(&body).unwrap());
+        println!(
+            "    request body: {}",
+            serde_json::to_string_pretty(&body).unwrap()
+        );
 
         let err = client.create_wallet("invalid-key", body).unwrap_err();
         println!("    error: {err}");
@@ -319,22 +334,38 @@ mod tests {
             "userIdentifierType": "EMAIL",
         });
         println!("\n>>> POST /v1/wallets (create for signing)");
-        println!("    request body: {}", serde_json::to_string_pretty(&body).unwrap());
+        println!(
+            "    request body: {}",
+            serde_json::to_string_pretty(&body).unwrap()
+        );
 
-        let created = client.create_wallet(&key, body).expect("create_wallet failed");
-        println!("    response: {}", serde_json::to_string_pretty(&created).unwrap());
+        let created = client
+            .create_wallet(&key, body)
+            .expect("create_wallet failed");
+        println!(
+            "    response: {}",
+            serde_json::to_string_pretty(&created).unwrap()
+        );
 
-        let wallet_id = created["id"].as_str().expect("response missing 'id'").to_string();
+        let wallet_id = created["id"]
+            .as_str()
+            .expect("response missing 'id'")
+            .to_string();
 
         // Poll until ready (max 30s).
         println!("\n>>> polling GET /v1/wallets/{wallet_id} until ready...");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         loop {
-            let wallet = client.get_wallet(&key, &wallet_id).expect("get_wallet failed");
+            let wallet = client
+                .get_wallet(&key, &wallet_id)
+                .expect("get_wallet failed");
             let status = wallet["status"].as_str().unwrap_or("unknown");
             println!("    status: {status}");
             if status == "ready" {
-                println!("    wallet ready: {}", serde_json::to_string_pretty(&wallet).unwrap());
+                println!(
+                    "    wallet ready: {}",
+                    serde_json::to_string_pretty(&wallet).unwrap()
+                );
                 break;
             }
             if std::time::Instant::now() >= deadline {
@@ -350,7 +381,10 @@ mod tests {
         let result = client
             .sign_raw(&key, &wallet_id, sign_data)
             .expect("sign_raw failed");
-        println!("    response: {}", serde_json::to_string_pretty(&result).unwrap());
+        println!(
+            "    response: {}",
+            serde_json::to_string_pretty(&result).unwrap()
+        );
 
         assert!(
             result.get("signature").is_some() || result.get("sig").is_some(),
@@ -373,9 +407,17 @@ mod tests {
                     "userIdentifier": uid,
                     "userIdentifierType": "EMAIL",
                 });
-                println!("    POST /v1/wallets body: {}", serde_json::to_string_pretty(&body).unwrap());
-                let created = client.create_wallet(&key, body).expect("create_wallet failed");
-                println!("    response: {}", serde_json::to_string_pretty(&created).unwrap());
+                println!(
+                    "    POST /v1/wallets body: {}",
+                    serde_json::to_string_pretty(&body).unwrap()
+                );
+                let created = client
+                    .create_wallet(&key, body)
+                    .expect("create_wallet failed");
+                println!(
+                    "    response: {}",
+                    serde_json::to_string_pretty(&created).unwrap()
+                );
                 created["id"].as_str().unwrap().to_string()
             })
             .collect();
@@ -387,7 +429,10 @@ mod tests {
                 println!("    GET /v1/wallets/{wallet_id}");
                 match client.get_wallet(&key, wallet_id) {
                     Ok(data) => {
-                        println!("    response: {}", serde_json::to_string_pretty(&data).unwrap());
+                        println!(
+                            "    response: {}",
+                            serde_json::to_string_pretty(&data).unwrap()
+                        );
                         json!({ "wallet_id": wallet_id, "data": data })
                     }
                     Err(error) => {

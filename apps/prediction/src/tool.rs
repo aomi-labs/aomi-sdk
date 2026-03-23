@@ -2,7 +2,7 @@ use crate::client::*;
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 impl DynAomiTool for SearchPolymarket {
     type App = PredictionApp;
@@ -230,7 +230,9 @@ impl DynAomiTool for ResolvePolymarketTradeIntent {
         let selection_reason = if candidates.is_empty() {
             Some("No relevant active Polymarket markets found for this request.")
         } else if needs_selection {
-            Some("Multiple relevant markets match this request. User must choose a candidate_id before placing an order.")
+            Some(
+                "Multiple relevant markets match this request. User must choose a candidate_id before placing an order.",
+            )
         } else {
             None
         };
@@ -288,7 +290,7 @@ impl DynAomiTool for BuildPolymarketOrderPreview {
         let size_mode = match (args.size_usd, args.shares) {
             (Some(_), Some(_)) => return Err("Provide either size_usd or shares, not both.".into()),
             (None, None) => {
-                return Err("Missing order size. Provide either size_usd or shares.".into())
+                return Err("Missing order size. Provide either size_usd or shares.".into());
             }
             (Some(v), None) if v > 0.0 => ("usd", v),
             (None, Some(v)) if v > 0.0 => ("shares", v),

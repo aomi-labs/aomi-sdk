@@ -17,9 +17,17 @@ fn sync_tool_returns_ready_without_polling() {
         .expect("start should succeed");
 
     match start {
-        DynToolStart::Ready { result: DynToolResult::Ok(value) } => {
-            assert_eq!(value.get("greeting").and_then(|value| value.as_str()), Some("Hello, Alice!"));
-            assert_eq!(value.get("session_id").and_then(|value| value.as_str()), Some("ffi-sync"));
+        DynToolStart::Ready {
+            result: DynToolResult::Ok(value),
+        } => {
+            assert_eq!(
+                value.get("greeting").and_then(|value| value.as_str()),
+                Some("Hello, Alice!")
+            );
+            assert_eq!(
+                value.get("session_id").and_then(|value| value.as_str()),
+                Some("ffi-sync")
+            );
         }
         other => panic!("expected immediate ready result, got {other:?}"),
     }
@@ -45,8 +53,14 @@ fn async_tool_reaches_terminal_update_then_disappears() {
     let mut counts = Vec::new();
 
     loop {
-        assert!(Instant::now() < deadline, "timed out waiting for terminal async update");
-        match handle.call_tool_poll(execution_id).expect("poll should succeed") {
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for terminal async update"
+        );
+        match handle
+            .call_tool_poll(execution_id)
+            .expect("poll should succeed")
+        {
             AsyncExecPool::Pending => std::thread::sleep(Duration::from_millis(5)),
             AsyncExecPool::Update { value, has_more } => {
                 counts.push(
@@ -55,7 +69,10 @@ fn async_tool_reaches_terminal_update_then_disappears() {
                         .and_then(|value| value.as_i64())
                         .expect("count should be present"),
                 );
-                assert_eq!(value.get("tag").and_then(|value| value.as_str()), Some("lifecycle"));
+                assert_eq!(
+                    value.get("tag").and_then(|value| value.as_str()),
+                    Some("lifecycle")
+                );
                 if !has_more {
                     break;
                 }
@@ -66,7 +83,9 @@ fn async_tool_reaches_terminal_update_then_disappears() {
 
     assert_eq!(counts, vec![1, 2, 3]);
     assert!(matches!(
-        handle.call_tool_poll(execution_id).expect("terminal execution should be removed"),
+        handle
+            .call_tool_poll(execution_id)
+            .expect("terminal execution should be removed"),
         AsyncExecPool::NotFound
     ));
 }
@@ -94,8 +113,14 @@ fn cancel_flow_returns_canceled_then_not_found() {
 
     let deadline = Instant::now() + Duration::from_secs(1);
     loop {
-        assert!(Instant::now() < deadline, "timed out waiting for canceled poll");
-        match handle.call_tool_poll(execution_id).expect("poll should deserialize") {
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for canceled poll"
+        );
+        match handle
+            .call_tool_poll(execution_id)
+            .expect("poll should deserialize")
+        {
             AsyncExecPool::Pending => std::thread::sleep(Duration::from_millis(5)),
             AsyncExecPool::Canceled => break,
             other => panic!("expected canceled terminal event, got {other:?}"),
@@ -103,7 +128,9 @@ fn cancel_flow_returns_canceled_then_not_found() {
     }
 
     assert!(matches!(
-        handle.call_tool_poll(execution_id).expect("canceled execution should be removed"),
+        handle
+            .call_tool_poll(execution_id)
+            .expect("canceled execution should be removed"),
         AsyncExecPool::NotFound
     ));
 }

@@ -24,6 +24,9 @@ pub use serde_json;
 /// Internal helpers for macros. Do not use directly.
 #[doc(hidden)]
 pub mod __private {
-    pub use crate::ffi::{free_c_string, parse_c_str, serialize_to_c_ptr, string_to_c_ptr};
+    pub use crate::ffi::{
+        free_c_string, log_async_tool_error, log_poll_error, log_tool_exec_error,
+        log_tool_start_error, parse_c_str, serialize_to_c_ptr, string_to_c_ptr,
+    };
     pub use crate::types::AsyncExecQueue;
 }

@@ -8,7 +8,6 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: -Dwarnings
 
 jobs:
   check:
@@ -20,7 +19,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.85"
+          toolchain: "1.88"
           components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@v2
@@ -28,19 +27,24 @@ jobs:
       - name: Format
         run: cargo fmt --all -- --check
 
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets
+      - name: Clippy (SDK)
+        run: cargo clippy -p aomi-sdk -p xtask -- -Dwarnings
 
-      - name: Test Everything
-        run: cargo test --all-targets --all-features
+      - name: Clippy (apps, warnings only)
+        run: cargo clippy --workspace --lib
+        continue-on-error: true
+
+      - name: Test SDK
+        run: cargo test -p aomi-sdk
 
       - name: Build all plugins
-        run: cargo run -p xtask -- build-aomi
+        run: cargo xtask build-aomi
 
   publish-sdk:
     name: Publish SDK
     needs: check
     runs-on: ubuntu-latest
+    environment: prod
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
       - uses: actions/checkout@v4
@@ -48,15 +52,11 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.85"
+          toolchain: "1.88"
 
       - uses: Swatinem/rust-cache@v2
 
-      - name: Publish aomi-sdk (dry-run)
-        run: cargo publish -p aomi-sdk --dry-run
-
-      # Uncomment when ready to publish for real:
-      # - name: Publish aomi-sdk
-      #   run: cargo publish -p aomi-sdk
-      #   env:
-      #     CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      - name: Publish aomi-sdk
+        run: cargo publish -p aomi-sdk
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

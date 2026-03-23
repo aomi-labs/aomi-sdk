@@ -49,6 +49,32 @@ pub unsafe fn free_c_string(ptr: *mut c_char) {
     }
 }
 
+// ── Tracing helpers for macro-generated code ────────────────────────────
+
+/// Log a tool-start error (null pointer, UTF-8, panic).
+#[doc(hidden)]
+pub fn log_tool_start_error(tool: &str, error: &str) {
+    tracing::error!(tool = tool, error = error, "tool start failed");
+}
+
+/// Log a sync tool execution error.
+#[doc(hidden)]
+pub fn log_tool_exec_error(tool: &str, error: &str) {
+    tracing::error!(tool = tool, error = error, "tool execution failed");
+}
+
+/// Log an async tool failure.
+#[doc(hidden)]
+pub fn log_async_tool_error(tool: &str, error: &str) {
+    tracing::error!(tool = tool, error = error, "async tool failed");
+}
+
+/// Log a poll-level error.
+#[doc(hidden)]
+pub fn log_poll_error(execution_id: u64, error: &str) {
+    tracing::error!(execution_id = execution_id, error = error, "poll error");
+}
+
 /// Generate ABI v2 C entry points for a dynamic plugin app.
 #[macro_export]
 macro_rules! declare_dyn {
@@ -58,7 +84,10 @@ macro_rules! declare_dyn {
             app: $app_type,
             next_execution_id: ::std::sync::atomic::AtomicU64,
             executions: ::std::sync::Mutex<
-                ::std::collections::HashMap<u64, ::std::sync::Arc<$crate::__private::AsyncExecQueue>>,
+                ::std::collections::HashMap<
+                    u64,
+                    ::std::sync::Arc<$crate::__private::AsyncExecQueue>,
+                >,
             >,
         }
 
@@ -104,10 +133,10 @@ macro_rules! declare_dyn {
             ctx_json: *const ::std::ffi::c_char,
         ) -> *mut ::std::ffi::c_char {
             if ptr.is_null() || name.is_null() || args_json.is_null() || ctx_json.is_null() {
+                let err = "null pointer passed to aomi_async_tool_start";
+                $crate::__private::log_tool_start_error("<unknown>", err);
                 return $crate::__private::serialize_to_c_ptr(&$crate::DynToolStart::Ready {
-                    result: $crate::DynToolResult::Err(
-                        "null pointer passed to aomi_async_tool_start".to_string(),
-                    ),
+                    result: $crate::DynToolResult::Err(err.to_string()),
                 });
             }
 
@@ -155,12 +184,13 @@ macro_rules! declare_dyn {
                         execution_id,
                     })
                 }
-                Err(_) => $crate::__private::serialize_to_c_ptr(&$crate::DynToolStart::Ready {
-                    result: $crate::DynToolResult::Err(format!(
-                        "plugin panicked during start of tool '{}'",
-                        name_str
-                    )),
-                }),
+                Err(_) => {
+                    let err = format!("plugin panicked during start of tool '{}'", name_str);
+                    $crate::__private::log_tool_start_error(&name_str, &err);
+                    $crate::__private::serialize_to_c_ptr(&$crate::DynToolStart::Ready {
+                        result: $crate::DynToolResult::Err(err),
+                    })
+                }
             }
         }
 
@@ -170,8 +200,10 @@ macro_rules! declare_dyn {
             execution_id: u64,
         ) -> *mut ::std::ffi::c_char {
             if ptr.is_null() {
+                let err = "null pointer passed to aomi_dyn_exec_poll";
+                $crate::__private::log_poll_error(execution_id, err);
                 return $crate::__private::serialize_to_c_ptr(&$crate::AsyncExecPool::Error {
-                    message: "null pointer passed to aomi_dyn_exec_poll".to_string(),
+                    message: err.to_string(),
                 });
             }
 
@@ -195,6 +227,10 @@ macro_rules! declare_dyn {
                 } | $crate::AsyncExecPool::Error { .. }
                     | $crate::AsyncExecPool::Canceled
             );
+
+            if let $crate::AsyncExecPool::Error { ref message } = poll {
+                $crate::__private::log_poll_error(execution_id, message);
+            }
 
             if terminal {
                 if let Ok(mut executions) = instance.executions.lock() {
@@ -342,22 +378,30 @@ macro_rules! __dispatch_tool {
                 <$tool_type as $crate::DynAomiTool>::NAME => {
                     let args = match $crate::parse_dyn_args::<<$tool_type as $crate::DynAomiTool>::Args>($args_json) {
                         Ok(args) => args,
-                        Err(err) => return $crate::DynToolDispatch::Ready($crate::DynToolResult::err(err)),
+                        Err(ref err) => {
+                            $crate::__private::log_tool_exec_error($name, err);
+                            return $crate::DynToolDispatch::Ready($crate::DynToolResult::err(err));
+                        }
                     };
 
                     let ctx = match $crate::parse_dyn_ctx($ctx_json) {
                         Ok(ctx) => ctx,
-                        Err(err) => return $crate::DynToolDispatch::Ready($crate::DynToolResult::err(err)),
+                        Err(ref err) => {
+                            $crate::__private::log_tool_exec_error($name, err);
+                            return $crate::DynToolDispatch::Ready($crate::DynToolResult::err(err));
+                        }
                     };
 
                     if <$tool_type as $crate::DynAomiTool>::IS_ASYNC {
+                        let tool_name = $name.to_string();
                         let app_clone = $self.clone();
                         let sink_clone = $sink.clone();
                         ::std::thread::spawn(move || {
                             let result = <$tool_type as $crate::DynAomiTool>::run_async(
                                 &app_clone, args, ctx, sink_clone.clone(),
                             );
-                            if let Err(err) = result {
+                            if let Err(ref err) = result {
+                                $crate::__private::log_async_tool_error(&tool_name, err);
                                 sink_clone.fail(err);
                             }
                         });
@@ -365,12 +409,19 @@ macro_rules! __dispatch_tool {
                     } else {
                         match <$tool_type as $crate::DynAomiTool>::run($self, args, ctx) {
                             Ok(value) => $crate::DynToolDispatch::Ready($crate::DynToolResult::ok(value)),
-                            Err(err) => $crate::DynToolDispatch::Ready($crate::DynToolResult::err(err)),
+                            Err(ref err) => {
+                                $crate::__private::log_tool_exec_error($name, err);
+                                $crate::DynToolDispatch::Ready($crate::DynToolResult::err(err))
+                            }
                         }
                     }
                 }
             )*
-            _ => $crate::DynToolDispatch::Ready($crate::DynToolResult::err(format!("unknown tool: {}", $name))),
+            _ => {
+                let err = format!("unknown tool: {}", $name);
+                $crate::__private::log_tool_exec_error($name, &err);
+                $crate::DynToolDispatch::Ready($crate::DynToolResult::err(err))
+            }
         }
     };
 }
