@@ -286,9 +286,9 @@ impl DynAsyncSink {
 
     /// Emit a terminal error.
     pub fn fail(&self, msg: impl Into<String>) {
-        self.queue.push(AsyncExecPool::Error {
-            message: msg.into(),
-        });
+        let message = msg.into();
+        tracing::error!(error = %message, "async tool execution failed");
+        self.queue.push(AsyncExecPool::Error { message });
     }
 
     /// Check whether the host canceled this execution.
