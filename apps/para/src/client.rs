@@ -14,7 +14,7 @@ static PARA_CLIENT: OnceLock<Result<ParaClient, String>> = OnceLock::new();
 
 pub(crate) fn para_client() -> Result<&'static ParaClient, String> {
     PARA_CLIENT
-        .get_or_init(|| ParaClient::new())
+        .get_or_init(ParaClient::new)
         .as_ref()
         .map_err(|e| e.clone())
 }

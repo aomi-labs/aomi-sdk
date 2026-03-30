@@ -2,17 +2,21 @@
 members = [
     "sdk",
     "sdk/examples/hello-app",
+    "sdk/examples/app-template-http",
+    "xtask",
+]
+exclude = [
+    "apps/admin",
     "apps/defi",
     "apps/delta",
     "apps/khalani",
+    "apps/l2beat",
     "apps/molinar",
     "apps/para",
     "apps/polymarket",
     "apps/prediction",
     "apps/social",
     "apps/x",
-    "sdk/examples/app-template-http",
-    "xtask",
 ]
 resolver = "2"
 

@@ -540,76 +540,76 @@ impl Aggregator {
             request = request.header("x-lifi-api-key", api_key);
         }
 
-        if let Ok(quote) = Self::send_json(request, "lifi", "bridge quote") {
-            if let Some(estimate) = quote.get("estimate") {
-                let to_amount = estimate
-                    .get("toAmount")
-                    .and_then(Value::as_str)
-                    .and_then(|s| s.parse::<f64>().ok())
-                    .map(|raw| raw / 10f64.powi(to_decimals as i32));
-                let min_received = estimate
-                    .get("toAmountMin")
-                    .and_then(Value::as_str)
-                    .and_then(|s| s.parse::<f64>().ok())
-                    .map(|raw| raw / 10f64.powi(to_decimals as i32));
-                let fee_costs = estimate
-                    .get("feeCosts")
-                    .and_then(Value::as_array)
-                    .into_iter()
-                    .flatten()
-                    .chain(
-                        estimate
-                            .get("gasCosts")
-                            .and_then(Value::as_array)
-                            .into_iter()
-                            .flatten(),
-                    )
-                    .filter_map(|cost| {
-                        cost.get("amountUSD")
-                            .and_then(Value::as_str)
-                            .and_then(|s| s.parse::<f64>().ok())
-                    })
-                    .sum::<f64>();
-                let bridge_name = quote
-                    .get("toolDetails")
-                    .and_then(|details| details.get("name"))
-                    .and_then(Value::as_str)
-                    .or_else(|| quote.get("tool").and_then(Value::as_str))
-                    .unwrap_or("unknown");
-                let route_summary: Vec<Value> = estimate
-                    .get("steps")
-                    .and_then(Value::as_array)
-                    .map(|steps| {
-                        steps
-                            .iter()
-                            .filter_map(|step| step.get("tool").and_then(Value::as_str))
-                            .map(|tool| Value::String(tool.to_string()))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                let executable_tx = quote.get("transactionRequest").map(|tx| {
-                    json!({
-                        "to": tx.get("to").cloned().unwrap_or(Value::Null),
-                        "data": tx.get("data").cloned().unwrap_or(Value::Null),
-                        "value": tx.get("value").cloned().unwrap_or(Value::Null),
-                        "gas_limit": tx.get("gasLimit").cloned().unwrap_or(Value::Null),
-                    })
-                });
+        if let Ok(quote) = Self::send_json(request, "lifi", "bridge quote")
+            && let Some(estimate) = quote.get("estimate")
+        {
+            let to_amount = estimate
+                .get("toAmount")
+                .and_then(Value::as_str)
+                .and_then(|s| s.parse::<f64>().ok())
+                .map(|raw| raw / 10f64.powi(to_decimals as i32));
+            let min_received = estimate
+                .get("toAmountMin")
+                .and_then(Value::as_str)
+                .and_then(|s| s.parse::<f64>().ok())
+                .map(|raw| raw / 10f64.powi(to_decimals as i32));
+            let fee_costs = estimate
+                .get("feeCosts")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .chain(
+                    estimate
+                        .get("gasCosts")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flatten(),
+                )
+                .filter_map(|cost| {
+                    cost.get("amountUSD")
+                        .and_then(Value::as_str)
+                        .and_then(|s| s.parse::<f64>().ok())
+                })
+                .sum::<f64>();
+            let bridge_name = quote
+                .get("toolDetails")
+                .and_then(|details| details.get("name"))
+                .and_then(Value::as_str)
+                .or_else(|| quote.get("tool").and_then(Value::as_str))
+                .unwrap_or("unknown");
+            let route_summary: Vec<Value> = estimate
+                .get("steps")
+                .and_then(Value::as_array)
+                .map(|steps| {
+                    steps
+                        .iter()
+                        .filter_map(|step| step.get("tool").and_then(Value::as_str))
+                        .map(|tool| Value::String(tool.to_string()))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let executable_tx = quote.get("transactionRequest").map(|tx| {
+                json!({
+                    "to": tx.get("to").cloned().unwrap_or(Value::Null),
+                    "data": tx.get("data").cloned().unwrap_or(Value::Null),
+                    "value": tx.get("value").cloned().unwrap_or(Value::Null),
+                    "gas_limit": tx.get("gasLimit").cloned().unwrap_or(Value::Null),
+                })
+            });
 
-                return Ok(json!({
-                    "from": format!("{amount} {} on {}", from_token.to_uppercase(), from_chain.to_lowercase()),
-                    "to": format!("{} on {}", to_token.to_uppercase(), to_chain.to_lowercase()),
-                    "to_amount_estimate": to_amount.map(|v| format!("{v:.6}")),
-                    "min_received": min_received.map(|v| format!("{v:.6}")),
-                    "bridge": bridge_name,
-                    "estimated_duration_seconds": estimate.get("executionDuration").cloned().unwrap_or(Value::Null),
-                    "estimated_fee_usd": if fee_costs > 0.0 { Some(format!("{fee_costs:.2}")) } else { None },
-                    "route_summary": route_summary,
-                    "executable_tx": executable_tx,
-                    "execution_supported": executable_tx.is_some(),
-                    "warning": Value::Null,
-                }));
-            }
+            return Ok(json!({
+                "from": format!("{amount} {} on {}", from_token.to_uppercase(), from_chain.to_lowercase()),
+                "to": format!("{} on {}", to_token.to_uppercase(), to_chain.to_lowercase()),
+                "to_amount_estimate": to_amount.map(|v| format!("{v:.6}")),
+                "min_received": min_received.map(|v| format!("{v:.6}")),
+                "bridge": bridge_name,
+                "estimated_duration_seconds": estimate.get("executionDuration").cloned().unwrap_or(Value::Null),
+                "estimated_fee_usd": if fee_costs > 0.0 { Some(format!("{fee_costs:.2}")) } else { None },
+                "route_summary": route_summary,
+                "executable_tx": executable_tx,
+                "execution_supported": executable_tx.is_some(),
+                "warning": Value::Null,
+            }));
         }
 
         let price_client = DefiLamaClient::new()?;

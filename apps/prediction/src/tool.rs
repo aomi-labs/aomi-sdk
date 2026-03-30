@@ -312,10 +312,10 @@ impl DynAomiTool for BuildPolymarketOrderPreview {
             _ => return Err("outcome must be YES or NO".into()),
         };
 
-        if let Some(price) = args.limit_price {
-            if !(0.0..=1.0).contains(&price) || price == 0.0 {
-                return Err("limit_price must be within (0, 1].".into());
-            }
+        if let Some(price) = args.limit_price
+            && (!(0.0..=1.0).contains(&price) || price == 0.0)
+        {
+            return Err("limit_price must be within (0, 1].".into());
         }
 
         let client = PolymarketClient::new()?;

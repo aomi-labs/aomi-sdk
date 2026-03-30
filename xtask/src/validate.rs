@@ -52,6 +52,10 @@ fn namespace_tools() -> HashMap<&'static str, Vec<&'static str>> {
     m
 }
 
+fn private_namespaces() -> &'static [&'static str] {
+    &["common", "database", "forge"]
+}
+
 // ── FFI helpers ──────────────────────────────────────────────────────────────
 
 fn read_manifest(path: &Path) -> Result<DynManifest, String> {
@@ -68,17 +72,34 @@ fn read_manifest(path: &Path) -> Result<DynManifest, String> {
 ///
 /// Returns a list of error messages (empty = pass).
 pub fn validate_plugin(lib_path: &Path) -> Vec<String> {
-    let mut errors = Vec::new();
-
     let manifest = match read_manifest(lib_path) {
         Ok(m) => m,
         Err(e) => {
-            errors.push(format!("{}: {e}", lib_path.display()));
-            return errors;
+            return vec![format!("{}: {e}", lib_path.display())];
         }
     };
 
+    validate_manifest(&manifest)
+}
+
+fn validate_manifest(manifest: &DynManifest) -> Vec<String> {
+    let mut errors = Vec::new();
+
     let ns_tools = namespace_tools();
+
+    if let Some(ref declared) = manifest.namespaces {
+        for ns in declared {
+            if private_namespaces()
+                .iter()
+                .any(|private_ns| private_ns == &ns.as_str())
+            {
+                errors.push(format!(
+                    "{}: namespace '{}' is private to the host and not allowed in aomi-apps",
+                    manifest.name, ns
+                ));
+            }
+        }
+    }
 
     // Collect all host-side tool names the plugin will inherit.
     let mut inherited: HashSet<&str> = HashSet::new();
@@ -112,4 +133,33 @@ pub fn validate_plugin(lib_path: &Path) -> Vec<String> {
     }
 
     errors
+}
+
+#[cfg(test)]
+mod tests {
+    use aomi_sdk::{DYN_ABI_VERSION, DynManifest, DynToolMetadata};
+
+    #[test]
+    fn validate_rejects_private_host_namespaces() {
+        let manifest = DynManifest {
+            abi_version: DYN_ABI_VERSION,
+            name: "bad-app".to_string(),
+            version: "0.1.0".to_string(),
+            preamble: "x".to_string(),
+            tools: vec![DynToolMetadata {
+                name: "bad_tool".to_string(),
+                app: "bad-app".to_string(),
+                description: "x".to_string(),
+                parameters_schema: aomi_sdk::serde_json::json!({}),
+                supports_async: false,
+                namespace: None,
+            }],
+            namespaces: Some(vec!["database".to_string()]),
+        };
+
+        let errors = super::validate_manifest(&manifest);
+
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("namespace 'database' is private"));
+    }
 }
