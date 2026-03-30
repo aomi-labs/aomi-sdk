@@ -1,0 +1,166 @@
+name: Release Plugins
+
+on:
+  push:
+    branches:
+      - publish
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: release-plugins
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      tag: ${{ steps.resolve.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version and tag
+        id: resolve
+        run: |
+          VERSION=$(grep '^version' sdk/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          TAG="apps-v${VERSION}"
+
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            MAJOR=$(echo "$VERSION" | cut -d. -f1)
+            MINOR=$(echo "$VERSION" | cut -d. -f2)
+            PATCH=$(echo "$VERSION" | cut -d. -f3)
+            while git rev-parse "apps-v${MAJOR}.${MINOR}.$((++PATCH))" >/dev/null 2>&1; do
+              true
+            done
+            VERSION="${MAJOR}.${MINOR}.${PATCH}"
+            TAG="apps-v${VERSION}"
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "$TAG" -m "Auto-tagged from publish branch"
+          git push origin "$TAG"
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Resolved: version=$VERSION tag=$TAG"
+
+  build:
+    name: Build plugins (${{ matrix.target }})
+    needs: resolve
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            target: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.88"
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Build all plugins
+        run: cargo xtask build-aomi --release --target ${{ matrix.target }}
+
+      - name: Generate manifest.json
+        run: |
+          python3 <<'PY'
+          import hashlib
+          import json
+          import pathlib
+          import re
+
+          repo = pathlib.Path.cwd()
+          plugins_dir = repo / "plugins"
+          sdk_types = (repo / "sdk" / "src" / "types.rs").read_text()
+          abi_match = re.search(r"pub const DYN_ABI_VERSION: u32 = (\d+);", sdk_types)
+          if abi_match is None:
+              raise SystemExit("failed to read DYN_ABI_VERSION from sdk/src/types.rs")
+
+          plugins = {}
+          for path in sorted(plugins_dir.iterdir()):
+              if not path.is_file() or path.name == "manifest.json":
+                  continue
+              plugins[path.stem] = {
+                  "file": path.name,
+                  "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+              }
+
+          manifest = {
+              "version": "${{ needs.resolve.outputs.version }}",
+              "abi_version": int(abi_match.group(1)),
+              "target": "${{ matrix.target }}",
+              "commit": "${{ github.sha }}",
+              "plugins": plugins,
+          }
+
+          manifest_path = plugins_dir / "manifest.json"
+          manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+          print(manifest_path.read_text())
+          PY
+
+      - name: Create tarball
+        run: |
+          tar czf aomi-plugins-v${{ needs.resolve.outputs.version }}-${{ matrix.target }}.tar.gz plugins/
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugins-${{ matrix.target }}
+          path: aomi-plugins-v${{ needs.resolve.outputs.version }}-${{ matrix.target }}.tar.gz
+
+  release:
+    name: Create GitHub Release
+    needs: [resolve, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > release-notes.md <<EOF
+          Pre-built plugin binaries for the Aomi runtime.
+
+          ## Assets
+          - \`aomi-plugins-v${{ needs.resolve.outputs.version }}-x86_64-unknown-linux-gnu.tar.gz\` - Linux x86_64
+          - \`aomi-plugins-v${{ needs.resolve.outputs.version }}-aarch64-apple-darwin.tar.gz\` - macOS ARM64
+
+          ## Consumption
+          product-mono downloads these release assets using \`AOMI_PLUGINS_REPO\` and \`AOMI_PLUGINS_VERSION\`.
+          EOF
+
+          if gh release view "${{ needs.resolve.outputs.tag }}" >/dev/null 2>&1; then
+            gh release upload "${{ needs.resolve.outputs.tag }}" dist/*.tar.gz --clobber
+          else
+            gh release create "${{ needs.resolve.outputs.tag }}" \
+              --title "Plugins ${{ needs.resolve.outputs.version }}" \
+              --notes-file release-notes.md \
+              dist/*.tar.gz
+          fi

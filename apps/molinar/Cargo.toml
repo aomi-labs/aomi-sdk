@@ -8,14 +8,14 @@ description = "Molinar 3D world bot agent — Aomi dynamic plugin"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-aomi-sdk = { workspace = true }
-reqwest = { workspace = true }
-schemars = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
+aomi-sdk = { path = "../../sdk" }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
+schemars = "1.0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 
 [dev-dependencies]
-tokio = { workspace = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 [[test]]
 name = "molinar_e2e"

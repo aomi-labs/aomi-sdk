@@ -179,6 +179,11 @@ fn repo_root() -> PathBuf {
 }
 
 fn find_app_manifests(apps_dir: &Path) -> Vec<PathBuf> {
+    let tracked = tracked_app_manifests(apps_dir);
+    if !tracked.is_empty() {
+        return tracked;
+    }
+
     let mut manifests = Vec::new();
     let entries = fs::read_dir(apps_dir).unwrap_or_else(|err| {
         panic!(
@@ -201,6 +206,27 @@ fn find_app_manifests(apps_dir: &Path) -> Vec<PathBuf> {
             manifests.push(manifest);
         }
     }
+    manifests.sort();
+    manifests
+}
+
+fn tracked_app_manifests(apps_dir: &Path) -> Vec<PathBuf> {
+    let output = Command::new("git")
+        .args(["ls-files", "apps/*/Cargo.toml"])
+        .current_dir(repo_root())
+        .output();
+
+    let output = match output {
+        Ok(output) if output.status.success() => output,
+        _ => return Vec::new(),
+    };
+
+    let mut manifests = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(|line| repo_root().join(line))
+        .filter(|path| path.starts_with(apps_dir))
+        .filter(|path| path.is_file())
+        .collect::<Vec<_>>();
     manifests.sort();
     manifests
 }
@@ -395,17 +421,17 @@ fn cmd_new_app(args: &[String]) {
             r#"[package]
 name = "{name}"
 version = "0.1.0"
-edition.workspace = true
+edition = "2024"
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-aomi-sdk = {{ workspace = true }}
-reqwest = {{ workspace = true }}
-schemars = {{ workspace = true }}
-serde = {{ workspace = true }}
-serde_json = {{ workspace = true }}
+aomi-sdk = {{ path = "../../sdk" }}
+reqwest = {{ version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }}
+schemars = "1.0.4"
+serde = {{ version = "1.0", features = ["derive"] }}
+serde_json = "1.0"
 "#
         ),
     )
@@ -485,17 +511,17 @@ impl DynAomiTool for ExampleTool {{
     )
     .expect("failed to write tool.rs");
 
-    // Register in workspace Cargo.toml
+    // Register in workspace exclude list so Cargo doesn't error
     let workspace_toml_path = repo_root.join("Cargo.toml");
     let workspace_toml =
         fs::read_to_string(&workspace_toml_path).expect("failed to read workspace Cargo.toml");
 
-    let member_entry = format!("\"apps/{name}\"");
-    if !workspace_toml.contains(&member_entry) {
-        // Insert before the closing bracket of the members array
+    let exclude_entry = format!("\"apps/{name}\"");
+    if !workspace_toml.contains(&exclude_entry) {
+        // Insert before the closing bracket of the exclude array
         let new_toml = workspace_toml.replacen(
-            "    \"xtask\",\n]",
-            &format!("    \"apps/{name}\",\n    \"xtask\",\n]"),
+            "]\nresolver",
+            &format!("    \"{}\",\n]\nresolver", format!("apps/{name}")),
             1,
         );
         fs::write(&workspace_toml_path, new_toml).expect("failed to update workspace Cargo.toml");

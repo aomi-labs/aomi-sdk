@@ -285,11 +285,11 @@ impl PolymarketClient {
         if let Some(client_id) = request.client_id {
             body.insert("clientId".to_string(), Value::String(client_id));
         }
-        if let Some(extra) = request.extra_fields {
-            if let Some(extra_obj) = extra.as_object() {
-                for (key, value) in extra_obj {
-                    body.entry(key.clone()).or_insert(value.clone());
-                }
+        if let Some(extra) = request.extra_fields
+            && let Some(extra_obj) = extra.as_object()
+        {
+            for (key, value) in extra_obj {
+                body.entry(key.clone()).or_insert(value.clone());
             }
         }
 
@@ -852,16 +852,16 @@ pub(crate) fn rank_market_candidates(
 
             let mut score = overlap;
 
-            if let Some(year) = intent.year {
-                if question.contains(&year.to_string()) {
-                    score += 0.25;
-                }
+            if let Some(year) = intent.year
+                && question.contains(&year.to_string())
+            {
+                score += 0.25;
             }
 
-            if let Some(outcome) = &intent.outcome {
-                if question.to_ascii_lowercase().contains(outcome) {
-                    score += 0.05;
-                }
+            if let Some(outcome) = &intent.outcome
+                && question.to_ascii_lowercase().contains(outcome)
+            {
+                score += 0.05;
             }
 
             if let Some(volume) = m.volume_num {
@@ -959,12 +959,11 @@ pub(crate) fn extract_size_usd(raw_input: &str) -> Option<f64> {
     let normalized = normalize_text(&lower);
     let tokens: Vec<&str> = normalized.split_whitespace().collect();
     for window in tokens.windows(2) {
-        if let [num, unit] = window {
-            if ["usd", "usdc", "dollars", "dollar"].contains(unit) {
-                if let Ok(v) = num.parse::<f64>() {
-                    return Some(v);
-                }
-            }
+        if let [num, unit] = window
+            && ["usd", "usdc", "dollars", "dollar"].contains(unit)
+            && let Ok(v) = num.parse::<f64>()
+        {
+            return Some(v);
         }
     }
     None

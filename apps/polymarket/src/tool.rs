@@ -305,10 +305,10 @@ impl DynAomiTool for BuildPolymarketOrderPreview {
         let side = normalize_side(args.side.as_deref())?;
         let outcome = normalize_yes_no(&args.outcome)?;
 
-        if let Some(price) = args.limit_price {
-            if !(0.0..=1.0).contains(&price) || price == 0.0 {
-                return Err("limit_price must be within (0, 1].".to_string());
-            }
+        if let Some(price) = args.limit_price
+            && (!(0.0..=1.0).contains(&price) || price == 0.0)
+        {
+            return Err("limit_price must be within (0, 1].".to_string());
         }
 
         let client = PolymarketClient::new()?;

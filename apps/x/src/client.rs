@@ -87,10 +87,10 @@ impl<T> ApiResponse<T> {
         if let Some(success) = self.success {
             return success;
         }
-        if let Some(ref status) = self.status {
-            if status.eq_ignore_ascii_case("success") || status.eq_ignore_ascii_case("ok") {
-                return true;
-            }
+        if let Some(ref status) = self.status
+            && (status.eq_ignore_ascii_case("success") || status.eq_ignore_ascii_case("ok"))
+        {
+            return true;
         }
         if let Some(code) = self.code {
             return code == 0 || code == 200;

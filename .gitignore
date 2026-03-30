@@ -2,7 +2,9 @@
 **/target
 /.cargo-home
 /plugins
+apps/admin/
+apps/l2beat/
 .DS_Store
 .env
 .env.*
-Cargo.lock
+**/Cargo.lock

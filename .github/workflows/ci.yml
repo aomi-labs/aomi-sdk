@@ -27,12 +27,8 @@ jobs:
       - name: Format
         run: cargo fmt --all -- --check
 
-      - name: Clippy (SDK)
-        run: cargo clippy -p aomi-sdk -p xtask -- -Dwarnings
-
-      - name: Clippy (apps, warnings only)
-        run: cargo clippy --workspace --lib
-        continue-on-error: true
+      - name: Clippy (workspace)
+        run: cargo clippy --workspace --lib -- -Dwarnings
 
       - name: Test SDK
         run: cargo test -p aomi-sdk
