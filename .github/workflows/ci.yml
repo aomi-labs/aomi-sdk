@@ -13,8 +13,23 @@ jobs:
   check:
     name: Check & Test
     runs-on: ubuntu-latest
+    outputs:
+      publish_sdk: ${{ steps.sdk-version.outputs.publish_sdk }}
+      sdk_version: ${{ steps.sdk-version.outputs.sdk_version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check SDK version bump
+        id: sdk-version
+        env:
+          SDK_BASE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          python3 scripts/check_sdk_version_bump.py \
+            --base "$SDK_BASE_SHA" \
+            --head "${{ github.sha }}" \
+            --github-output "$GITHUB_OUTPUT"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -41,7 +56,7 @@ jobs:
     needs: check
     runs-on: ubuntu-latest
     environment: prod
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && needs.check.outputs.publish_sdk == 'true'
     steps:
       - uses: actions/checkout@v4
 
@@ -51,6 +66,9 @@ jobs:
           toolchain: "1.88"
 
       - uses: Swatinem/rust-cache@v2
+
+      - name: Publish summary
+        run: echo "Publishing aomi-sdk v${{ needs.check.outputs.sdk_version }}"
 
       - name: Publish aomi-sdk
         run: cargo publish -p aomi-sdk
