@@ -16,6 +16,7 @@ exclude = [
     "apps/polymarket",
     "apps/prediction",
     "apps/social",
+    "apps/test-dyn",
     "apps/x",
 ]
 resolver = "2"
