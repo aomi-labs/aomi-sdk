@@ -13,6 +13,7 @@ exclude = [
     "apps/l2beat",
     "apps/molinar",
     "apps/para",
+    "apps/para-consumer",
     "apps/polymarket",
     "apps/prediction",
     "apps/social",
