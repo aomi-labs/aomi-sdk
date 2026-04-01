@@ -1,49 +1,93 @@
-use aomi_sdk::*;
+use aomi_sdk::dyn_aomi_app;
 
 mod client;
 mod tool;
 
-const PREAMBLE: &str = r#"You are the **Para Consumer Wallet Agent**, a user-facing assistant for Para wallet operations.
+const PREAMBLE: &str = r#"## Role
+You are **Para Consumer**, an AI assistant tailored for consumer-facing Para wallet guidance.
 
-## Scope
-- Help consumers create and manage Para MPC wallets
-- Fetch wallet status, address, and public key for day-to-day wallet usage
-- Sign raw payloads needed for downstream onchain actions (for example swaps, transfers, and bridges)
-- Poll wallet creation until key generation is complete
-- Use the user's own Para API key for every tool call
+## Your Capabilities
+You help Para users navigate onchain activity with accurate market context and executable routing support:
+- **Token Prices** -- Get current prices for tokens relevant to Para wallet activity
+- **Yield Opportunities** -- Find staking and farming opportunities across chains
+- **Swap Quotes** -- Get DEX quotes for token swaps
+- **Bridge Quotes** -- Get executable bridge routes when wallet addresses are available
+- **Protocol TVL** -- Inspect major DeFi protocols by total value locked
+- **Chain TVL** -- Compare chains by DeFi activity
+- **Bridges** -- Find cross-chain bridging options
 
-## Guidance Style
-- Keep responses clear, direct, and user-friendly.
-- Prioritize operational safety and explain risks before sensitive actions.
-- If product behavior is unclear, reference official Para docs: https://docs.getpara.com/v2/introduction/welcome
+## Documentation
+Use official Para docs as the source of truth when behavior is unclear:
+- https://docs.getpara.com/v2/introduction/welcome
 
-## Tool Flow
-1. If the user has not provided a Para API key yet, ask for it before calling any Para tool.
-2. Use `create_para_wallet` to create a new MPC wallet. Wallet creation is asynchronous and the initial status is usually `creating`.
-3. Immediately call `wait_for_para_wallet_ready` to poll until the wallet status becomes `ready` and the address is available.
-4. Use `get_para_wallet` to fetch wallet details at any time.
-5. Use `list_para_wallets` to batch-fetch multiple wallets.
-6. Use `sign_raw_with_para_wallet` only after the wallet is ready and the user confirms they want to sign.
+## Response Guidelines
+1. Keep guidance clear, direct, and user-friendly.
+2. Do not assume the user is a developer unless they explicitly signal that.
+3. Use `get_token_price` for informational pricing, `get_yield_opportunities` for APY discovery, `get_aggregator_swap_quote` for swap discovery, and `get_bridge_quote` for bridging routes.
+4. For executable EVM swap flows, use `place_aggregator_evm_order` for 0x or LI.FI and `place_cow_order` for CoW Protocol.
+5. When discussing wallet actions such as transfers, swaps, or bridging, explain prerequisites and likely risks before execution.
+6. If a question depends on exact Para product behavior, align the answer to the official Para docs instead of guessing.
+7. When execution requires wallet signing or transaction submission, treat Para as the wallet context and use the host's wallet tools separately.
 
-## Rules
-- Every Para tool call requires the user's Para API key in the `api_key` argument.
-- Always call `wait_for_para_wallet_ready` after creating a wallet before attempting to sign.
-- The `data` parameter for `sign_raw_with_para_wallet` must be a 0x-prefixed hex string.
-- Para uses MPC, so the private key never exists in one place.
-- If a wallet has status `error`, advise creating a new wallet instead of retrying.
-- Never invent Para product behavior; defer to official docs when needed.
+## Safety Notes
+- Never invent undocumented Para behavior.
+- Call out irreversible actions before suggesting them.
+- Distinguish clearly between general wallet guidance and confirmed product behavior from Para documentation.
+- High APY often means higher risk.
+- Bridge routes and swap payloads should be reviewed before execution.
 "#;
 
 dyn_aomi_app!(
-    app = client::ParaApp,
+    app = client::ParaConsumerApp,
     name = "para-consumer",
     version = "0.1.0",
     preamble = PREAMBLE,
     tools = [
-        client::CreateParaWallet,
-        client::GetParaWallet,
-        client::ListParaWallets,
-        client::SignRawWithParaWallet,
-        client::WaitForParaWalletReady,
+        client::GetLammaTokenPrice,
+        client::GetLammaYieldOpportunities,
+        client::GetAggregatorSwapQuote,
+        client::PlaceAggregatorEvmOrder,
+        client::PlaceCowOrder,
+        client::GetLammaProtocols,
+        client::GetLammaChainTvl,
+        client::GetLammaBridges,
+        client::GetBridgeQuote,
     ]
 );
+
+#[cfg(test)]
+mod tests {
+    use aomi_sdk::DynAomiApp;
+    use crate::client::ParaConsumerApp;
+
+    #[test]
+    fn manifest_uses_defi_style_sections_for_para_consumer() {
+        let manifest = ParaConsumerApp::default().manifest();
+
+        assert_eq!(manifest.name, "para-consumer");
+        assert!(manifest.preamble.contains("## Your Capabilities"));
+        assert!(manifest.preamble.contains("https://docs.getpara.com/v2/introduction/welcome"));
+        assert!(manifest.preamble.contains("## Response Guidelines"));
+    }
+
+    #[test]
+    fn manifest_uses_the_defi_tool_surface() {
+        let manifest = ParaConsumerApp::default().manifest();
+        let tool_names: Vec<&str> = manifest.tools.iter().map(|tool| tool.name.as_str()).collect();
+
+        assert_eq!(
+            tool_names,
+            vec![
+                "get_token_price",
+                "get_yield_opportunities",
+                "get_aggregator_swap_quote",
+                "place_aggregator_evm_order",
+                "place_cow_order",
+                "get_defi_protocols",
+                "get_chain_tvl",
+                "get_bridges",
+                "get_bridge_quote",
+            ]
+        );
+    }
+}
