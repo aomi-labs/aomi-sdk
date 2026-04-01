@@ -117,7 +117,8 @@ impl DynAomiTool for GetLifiChains {
     type App = LifiApp;
     type Args = GetLifiChainsArgs;
     const NAME: &'static str = "get_lifi_chains";
-    const DESCRIPTION: &'static str = "List all chains supported by LI.FI. Optionally filter by chain type (e.g. EVM, SVM).";
+    const DESCRIPTION: &'static str =
+        "List all chains supported by LI.FI. Optionally filter by chain type (e.g. EVM, SVM).";
 
     fn run(_app: &LifiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = LifiClient::new()?;
@@ -133,10 +134,7 @@ impl DynAomiTool for GetLifiTokens {
 
     fn run(_app: &LifiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = LifiClient::new()?;
-        client.get_tokens(
-            args.chains.as_deref(),
-            args.chain_types.as_deref(),
-        )
+        client.get_tokens(args.chains.as_deref(), args.chain_types.as_deref())
     }
 }
 
@@ -144,7 +142,8 @@ impl DynAomiTool for GetLifiToken {
     type App = LifiApp;
     type Args = GetLifiTokenArgs;
     const NAME: &'static str = "get_lifi_token";
-    const DESCRIPTION: &'static str = "Get detailed information for a single token including decimals and price.";
+    const DESCRIPTION: &'static str =
+        "Get detailed information for a single token including decimals and price.";
 
     fn run(_app: &LifiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = LifiClient::new()?;
@@ -189,7 +188,8 @@ impl DynAomiTool for GetLifiConnections {
     type App = LifiApp;
     type Args = GetLifiConnectionsArgs;
     const NAME: &'static str = "get_lifi_connections";
-    const DESCRIPTION: &'static str = "Check available transfer pathways between chains and tokens on LI.FI.";
+    const DESCRIPTION: &'static str =
+        "Check available transfer pathways between chains and tokens on LI.FI.";
 
     fn run(_app: &LifiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = LifiClient::new()?;
@@ -206,7 +206,8 @@ impl DynAomiTool for GetLifiTools {
     type App = LifiApp;
     type Args = GetLifiToolsArgs;
     const NAME: &'static str = "get_lifi_tools";
-    const DESCRIPTION: &'static str = "List available bridges and DEX exchanges on LI.FI. Optionally filter by chain IDs.";
+    const DESCRIPTION: &'static str =
+        "List available bridges and DEX exchanges on LI.FI. Optionally filter by chain IDs.";
 
     fn run(_app: &LifiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = LifiClient::new()?;

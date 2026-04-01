@@ -465,7 +465,7 @@ pub(crate) fn normalize_token_id(token: &str) -> String {
         "mkr" | "maker" => "coingecko:maker".to_string(),
         "crv" | "curve" => "coingecko:curve-dao-token".to_string(),
         "ldo" | "lido" => "coingecko:lido-dao".to_string(),
-        _ => format!("coingecko:{}", token_lower),
+        _ => format!("coingecko:{token_lower}"),
     }
 }
 

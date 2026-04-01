@@ -171,8 +171,7 @@ impl DynAomiTool for GetZeroxGaslessChains {
     type App = ZeroxApp;
     type Args = GetZeroxGaslessChainsArgs;
     const NAME: &'static str = "get_zerox_gasless_chains";
-    const DESCRIPTION: &'static str =
-        "List all chains that support gasless swaps via the 0x API.";
+    const DESCRIPTION: &'static str = "List all chains that support gasless swaps via the 0x API.";
 
     fn run(_app: &ZeroxApp, _args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = ZeroxClient::new()?;

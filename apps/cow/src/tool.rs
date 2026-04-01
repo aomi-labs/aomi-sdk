@@ -59,8 +59,7 @@ impl DynAomiTool for GetCowOrder {
     type App = CowApp;
     type Args = GetCowOrderArgs;
     const NAME: &'static str = "get_cow_order";
-    const DESCRIPTION: &'static str =
-        "Get the full order object for a CoW Protocol order by UID (status, executed amounts, fees, etc.).";
+    const DESCRIPTION: &'static str = "Get the full order object for a CoW Protocol order by UID (status, executed amounts, fees, etc.).";
 
     fn run(_app: &CowApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = CowClient::new()?;
@@ -72,8 +71,7 @@ impl DynAomiTool for GetCowOrderStatus {
     type App = CowApp;
     type Args = GetCowOrderStatusArgs;
     const NAME: &'static str = "get_cow_order_status";
-    const DESCRIPTION: &'static str =
-        "Get the competition status of a CoW Protocol order (open/scheduled/active/solved/executing/traded/cancelled).";
+    const DESCRIPTION: &'static str = "Get the competition status of a CoW Protocol order (open/scheduled/active/solved/executing/traded/cancelled).";
 
     fn run(_app: &CowApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = CowClient::new()?;
@@ -85,17 +83,11 @@ impl DynAomiTool for GetCowUserOrders {
     type App = CowApp;
     type Args = GetCowUserOrdersArgs;
     const NAME: &'static str = "get_cow_user_orders";
-    const DESCRIPTION: &'static str =
-        "Get a paginated list of CoW Protocol orders for a given owner address, sorted by creation date.";
+    const DESCRIPTION: &'static str = "Get a paginated list of CoW Protocol orders for a given owner address, sorted by creation date.";
 
     fn run(_app: &CowApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = CowClient::new()?;
-        client.get_user_orders(
-            &args.chain,
-            &args.owner_address,
-            args.offset,
-            args.limit,
-        )
+        client.get_user_orders(&args.chain, &args.owner_address, args.offset, args.limit)
     }
 }
 
@@ -103,8 +95,7 @@ impl DynAomiTool for CancelCowOrders {
     type App = CowApp;
     type Args = CancelCowOrdersArgs;
     const NAME: &'static str = "cancel_cow_orders";
-    const DESCRIPTION: &'static str =
-        "Cancel one or more open CoW Protocol orders. Requires the cancellation signature from the order owner.";
+    const DESCRIPTION: &'static str = "Cancel one or more open CoW Protocol orders. Requires the cancellation signature from the order owner.";
 
     fn run(_app: &CowApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = CowClient::new()?;
@@ -132,9 +123,7 @@ impl DynAomiTool for GetCowTrades {
                 );
             }
             (None, None) => {
-                return Err(
-                    "[cow] provide exactly one of `owner` or `order_uid`".to_string(),
-                );
+                return Err("[cow] provide exactly one of `owner` or `order_uid`".to_string());
             }
             _ => {}
         }
@@ -179,8 +168,7 @@ impl DynAomiTool for DebugCowOrder {
     type App = CowApp;
     type Args = DebugCowOrderArgs;
     const NAME: &'static str = "debug_cow_order";
-    const DESCRIPTION: &'static str =
-        "Get the full lifecycle debug info for a CoW Protocol order, including events and auction participation.";
+    const DESCRIPTION: &'static str = "Get the full lifecycle debug info for a CoW Protocol order, including events and auction participation.";
 
     fn run(_app: &CowApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = CowClient::new()?;

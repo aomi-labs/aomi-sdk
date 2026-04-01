@@ -634,8 +634,8 @@ pub(crate) fn encode_approve_calldata(
         .map_err(|e| format!("[lifi] invalid approval amount {amount_decimal}: {e}"))?;
     let amount_hex = format!("{amount:x}");
 
-    let spender_slot = format!("{:0>64}", spender_clean);
-    let amount_slot = format!("{:0>64}", amount_hex);
+    let spender_slot = format!("{spender_clean:0>64}");
+    let amount_slot = format!("{amount_hex:0>64}");
     Ok(format!("0x{selector}{spender_slot}{amount_slot}"))
 }
 
