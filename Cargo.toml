@@ -7,10 +7,14 @@ members = [
 ]
 exclude = [
     "apps/admin",
+    "apps/cow",
     "apps/defi",
+    "apps/defillama",
     "apps/delta",
+    "apps/kalshi",
     "apps/khalani",
     "apps/l2beat",
+    "apps/lifi",
     "apps/molinar",
     "apps/para",
     "apps/para-consumer",
@@ -19,6 +23,7 @@ exclude = [
     "apps/social",
     "apps/test-dyn",
     "apps/x",
+    "apps/zerox",
 ]
 resolver = "2"
 
