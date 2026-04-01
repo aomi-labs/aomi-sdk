@@ -22,8 +22,8 @@ pub(crate) struct ZeroxClient {
 
 impl ZeroxClient {
     pub(crate) fn new() -> Result<Self, String> {
-        let api_key = std::env::var("ZEROX_API_KEY")
-            .map_err(|_| "[0x] missing ZEROX_API_KEY".to_string())?;
+        let api_key =
+            std::env::var("ZEROX_API_KEY").map_err(|_| "[0x] missing ZEROX_API_KEY".to_string())?;
         let http = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
@@ -47,9 +47,7 @@ impl ZeroxClient {
         let status = response.status();
         let body = response.text().unwrap_or_default();
         if !status.is_success() {
-            return Err(format!(
-                "[0x] {operation} request failed: {status} {body}"
-            ));
+            return Err(format!("[0x] {operation} request failed: {status} {body}"));
         }
 
         serde_json::from_str::<Value>(&body)
@@ -586,28 +584,40 @@ mod tests {
 
     #[test]
     fn swap_chains_smoke() {
-        if !has_api_key() { return; }
+        if !has_api_key() {
+            return;
+        }
         let res = client().get_swap_chains().expect("should get swap chains");
         assert_eq!(res.get("source").and_then(Value::as_str), Some("0x"));
     }
 
     #[test]
     fn liquidity_sources_smoke() {
-        if !has_api_key() { return; }
-        let res = client().get_liquidity_sources("ethereum").expect("should get liquidity sources");
+        if !has_api_key() {
+            return;
+        }
+        let res = client()
+            .get_liquidity_sources("ethereum")
+            .expect("should get liquidity sources");
         assert_eq!(res.get("source").and_then(Value::as_str), Some("0x"));
     }
 
     #[test]
     fn gasless_chains_smoke() {
-        if !has_api_key() { return; }
-        let res = client().get_gasless_chains().expect("should get gasless chains");
+        if !has_api_key() {
+            return;
+        }
+        let res = client()
+            .get_gasless_chains()
+            .expect("should get gasless chains");
         assert_eq!(res.get("source").and_then(Value::as_str), Some("0x"));
     }
 
     #[test]
     fn permit2_price_smoke() {
-        if !has_api_key() { return; }
+        if !has_api_key() {
+            return;
+        }
         let res = client()
             .get_quote("ethereum", "usdc", "weth", 1000.0, None, None)
             .expect("should get permit2 price for 1000 USDC -> WETH");
@@ -616,7 +626,9 @@ mod tests {
 
     #[test]
     fn allowance_holder_price_smoke() {
-        if !has_api_key() { return; }
+        if !has_api_key() {
+            return;
+        }
         let res = client()
             .get_allowance_holder_price("ethereum", "usdc", "weth", 1000.0, None, None)
             .expect("should get allowance-holder price for 1000 USDC -> WETH");
@@ -627,7 +639,10 @@ mod tests {
 
     #[test]
     fn amount_to_base_units_smoke() {
-        assert_eq!(amount_to_base_units(1.0, 18).unwrap(), "1000000000000000000");
+        assert_eq!(
+            amount_to_base_units(1.0, 18).unwrap(),
+            "1000000000000000000"
+        );
         assert_eq!(amount_to_base_units(100.0, 6).unwrap(), "100000000");
         assert!(amount_to_base_units(-1.0, 18).is_err());
     }

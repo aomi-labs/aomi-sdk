@@ -180,7 +180,9 @@ impl DefiLamaClient {
         };
         let mut request = self.http.get(&url);
         let exc = exclude_total_data_chart.unwrap_or(true).to_string();
-        let excb = exclude_total_data_chart_breakdown.unwrap_or(true).to_string();
+        let excb = exclude_total_data_chart_breakdown
+            .unwrap_or(true)
+            .to_string();
         request = request.query(&[
             ("excludeTotalDataChart", exc.as_str()),
             ("excludeTotalDataChartBreakdown", excb.as_str()),
@@ -195,8 +197,9 @@ impl DefiLamaClient {
                 "[defillama] dex volumes request failed ({url}): {status} {body}"
             ));
         }
-        let value: Value = serde_json::from_str(&body)
-            .map_err(|e| format!("[defillama] dex volumes decode failed ({url}): {e}; body: {body}"))?;
+        let value: Value = serde_json::from_str(&body).map_err(|e| {
+            format!("[defillama] dex volumes decode failed ({url}): {e}; body: {body}")
+        })?;
         Ok(Self::with_source(value))
     }
 
@@ -213,7 +216,9 @@ impl DefiLamaClient {
         };
         let mut request = self.http.get(&url);
         let exc = exclude_total_data_chart.unwrap_or(true).to_string();
-        let excb = exclude_total_data_chart_breakdown.unwrap_or(true).to_string();
+        let excb = exclude_total_data_chart_breakdown
+            .unwrap_or(true)
+            .to_string();
         request = request.query(&[
             ("excludeTotalDataChart", exc.as_str()),
             ("excludeTotalDataChartBreakdown", excb.as_str()),
@@ -231,8 +236,9 @@ impl DefiLamaClient {
                 "[defillama] fees overview request failed ({url}): {status} {body}"
             ));
         }
-        let value: Value = serde_json::from_str(&body)
-            .map_err(|e| format!("[defillama] fees overview decode failed ({url}): {e}; body: {body}"))?;
+        let value: Value = serde_json::from_str(&body).map_err(|e| {
+            format!("[defillama] fees overview decode failed ({url}): {e}; body: {body}")
+        })?;
         Ok(Self::with_source(value))
     }
 
@@ -256,8 +262,9 @@ impl DefiLamaClient {
                 "[defillama] protocol fees request failed ({url}): {status} {body}"
             ));
         }
-        let value: Value = serde_json::from_str(&body)
-            .map_err(|e| format!("[defillama] protocol fees decode failed ({url}): {e}; body: {body}"))?;
+        let value: Value = serde_json::from_str(&body).map_err(|e| {
+            format!("[defillama] protocol fees decode failed ({url}): {e}; body: {body}")
+        })?;
         Ok(Self::with_source(value))
     }
 
@@ -276,8 +283,9 @@ impl DefiLamaClient {
                 "[defillama] stablecoins request failed ({url}): {status} {body}"
             ));
         }
-        let value: Value = serde_json::from_str(&body)
-            .map_err(|e| format!("[defillama] stablecoins decode failed ({url}): {e}; body: {body}"))?;
+        let value: Value = serde_json::from_str(&body).map_err(|e| {
+            format!("[defillama] stablecoins decode failed ({url}): {e}; body: {body}")
+        })?;
         Ok(Self::with_source(value))
     }
 
@@ -309,9 +317,9 @@ impl DefiLamaClient {
         if let Some(p) = period {
             request = request.query(&[("period", p)]);
         }
-        let response = request
-            .send()
-            .map_err(|e| format!("[defillama] historical token price request failed ({url}): {e}"))?;
+        let response = request.send().map_err(|e| {
+            format!("[defillama] historical token price request failed ({url}): {e}")
+        })?;
         let status = response.status();
         let body = response.text().unwrap_or_default();
         if !status.is_success() {
@@ -319,8 +327,9 @@ impl DefiLamaClient {
                 "[defillama] historical token price request failed ({url}): {status} {body}"
             ));
         }
-        let value: Value = serde_json::from_str(&body)
-            .map_err(|e| format!("[defillama] historical token price decode failed ({url}): {e}; body: {body}"))?;
+        let value: Value = serde_json::from_str(&body).map_err(|e| {
+            format!("[defillama] historical token price decode failed ({url}): {e}; body: {body}")
+        })?;
         Ok(Self::with_source(value))
     }
 
@@ -352,8 +361,9 @@ impl DefiLamaClient {
                 "[defillama] token price change request failed ({url}): {status} {body}"
             ));
         }
-        let value: Value = serde_json::from_str(&body)
-            .map_err(|e| format!("[defillama] token price change decode failed ({url}): {e}; body: {body}"))?;
+        let value: Value = serde_json::from_str(&body).map_err(|e| {
+            format!("[defillama] token price change decode failed ({url}): {e}; body: {body}")
+        })?;
         Ok(Self::with_source(value))
     }
 
@@ -376,7 +386,9 @@ impl DefiLamaClient {
         let url = format!("{}/summary/dexs/{}", self.api_endpoint, protocol);
         let mut request = self.http.get(&url);
         let exc = exclude_total_data_chart.unwrap_or(true).to_string();
-        let excb = exclude_total_data_chart_breakdown.unwrap_or(true).to_string();
+        let excb = exclude_total_data_chart_breakdown
+            .unwrap_or(true)
+            .to_string();
         request = request.query(&[
             ("excludeTotalDataChart", exc.as_str()),
             ("excludeTotalDataChartBreakdown", excb.as_str()),
@@ -391,8 +403,9 @@ impl DefiLamaClient {
                 "[defillama] dex protocol volume request failed ({url}): {status} {body}"
             ));
         }
-        let value: Value = serde_json::from_str(&body)
-            .map_err(|e| format!("[defillama] dex protocol volume decode failed ({url}): {e}; body: {body}"))?;
+        let value: Value = serde_json::from_str(&body).map_err(|e| {
+            format!("[defillama] dex protocol volume decode failed ({url}): {e}; body: {body}")
+        })?;
         Ok(Self::with_source(value))
     }
 
@@ -419,8 +432,9 @@ impl DefiLamaClient {
                 "[defillama] stablecoin history request failed ({url}): {status} {body}"
             ));
         }
-        let value: Value = serde_json::from_str(&body)
-            .map_err(|e| format!("[defillama] stablecoin history decode failed ({url}): {e}; body: {body}"))?;
+        let value: Value = serde_json::from_str(&body).map_err(|e| {
+            format!("[defillama] stablecoin history decode failed ({url}): {e}; body: {body}")
+        })?;
         Ok(Self::with_source(value))
     }
 
@@ -429,7 +443,6 @@ impl DefiLamaClient {
         let value = self.get_json(&url, "yield pool history")?;
         Ok(Self::with_source(value))
     }
-
 }
 
 pub(crate) fn normalize_token_id(token: &str) -> String {
@@ -574,7 +587,9 @@ pub(crate) struct GetLammaHistoricalTokenPrice;
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub(crate) struct GetLammaHistoricalTokenPriceArgs {
-    #[schemars(description = "Comma-separated coin identifiers (e.g. \"coingecko:ethereum,coingecko:bitcoin\")")]
+    #[schemars(
+        description = "Comma-separated coin identifiers (e.g. \"coingecko:ethereum,coingecko:bitcoin\")"
+    )]
     pub coins: String,
     #[schemars(description = "Start unix timestamp. Optional.")]
     #[serde(default)]
@@ -585,7 +600,9 @@ pub(crate) struct GetLammaHistoricalTokenPriceArgs {
     #[schemars(description = "Number of data points to return. Optional.")]
     #[serde(default)]
     pub span: Option<u64>,
-    #[schemars(description = "Time period between data points (e.g. \"1d\", \"1h\", \"4h\"). Optional.")]
+    #[schemars(
+        description = "Time period between data points (e.g. \"1d\", \"1h\", \"4h\"). Optional."
+    )]
     #[serde(default)]
     pub period: Option<String>,
 }
@@ -594,12 +611,16 @@ pub(crate) struct GetLammaTokenPriceChange;
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub(crate) struct GetLammaTokenPriceChangeArgs {
-    #[schemars(description = "Comma-separated coin identifiers (e.g. \"coingecko:ethereum,coingecko:bitcoin\")")]
+    #[schemars(
+        description = "Comma-separated coin identifiers (e.g. \"coingecko:ethereum,coingecko:bitcoin\")"
+    )]
     pub coins: String,
     #[schemars(description = "Unix timestamp to calculate change from. Optional.")]
     #[serde(default)]
     pub timestamp: Option<u64>,
-    #[schemars(description = "If true, calculate change looking forward from timestamp. Optional.")]
+    #[schemars(
+        description = "If true, calculate change looking forward from timestamp. Optional."
+    )]
     #[serde(default)]
     pub look_forward: Option<bool>,
     #[schemars(description = "Period for price change (e.g. \"1d\", \"7d\", \"30d\"). Optional.")]
@@ -637,7 +658,9 @@ pub(crate) struct GetLammaStablecoinHistory;
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub(crate) struct GetLammaStablecoinHistoryArgs {
-    #[schemars(description = "Chain name to filter (e.g. \"Ethereum\"). Optional -- omit for all chains.")]
+    #[schemars(
+        description = "Chain name to filter (e.g. \"Ethereum\"). Optional -- omit for all chains."
+    )]
     #[serde(default)]
     pub chain: Option<String>,
     #[schemars(description = "Stablecoin ID filter. Optional.")]
@@ -653,7 +676,6 @@ pub(crate) struct GetLammaYieldPoolHistoryArgs {
     pub pool: String,
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -664,7 +686,9 @@ mod tests {
 
     #[test]
     fn token_price_smoke() {
-        let res = client().get_token_price("ethereum").expect("should get ETH price");
+        let res = client()
+            .get_token_price("ethereum")
+            .expect("should get ETH price");
         assert_eq!(res.get("source").and_then(Value::as_str), Some("defillama"));
         let coins = res.get("coins").expect("should have coins key");
         assert!(coins.as_object().map(|m| !m.is_empty()).unwrap_or(false));
@@ -674,8 +698,13 @@ mod tests {
     fn protocols_smoke() {
         let res = client().get_protocols(None).expect("should get protocols");
         assert_eq!(res.get("source").and_then(Value::as_str), Some("defillama"));
-        let arr = res.as_array().or_else(|| res.get("data").and_then(Value::as_array));
-        assert!(arr.map(|a| !a.is_empty()).unwrap_or(false), "should have protocols");
+        let arr = res
+            .as_array()
+            .or_else(|| res.get("data").and_then(Value::as_array));
+        assert!(
+            arr.map(|a| !a.is_empty()).unwrap_or(false),
+            "should have protocols"
+        );
     }
 
     #[test]
@@ -686,40 +715,55 @@ mod tests {
 
     #[test]
     fn protocol_detail_smoke() {
-        let res = client().get_protocol_detail("aave").expect("should get aave detail");
+        let res = client()
+            .get_protocol_detail("aave")
+            .expect("should get aave detail");
         assert_eq!(res.get("source").and_then(Value::as_str), Some("defillama"));
         assert!(res.get("name").is_some(), "should have protocol name");
     }
 
     #[test]
     fn dex_volumes_smoke() {
-        let res = client().get_dex_volumes(None, None, None).expect("should get dex volumes");
+        let res = client()
+            .get_dex_volumes(None, None, None)
+            .expect("should get dex volumes");
         assert_eq!(res.get("source").and_then(Value::as_str), Some("defillama"));
         assert!(res.get("protocols").is_some() || res.get("allChains").is_some());
     }
 
     #[test]
     fn fees_overview_smoke() {
-        let res = client().get_fees_overview(None, None, None, None).expect("should get fees overview");
+        let res = client()
+            .get_fees_overview(None, None, None, None)
+            .expect("should get fees overview");
         assert_eq!(res.get("source").and_then(Value::as_str), Some("defillama"));
     }
 
     #[test]
     fn protocol_fees_smoke() {
-        let res = client().get_protocol_fees("aave", None).expect("should get aave fees");
+        let res = client()
+            .get_protocol_fees("aave", None)
+            .expect("should get aave fees");
         assert_eq!(res.get("source").and_then(Value::as_str), Some("defillama"));
     }
 
     #[test]
     fn stablecoins_smoke() {
-        let res = client().get_stablecoins(Some(true)).expect("should get stablecoins");
+        let res = client()
+            .get_stablecoins(Some(true))
+            .expect("should get stablecoins");
         assert_eq!(res.get("source").and_then(Value::as_str), Some("defillama"));
-        assert!(res.get("peggedAssets").is_some(), "should have peggedAssets");
+        assert!(
+            res.get("peggedAssets").is_some(),
+            "should have peggedAssets"
+        );
     }
 
     #[test]
     fn stablecoin_chains_smoke() {
-        let res = client().get_stablecoin_chains().expect("should get stablecoin chains");
+        let res = client()
+            .get_stablecoin_chains()
+            .expect("should get stablecoin chains");
         assert_eq!(res.get("source").and_then(Value::as_str), Some("defillama"));
     }
 

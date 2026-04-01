@@ -48,6 +48,30 @@ jobs:
       - name: Test SDK
         run: cargo test -p aomi-sdk
 
+      - name: Detect changed apps
+        id: changed-apps
+        run: |
+          BASE_SHA="${{ github.event.pull_request.base.sha || github.event.before }}"
+          changed=$(git diff --name-only "$BASE_SHA" HEAD -- 'apps/*/src/**' 'apps/*/Cargo.toml' \
+            | sed -n 's|^apps/\([^/]*\)/.*|\1|p' | sort -u | tr '\n' ' ')
+          echo "apps=$changed" >> "$GITHUB_OUTPUT"
+          echo "Changed apps: $changed"
+
+      - name: Check apps (fmt + clippy + compile tests)
+        if: steps.changed-apps.outputs.apps != ''
+        run: |
+          failed=0
+          for app_name in ${{ steps.changed-apps.outputs.apps }}; do
+            manifest="apps/$app_name/Cargo.toml"
+            [ -f "$manifest" ] || continue
+            echo "::group::$app_name"
+            cargo fmt --manifest-path "$manifest" -- --check || failed=1
+            cargo clippy --manifest-path "$manifest" --lib -- -Dwarnings || failed=1
+            cargo test --manifest-path "$manifest" --no-run 2>/dev/null || true
+            echo "::endgroup::"
+          done
+          exit $failed
+
       - name: Build all plugins
         run: cargo xtask build-aomi
 

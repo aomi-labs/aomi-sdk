@@ -45,9 +45,7 @@ impl CowClient {
         let status = response.status();
         let body = response.text().unwrap_or_default();
         if !status.is_success() {
-            return Err(format!(
-                "[cow] {operation} request failed: {status} {body}"
-            ));
+            return Err(format!("[cow] {operation} request failed: {status} {body}"));
         }
 
         serde_json::from_str::<Value>(&body)
@@ -200,7 +198,9 @@ impl CowClient {
         token_address: &str,
     ) -> Result<Value, String> {
         let base = self.cow_api_base_for_chain(chain)?;
-        let mut request = self.http.get(format!("{base}/token/{token_address}/native_price"));
+        let mut request = self
+            .http
+            .get(format!("{base}/token/{token_address}/native_price"));
         if let Some(api_key) = self.cow_api_key.as_ref() {
             request = request.header("Authorization", format!("Bearer {api_key}"));
         }
@@ -208,13 +208,11 @@ impl CowClient {
         Ok(with_source(value))
     }
 
-    pub(crate) fn get_orders_by_tx(
-        &self,
-        chain: &str,
-        tx_hash: &str,
-    ) -> Result<Value, String> {
+    pub(crate) fn get_orders_by_tx(&self, chain: &str, tx_hash: &str) -> Result<Value, String> {
         let base = self.cow_api_base_for_chain(chain)?;
-        let mut request = self.http.get(format!("{base}/transactions/{tx_hash}/orders"));
+        let mut request = self
+            .http
+            .get(format!("{base}/transactions/{tx_hash}/orders"));
         if let Some(api_key) = self.cow_api_key.as_ref() {
             request = request.header("Authorization", format!("Bearer {api_key}"));
         }
@@ -491,11 +489,23 @@ mod tests {
     #[test]
     fn cow_api_base_for_chain_smoke() {
         let c = client();
-        assert!(c.cow_api_base_for_chain("ethereum").unwrap().contains("mainnet"));
+        assert!(
+            c.cow_api_base_for_chain("ethereum")
+                .unwrap()
+                .contains("mainnet")
+        );
         assert!(c.cow_api_base_for_chain("gnosis").unwrap().contains("xdai"));
-        assert!(c.cow_api_base_for_chain("arbitrum").unwrap().contains("arbitrum_one"));
+        assert!(
+            c.cow_api_base_for_chain("arbitrum")
+                .unwrap()
+                .contains("arbitrum_one")
+        );
         assert!(c.cow_api_base_for_chain("base").unwrap().contains("base"));
-        assert!(c.cow_api_base_for_chain("polygon").unwrap().contains("polygon"));
+        assert!(
+            c.cow_api_base_for_chain("polygon")
+                .unwrap()
+                .contains("polygon")
+        );
         assert!(c.cow_api_base_for_chain("foobar").is_err());
     }
 
@@ -521,8 +531,12 @@ mod tests {
     #[test]
     fn user_orders_no_orders_smoke() {
         // Using a random address that likely has no orders — should return empty array
-        let res = client()
-            .get_user_orders("ethereum", "0x0000000000000000000000000000000000000001", None, Some(1));
+        let res = client().get_user_orders(
+            "ethereum",
+            "0x0000000000000000000000000000000000000001",
+            None,
+            Some(1),
+        );
         // Either empty array or an error is acceptable
         if let Ok(val) = res {
             assert_eq!(val.get("source").and_then(Value::as_str), Some("cow"));
@@ -542,7 +556,10 @@ mod tests {
 
     #[test]
     fn amount_to_base_units_smoke() {
-        assert_eq!(amount_to_base_units(1.0, 18).unwrap(), "1000000000000000000");
+        assert_eq!(
+            amount_to_base_units(1.0, 18).unwrap(),
+            "1000000000000000000"
+        );
         assert_eq!(amount_to_base_units(100.0, 6).unwrap(), "100000000");
         assert!(amount_to_base_units(-1.0, 18).is_err());
     }
