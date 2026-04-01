@@ -24,10 +24,16 @@ fn validate_sign_raw_data(data: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn resolve_para_api_key(ctx: &DynToolCallCtx) -> Result<String, String> {
+    ctx.attribute_string(&["para_api_key"])
+        .or_else(|| ctx.attribute_string(&["PARA_API_KEY"]))
+        .ok_or_else(|| {
+            "para_api_key not found in context state_attributes — ensure the integration sets para_api_key or PARA_API_KEY".to_string()
+        })
+}
+
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub(crate) struct CreateParaWalletArgs {
-    /// User-supplied Para API key.
-    api_key: String,
     /// Wallet type: EVM, SOLANA, or COSMOS.
     wallet_type: String,
     /// User identifier such as email, phone, or custom ID.
@@ -49,8 +55,9 @@ impl DynAomiTool for CreateParaWallet {
     const NAME: &'static str = "create_para_wallet";
     const DESCRIPTION: &'static str = "Create a new Para MPC wallet. Supports EVM, Solana, and Cosmos chains. The wallet is created asynchronously — status starts as 'creating' and transitions to 'ready' once MPC key generation completes. Use wait_for_para_wallet_ready to poll until ready.";
 
-    fn run(_app: &Self::App, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
+    fn run(_app: &Self::App, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = para_client()?;
+        let api_key = resolve_para_api_key(&ctx)?;
         let mut payload = json!({
             "type": args.wallet_type,
             "userIdentifier": args.user_identifier,
@@ -64,14 +71,12 @@ impl DynAomiTool for CreateParaWallet {
             payload["cosmosPrefix"] = Value::String(prefix);
         }
 
-        client.create_wallet(&args.api_key, payload)
+        client.create_wallet(&api_key, payload)
     }
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub(crate) struct GetParaWalletArgs {
-    /// User-supplied Para API key.
-    api_key: String,
     /// Para wallet ID.
     wallet_id: String,
 }
@@ -85,15 +90,14 @@ impl DynAomiTool for GetParaWallet {
     const NAME: &'static str = "get_para_wallet";
     const DESCRIPTION: &'static str = "Fetch details for a single Para wallet by ID. Returns status, address, publicKey, and type.";
 
-    fn run(_app: &Self::App, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        para_client()?.get_wallet(&args.api_key, &args.wallet_id)
+    fn run(_app: &Self::App, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
+        let api_key = resolve_para_api_key(&ctx)?;
+        para_client()?.get_wallet(&api_key, &args.wallet_id)
     }
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub(crate) struct ListParaWalletsArgs {
-    /// User-supplied Para API key.
-    api_key: String,
     /// Up to 10 wallet IDs to fetch.
     wallet_ids: Vec<String>,
 }
@@ -107,8 +111,9 @@ impl DynAomiTool for ListParaWallets {
     const NAME: &'static str = "list_para_wallets";
     const DESCRIPTION: &'static str = "Batch-fetch multiple Para wallets by their IDs (max 10). Para has no native list endpoint, so wallets are fetched individually. Each result includes the wallet data or a per-item error.";
 
-    fn run(_app: &Self::App, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
+    fn run(_app: &Self::App, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = para_client()?;
+        let api_key = resolve_para_api_key(&ctx)?;
         let wallet_ids: Vec<String> = args.wallet_ids.into_iter().take(10).collect();
         if wallet_ids.is_empty() {
             return Err("wallet_ids must be a non-empty array".to_string());
@@ -116,12 +121,10 @@ impl DynAomiTool for ListParaWallets {
 
         let wallets: Vec<Value> = wallet_ids
             .iter()
-            .map(
-                |wallet_id| match client.get_wallet(&args.api_key, wallet_id) {
-                    Ok(data) => json!({ "wallet_id": wallet_id, "data": data }),
-                    Err(error) => json!({ "wallet_id": wallet_id, "error": error }),
-                },
-            )
+            .map(|wallet_id| match client.get_wallet(&api_key, wallet_id) {
+                Ok(data) => json!({ "wallet_id": wallet_id, "data": data }),
+                Err(error) => json!({ "wallet_id": wallet_id, "error": error }),
+            })
             .collect();
 
         let count = wallets.len();
@@ -131,8 +134,6 @@ impl DynAomiTool for ListParaWallets {
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub(crate) struct SignRawWithParaWalletArgs {
-    /// User-supplied Para API key.
-    api_key: String,
     /// Para wallet ID to sign with.
     wallet_id: String,
     /// 0x-prefixed hex data to sign.
@@ -148,16 +149,15 @@ impl DynAomiTool for SignRawWithParaWallet {
     const NAME: &'static str = "sign_raw_with_para_wallet";
     const DESCRIPTION: &'static str = "Sign arbitrary raw data with a Para MPC wallet. The data must be a 0x-prefixed hex string. The wallet must have status 'ready' before signing.";
 
-    fn run(_app: &Self::App, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
+    fn run(_app: &Self::App, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
+        let api_key = resolve_para_api_key(&ctx)?;
         validate_sign_raw_data(&args.data)?;
-        para_client()?.sign_raw(&args.api_key, &args.wallet_id, &args.data)
+        para_client()?.sign_raw(&api_key, &args.wallet_id, &args.data)
     }
 }
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 pub(crate) struct WaitForParaWalletReadyArgs {
-    /// User-supplied Para API key.
-    api_key: String,
     /// Para wallet ID to poll.
     wallet_id: String,
     /// Maximum wait time in milliseconds.
@@ -173,12 +173,13 @@ impl DynAomiTool for WaitForParaWalletReady {
     const NAME: &'static str = "wait_for_para_wallet_ready";
     const DESCRIPTION: &'static str = "Poll a Para wallet every 2 seconds until its status becomes 'ready' (MPC key generation complete). Returns wallet details when ready, or an error on timeout or wallet creation failure.";
 
-    fn run(_app: &Self::App, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
+    fn run(_app: &Self::App, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = para_client()?;
+        let api_key = resolve_para_api_key(&ctx)?;
         let deadline = Instant::now() + Duration::from_millis(args.max_wait_ms.unwrap_or(30_000));
 
         loop {
-            let wallet = client.get_wallet(&args.api_key, &args.wallet_id)?;
+            let wallet = client.get_wallet(&api_key, &args.wallet_id)?;
             let status = wallet
                 .get("status")
                 .and_then(Value::as_str)
@@ -211,7 +212,12 @@ impl DynAomiTool for WaitForParaWalletReady {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_sign_raw_data;
+    use super::{
+        CreateParaWalletArgs, GetParaWalletArgs, ListParaWalletsArgs, SignRawWithParaWalletArgs,
+        WaitForParaWalletReadyArgs, resolve_para_api_key, validate_sign_raw_data,
+    };
+    use aomi_sdk::testing::TestCtxBuilder;
+    use serde_json::json;
 
     #[test]
     fn validate_sign_raw_data_rejects_non_hex_inputs() {
@@ -225,6 +231,68 @@ mod tests {
         assert!(validate_sign_raw_data("0x48656c6c6f").is_ok());
     }
 
+    #[test]
+    fn resolve_para_api_key_prefers_lowercase_context_key() {
+        let ctx = TestCtxBuilder::new("get_para_wallet")
+            .attribute("PARA_API_KEY", "para_upper")
+            .attribute("para_api_key", "para_lower")
+            .build();
+
+        assert_eq!(resolve_para_api_key(&ctx).as_deref(), Ok("para_lower"));
+    }
+
+    #[test]
+    fn resolve_para_api_key_falls_back_to_uppercase_context_key() {
+        let ctx = TestCtxBuilder::new("get_para_wallet")
+            .attribute("PARA_API_KEY", "para_upper")
+            .build();
+
+        assert_eq!(resolve_para_api_key(&ctx).as_deref(), Ok("para_upper"));
+    }
+
+    #[test]
+    fn resolve_para_api_key_errors_when_missing() {
+        let ctx = TestCtxBuilder::new("get_para_wallet").build();
+
+        assert!(resolve_para_api_key(&ctx).is_err());
+    }
+
+    #[test]
+    fn para_tool_args_no_longer_require_api_key() {
+        let create: CreateParaWalletArgs = serde_json::from_value(json!({
+            "wallet_type": "EVM",
+            "user_identifier": "user@example.com",
+            "user_identifier_type": "EMAIL"
+        }))
+        .expect("create args should deserialize without api_key");
+        assert_eq!(create.wallet_type, "EVM");
+
+        let get: GetParaWalletArgs = serde_json::from_value(json!({
+            "wallet_id": "wallet-123"
+        }))
+        .expect("get args should deserialize without api_key");
+        assert_eq!(get.wallet_id, "wallet-123");
+
+        let list: ListParaWalletsArgs = serde_json::from_value(json!({
+            "wallet_ids": ["wallet-123"]
+        }))
+        .expect("list args should deserialize without api_key");
+        assert_eq!(list.wallet_ids, vec!["wallet-123"]);
+
+        let sign: SignRawWithParaWalletArgs = serde_json::from_value(json!({
+            "wallet_id": "wallet-123",
+            "data": "0x1234"
+        }))
+        .expect("sign args should deserialize without api_key");
+        assert_eq!(sign.data, "0x1234");
+
+        let wait: WaitForParaWalletReadyArgs = serde_json::from_value(json!({
+            "wallet_id": "wallet-123"
+        }))
+        .expect("wait args should deserialize without api_key");
+        assert_eq!(wait.wallet_id, "wallet-123");
+    }
+
     // ========================================================================
     // Integration tests — require PARA_API_KEY env var to run.
     //
@@ -232,7 +300,6 @@ mod tests {
     // ========================================================================
 
     use crate::client::ParaClient;
-    use serde_json::json;
 
     fn api_key() -> String {
         std::env::var("PARA_API_KEY").expect("PARA_API_KEY must be set for integration tests")
