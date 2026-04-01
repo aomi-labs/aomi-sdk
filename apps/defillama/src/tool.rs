@@ -123,7 +123,7 @@ impl DynAomiTool for GetLammaProtocols {
                     "tvl": format!("${:.2}B", p.get("tvl").and_then(Value::as_f64).unwrap_or(0.0) / 1_000_000_000.0),
                     "category": p.get("category").cloned().unwrap_or(Value::Null),
                     "chains": p.get("chains").cloned().unwrap_or(Value::Null),
-                    "change_1d": p.get("change_1d").and_then(Value::as_f64).map(|c| format!("{:+.1}%", c)),
+                    "change_1d": p.get("change_1d").and_then(Value::as_f64).map(|c| format!("{c:+.1}%")),
                 })
             })
             .collect();
@@ -184,7 +184,8 @@ impl DynAomiTool for GetLammaProtocolDetail {
     type App = DefiLlamaApp;
     type Args = GetLammaProtocolDetailArgs;
     const NAME: &'static str = "get_protocol_detail";
-    const DESCRIPTION: &'static str = "Get deep-dive data for a single protocol: historical TVL, chain breakdown, metadata.";
+    const DESCRIPTION: &'static str =
+        "Get deep-dive data for a single protocol: historical TVL, chain breakdown, metadata.";
 
     fn run(_app: &DefiLlamaApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = DefiLamaClient::new()?;
@@ -196,7 +197,8 @@ impl DynAomiTool for GetLammaDexVolumes {
     type App = DefiLlamaApp;
     type Args = GetLammaDexVolumesArgs;
     const NAME: &'static str = "get_dex_volumes";
-    const DESCRIPTION: &'static str = "Get DEX volume rankings across all chains or for a specific chain.";
+    const DESCRIPTION: &'static str =
+        "Get DEX volume rankings across all chains or for a specific chain.";
 
     fn run(_app: &DefiLlamaApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = DefiLamaClient::new()?;
@@ -212,7 +214,8 @@ impl DynAomiTool for GetLammaFeesOverview {
     type App = DefiLlamaApp;
     type Args = GetLammaFeesOverviewArgs;
     const NAME: &'static str = "get_fees_overview";
-    const DESCRIPTION: &'static str = "Get protocol fee and revenue rankings across all chains or for a specific chain.";
+    const DESCRIPTION: &'static str =
+        "Get protocol fee and revenue rankings across all chains or for a specific chain.";
 
     fn run(_app: &DefiLlamaApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = DefiLamaClient::new()?;
@@ -283,7 +286,8 @@ impl DynAomiTool for GetLammaTokenPriceChange {
     type App = DefiLlamaApp;
     type Args = GetLammaTokenPriceChangeArgs;
     const NAME: &'static str = "get_token_price_change";
-    const DESCRIPTION: &'static str = "Get percentage price change for one or more tokens over a given period.";
+    const DESCRIPTION: &'static str =
+        "Get percentage price change for one or more tokens over a given period.";
 
     fn run(_app: &DefiLlamaApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = DefiLamaClient::new()?;
@@ -332,7 +336,8 @@ impl DynAomiTool for GetLammaStablecoinHistory {
     type App = DefiLlamaApp;
     type Args = GetLammaStablecoinHistoryArgs;
     const NAME: &'static str = "get_stablecoin_history";
-    const DESCRIPTION: &'static str = "Get historical stablecoin market cap data, optionally filtered by chain or stablecoin ID.";
+    const DESCRIPTION: &'static str =
+        "Get historical stablecoin market cap data, optionally filtered by chain or stablecoin ID.";
 
     fn run(_app: &DefiLlamaApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = DefiLamaClient::new()?;
@@ -351,4 +356,3 @@ impl DynAomiTool for GetLammaYieldPoolHistory {
         client.get_yield_pool_history(&args.pool)
     }
 }
-

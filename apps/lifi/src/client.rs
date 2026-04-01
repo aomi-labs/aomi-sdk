@@ -54,6 +54,7 @@ impl LifiClient {
             .map_err(|e| format!("[lifi] {operation} decode failed: {e}; body: {body}"))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn get_quote(
         &self,
         from_chain: &str,
@@ -167,13 +168,8 @@ impl LifiClient {
         Ok(with_source(value))
     }
 
-    pub(crate) fn get_chains(
-        &self,
-        chain_types: Option<&str>,
-    ) -> Result<Value, String> {
-        let mut request = self
-            .http
-            .get(format!("{}/v1/chains", self.lifi_endpoint));
+    pub(crate) fn get_chains(&self, chain_types: Option<&str>) -> Result<Value, String> {
+        let mut request = self.http.get(format!("{}/v1/chains", self.lifi_endpoint));
         if let Some(ct) = chain_types {
             request = request.query(&[("chainTypes", ct)]);
         }
@@ -189,9 +185,7 @@ impl LifiClient {
         chains: Option<&str>,
         chain_types: Option<&str>,
     ) -> Result<Value, String> {
-        let mut request = self
-            .http
-            .get(format!("{}/v1/tokens", self.lifi_endpoint));
+        let mut request = self.http.get(format!("{}/v1/tokens", self.lifi_endpoint));
         if let Some(c) = chains {
             request = request.query(&[("chains", c)]);
         }
@@ -205,11 +199,7 @@ impl LifiClient {
         Ok(with_source(value))
     }
 
-    pub(crate) fn get_token(
-        &self,
-        chain: &str,
-        token: &str,
-    ) -> Result<Value, String> {
+    pub(crate) fn get_token(&self, chain: &str, token: &str) -> Result<Value, String> {
         let mut request = self
             .http
             .get(format!("{}/v1/token", self.lifi_endpoint))
@@ -269,13 +259,13 @@ impl LifiClient {
         Ok(with_source(value))
     }
 
-    pub(crate) fn get_step_transaction(
-        &self,
-        step: &Value,
-    ) -> Result<Value, String> {
+    pub(crate) fn get_step_transaction(&self, step: &Value) -> Result<Value, String> {
         let mut request = self
             .http
-            .post(format!("{}/v1/advanced/stepTransaction", self.lifi_endpoint))
+            .post(format!(
+                "{}/v1/advanced/stepTransaction",
+                self.lifi_endpoint
+            ))
             .json(step);
         if let Some(api_key) = self.lifi_api_key.as_ref() {
             request = request.header("x-lifi-api-key", api_key);
@@ -313,13 +303,8 @@ impl LifiClient {
         Ok(with_source(value))
     }
 
-    pub(crate) fn get_tools(
-        &self,
-        chains: Option<&str>,
-    ) -> Result<Value, String> {
-        let mut request = self
-            .http
-            .get(format!("{}/v1/tools", self.lifi_endpoint));
+    pub(crate) fn get_tools(&self, chains: Option<&str>) -> Result<Value, String> {
+        let mut request = self.http.get(format!("{}/v1/tools", self.lifi_endpoint));
         if let Some(c) = chains {
             request = request.query(&[("chains", c)]);
         }
@@ -330,6 +315,7 @@ impl LifiClient {
         Ok(with_source(value))
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn get_reverse_quote(
         &self,
         from_chain: &str,
@@ -371,9 +357,10 @@ impl LifiClient {
         from_chain: Option<&str>,
         from_token: Option<&str>,
     ) -> Result<Value, String> {
-        let mut request = self
-            .http
-            .get(format!("{}/v1/gas/suggestion/{}", self.lifi_endpoint, chain));
+        let mut request = self.http.get(format!(
+            "{}/v1/gas/suggestion/{}",
+            self.lifi_endpoint, chain
+        ));
         if let Some(fc) = from_chain {
             request = request.query(&[("fromChain", fc)]);
         }
@@ -603,10 +590,7 @@ pub(crate) fn build_lifi_main_tx(quote: &Value) -> Value {
     })
 }
 
-pub(crate) fn build_lifi_approval_tx(
-    quote: &Value,
-    from_amount: &str,
-) -> Result<Value, String> {
+pub(crate) fn build_lifi_approval_tx(quote: &Value, from_amount: &str) -> Result<Value, String> {
     let approval_address = quote
         .get("estimate")
         .and_then(|e| e.get("approvalAddress"))
@@ -650,8 +634,8 @@ pub(crate) fn encode_approve_calldata(
         .map_err(|e| format!("[lifi] invalid approval amount {amount_decimal}: {e}"))?;
     let amount_hex = format!("{amount:x}");
 
-    let spender_slot = format!("{:0>64}", spender_clean);
-    let amount_slot = format!("{:0>64}", amount_hex);
+    let spender_slot = format!("{spender_clean:0>64}");
+    let amount_slot = format!("{amount_hex:0>64}");
     Ok(format!("0x{selector}{spender_slot}{amount_slot}"))
 }
 
@@ -985,20 +969,25 @@ mod tests {
 
     #[test]
     fn chains_evm_filter_smoke() {
-        let res = client().get_chains(Some("EVM")).expect("should get EVM chains");
+        let res = client()
+            .get_chains(Some("EVM"))
+            .expect("should get EVM chains");
         assert_eq!(res.get("source").and_then(Value::as_str), Some("lifi"));
     }
 
     #[test]
     fn tokens_single_chain_smoke() {
-        let res = client().get_tokens(Some("1"), None).expect("should get ethereum tokens");
+        let res = client()
+            .get_tokens(Some("1"), None)
+            .expect("should get ethereum tokens");
         assert_eq!(res.get("source").and_then(Value::as_str), Some("lifi"));
         assert!(res.get("tokens").is_some(), "should have tokens key");
     }
 
     #[test]
     fn token_detail_smoke() {
-        let res = client().get_token("1", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
+        let res = client()
+            .get_token("1", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
             .expect("should get USDC token detail");
         assert_eq!(res.get("source").and_then(Value::as_str), Some("lifi"));
     }
@@ -1012,15 +1001,20 @@ mod tests {
 
     #[test]
     fn connections_smoke() {
-        let res = client().get_connections(Some("1"), Some("137"), None, None)
+        let res = client()
+            .get_connections(Some("1"), Some("137"), None, None)
             .expect("should get connections");
         assert_eq!(res.get("source").and_then(Value::as_str), Some("lifi"));
-        assert!(res.get("connections").is_some(), "should have connections key");
+        assert!(
+            res.get("connections").is_some(),
+            "should have connections key"
+        );
     }
 
     #[test]
     fn gas_suggestion_smoke() {
-        let res = client().get_gas_suggestion("1", None, None)
+        let res = client()
+            .get_gas_suggestion("1", None, None)
             .expect("should get gas suggestion for ethereum");
         assert_eq!(res.get("source").and_then(Value::as_str), Some("lifi"));
     }
@@ -1045,7 +1039,10 @@ mod tests {
 
     #[test]
     fn amount_to_base_units_eth() {
-        assert_eq!(amount_to_base_units(1.0, 18).unwrap(), "1000000000000000000");
+        assert_eq!(
+            amount_to_base_units(1.0, 18).unwrap(),
+            "1000000000000000000"
+        );
     }
 
     #[test]
