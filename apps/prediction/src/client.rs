@@ -10,7 +10,7 @@ pub(crate) fn build_preamble() -> String {
     let now = Local::now();
     format!(
         r#"## Role
-You are the Prediction Wizard, an expert in prediction markets. You trade on Polymarket and Kalshi via the Simmer SDK, or directly on Polymarket via wallet signing.
+You are the Prediction Wizard, an expert in prediction markets. You trade on Polymarket via the Simmer SDK, or directly on Polymarket via wallet signing.
 
 ## Current Date
 Today is {} ({}). Use this exact date when interpreting relative terms like 'today', 'tomorrow', and 'yesterday'.
@@ -18,9 +18,9 @@ Today is {} ({}). Use this exact date when interpreting relative terms like 'tod
 ## Simmer SDK
 Simmer SDK (simmer.markets) -- unified trading API with one key (sk_...).
 
-Venues: 'simmer' = sandbox ($SIM, starts 10k, no real money, no KYC). 'polymarket' = real USDC, non-US only (Polygon). 'kalshi' = real USD, US only (CFTC-regulated). Always default to simmer unless user explicitly asks otherwise.
+Venues: 'sim' = sandbox ($SIM, starts 10k, no real money, no KYC). 'polymarket' = real USDC, non-US only (Polygon). Always default to sim unless user explicitly asks otherwise.
 
-Setup: simmer_register -> get api_key + claim_url -> user runs /apikey simmer <key> -> user visits claim_url to complete KYC and link their Simmer account. If user already has a key, skip to /apikey. When presenting the claim link, always tell the user: 'Visit this link to verify your identity and claim your agent. This is where Simmer handles KYC -- once complete, real-money trading on Polymarket/Kalshi unlocks.'
+Setup: simmer_register -> get api_key + claim_url -> user runs /apikey simmer <key> -> user visits claim_url to complete KYC and link their Simmer account. If user already has a key, skip to /apikey. When presenting the claim link, always tell the user: 'Visit this link to verify your identity and claim your agent. This is where Simmer handles KYC -- once complete, real-money Polymarket access unlocks.'
 
 Trade flow: search markets -> fetch_simmer_market_context (ALWAYS check pre-trade warnings) -> simmer_place_order with reasoning. The reasoning field is PUBLIC on the user's Simmer profile and builds reputation -- write a real thesis, not 'user asked me to buy'.
 
@@ -28,10 +28,10 @@ Use dry_run=true for >$50 trades. Use simmer_briefing for a full dashboard in on
 All Simmer tools require the api_key argument. When the user configures their key via /apikey, you will receive it in a system message. Pass this key to every Simmer tool call.
 Auth errors -> remind user: /apikey simmer <key>
 
-Compliance: Aomi is only an interface -- we don't hold funds or verify identity. Simmer holds custody and handles KYC/compliance. The claim flow at simmer.markets is the KYC point. Simmer blocks US users from Polymarket and routes them to Kalshi. Users are responsible for legality in their jurisdiction.
+Compliance: Aomi is only an interface -- we don't hold funds or verify identity. Simmer holds custody and handles KYC/compliance. The claim flow at simmer.markets is the KYC point. Polymarket real-money access is not available to US users. Users are responsible for legality in their jurisdiction.
 
-IMPORTANT -- show this disclaimer on registration (before claim link), on first real-money trade (venue=polymarket or kalshi), and in /apikey simmer response:
-'Aomi is an interface to Simmer (simmer.markets) -- we do not hold your funds. KYC and compliance are handled by Simmer and the underlying platforms. You are responsible for ensuring prediction market trading is legal in your jurisdiction. US users: Polymarket is NOT available to you; use Kalshi (CFTC-regulated) instead. By claiming your agent you agree to Simmer ToS.'
+IMPORTANT -- show this disclaimer on registration (before claim link), on first real-money trade (venue=polymarket), and in /apikey simmer response:
+'Aomi is an interface to Simmer (simmer.markets) -- we do not hold your funds. KYC and compliance are handled by Simmer and the underlying platforms. You are responsible for ensuring prediction market trading is legal in your jurisdiction. US users: Polymarket is NOT available to you. By claiming your agent you agree to Simmer ToS.'
 
 ## Polymarket Direct Path
 Polymarket direct path -- ONLY for users who explicitly ask for direct wallet signing via /connect. Do NOT use these tools if the user has a Simmer key -- use simmer_place_order instead. Flow: resolve_polymarket_trade_intent -> build_polymarket_order_preview -> get_polymarket_clob_signature -> ensure_polymarket_clob_credentials -> place_polymarket_order. Requires connected wallet with a real address (not empty). If wallet address is missing, tell user to /connect first.
@@ -150,12 +150,15 @@ impl SimmerClient {
         Self::send_json(req, "trade")
     }
 
-    pub(crate) fn get_positions(&self) -> Result<Value, String> {
+    pub(crate) fn get_positions(&self, venue: Option<&str>) -> Result<Value, String> {
         let url = format!("{}/api/sdk/positions", SIMMER_API_URL);
-        let req = self
+        let mut req = self
             .http
             .get(&url)
             .header("Authorization", self.auth_header());
+        if let Some(venue) = venue {
+            req = req.query(&[("venue", venue)]);
+        }
         Self::send_json(req, "get_positions")
     }
 
@@ -170,14 +173,14 @@ impl SimmerClient {
 
     pub(crate) fn get_markets(
         &self,
-        import_source: Option<&str>,
+        venue: Option<&str>,
         status: Option<&str>,
         limit: Option<u32>,
     ) -> Result<Value, String> {
         let mut url = format!("{}/api/sdk/markets", SIMMER_API_URL);
         let mut params = vec![];
-        if let Some(src) = import_source {
-            params.push(format!("import_source={}", src));
+        if let Some(venue) = venue {
+            params.push(format!("venue={}", venue));
         }
         if let Some(st) = status {
             params.push(format!("status={}", st));
@@ -219,11 +222,16 @@ pub(crate) fn simmer_register_agent(
 
 pub(crate) fn parse_venue(venue: &str) -> Result<String, String> {
     match venue.to_lowercase().as_str() {
-        "simmer" | "polymarket" | "kalshi" => Ok(venue.to_lowercase()),
-        other => Err(format!(
-            "Unknown venue: {}. Use simmer, polymarket, or kalshi.",
-            other
-        )),
+        "sim" | "sandbox" | "simmer" => Ok("sim".to_string()),
+        "polymarket" => Ok("polymarket".to_string()),
+        other => Err(format!("Unknown venue: {}. Use sim or polymarket.", other)),
+    }
+}
+
+pub(crate) fn parse_market_source(import_source: &str) -> Result<String, String> {
+    match import_source.to_lowercase().as_str() {
+        "polymarket" => Ok("polymarket".to_string()),
+        other => Err(format!("Unknown import_source: {}. Use polymarket.", other)),
     }
 }
 
@@ -383,7 +391,7 @@ impl PolymarketClient {
 
         let url = request
             .endpoint
-            .unwrap_or_else(|| format!("{}/orders", CLOB_API_BASE));
+            .unwrap_or_else(|| format!("{}/order", CLOB_API_BASE));
 
         let mut req_builder = self.http.post(&url).json(&body);
         let body_string =
@@ -401,9 +409,7 @@ impl PolymarketClient {
             };
 
             let request_path = extract_request_path(&url)?;
-            let timestamp = auth_bundle
-                .l2_timestamp
-                .unwrap_or_else(now_unix_timestamp);
+            let timestamp = auth_bundle.l2_timestamp.unwrap_or_else(now_unix_timestamp);
 
             let l2_signature = match auth_bundle.l2_signature {
                 Some(sig) => sig,

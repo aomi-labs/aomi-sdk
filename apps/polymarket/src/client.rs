@@ -295,7 +295,7 @@ impl PolymarketClient {
 
         let url = request
             .endpoint
-            .unwrap_or_else(|| format!("{}/orders", CLOB_API_BASE));
+            .unwrap_or_else(|| format!("{}/order", CLOB_API_BASE));
 
         let body_string =
             serde_json::to_string(&body).map_err(|e| format!("serialize body: {e}"))?;
@@ -1198,4 +1198,82 @@ pub(crate) struct SearchPolymarketArgs {
     pub(crate) archived: Option<bool>,
     /// Filter by tag/category (e.g., 'crypto', 'sports', 'politics')
     pub(crate) tag: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn public_market_apis_smoke() {
+        let client = PolymarketClient::new().expect("client should build");
+        let markets = client
+            .get_markets(&GetMarketsParams {
+                limit: Some(1),
+                offset: Some(0),
+                active: Some(true),
+                closed: Some(false),
+                archived: Some(false),
+                tag: None,
+            })
+            .expect("market list request should succeed");
+
+        assert!(!markets.is_empty(), "expected at least one active market");
+
+        let first = &markets[0];
+        let slug = first
+            .slug
+            .as_deref()
+            .expect("market list response should include slug");
+        let condition_id = first
+            .condition_id
+            .as_deref()
+            .expect("market list response should include condition_id");
+
+        let by_slug = client
+            .get_market(slug)
+            .expect("market lookup by slug should succeed");
+        assert_eq!(by_slug.slug.as_deref(), Some(slug));
+
+        let by_condition_id = client
+            .get_market(condition_id)
+            .expect("market lookup by condition_id should succeed");
+        assert_eq!(by_condition_id.condition_id.as_deref(), Some(condition_id));
+
+        let trades = client
+            .get_trades(&GetTradesParams {
+                limit: Some(1),
+                offset: Some(0),
+                market: None,
+                user: None,
+                side: None,
+            })
+            .expect("trades request should succeed");
+        assert!(!trades.is_empty(), "expected at least one trade");
+    }
+
+    #[test]
+    fn default_order_path_matches_docs() {
+        let client = PolymarketClient::new().expect("client should build");
+        let request = SubmitOrderRequest {
+            owner: "0x1234567890123456789012345678901234567890".to_string(),
+            signature: "0xdeadbeef".to_string(),
+            order: json!({"maker":"0x1234567890123456789012345678901234567890"}),
+            client_id: None,
+            endpoint: None,
+            api_key: None,
+            clob_auth: None,
+            extra_fields: None,
+        };
+
+        let url = request
+            .endpoint
+            .unwrap_or_else(|| format!("{}/order", CLOB_API_BASE));
+        let path = client
+            .extract_request_path(&url)
+            .expect("request path extraction should succeed");
+
+        assert_eq!(path, "/order");
+    }
 }
