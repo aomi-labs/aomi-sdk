@@ -92,7 +92,7 @@ impl SimmerClient {
     }
 
     pub(crate) fn get_agent_status(&self) -> Result<Value, String> {
-        let url = format!("{}/api/sdk/agents/me", SIMMER_API_URL);
+        let url = format!("{SIMMER_API_URL}/api/sdk/agents/me");
         let req = self
             .http
             .get(&url)
@@ -101,7 +101,7 @@ impl SimmerClient {
     }
 
     pub(crate) fn get_briefing(&self, since: Option<&str>) -> Result<Value, String> {
-        let url = format!("{}/api/sdk/briefing", SIMMER_API_URL);
+        let url = format!("{SIMMER_API_URL}/api/sdk/briefing");
         let mut req = self
             .http
             .get(&url)
@@ -113,7 +113,7 @@ impl SimmerClient {
     }
 
     pub(crate) fn get_market_context(&self, market_id: &str) -> Result<Value, String> {
-        let url = format!("{}/api/sdk/context/{}", SIMMER_API_URL, market_id);
+        let url = format!("{SIMMER_API_URL}/api/sdk/context/{market_id}");
         let req = self
             .http
             .get(&url)
@@ -122,7 +122,7 @@ impl SimmerClient {
     }
 
     pub(crate) fn trade(&self, body: Value) -> Result<Value, String> {
-        let url = format!("{}/api/sdk/trade", SIMMER_API_URL);
+        let url = format!("{SIMMER_API_URL}/api/sdk/trade");
         let req = self
             .http
             .post(&url)
@@ -132,7 +132,7 @@ impl SimmerClient {
     }
 
     pub(crate) fn get_positions(&self, venue: Option<&str>) -> Result<Value, String> {
-        let url = format!("{}/api/sdk/positions", SIMMER_API_URL);
+        let url = format!("{SIMMER_API_URL}/api/sdk/positions");
         let mut req = self
             .http
             .get(&url)
@@ -144,7 +144,7 @@ impl SimmerClient {
     }
 
     pub(crate) fn get_portfolio(&self) -> Result<Value, String> {
-        let url = format!("{}/api/sdk/portfolio", SIMMER_API_URL);
+        let url = format!("{SIMMER_API_URL}/api/sdk/portfolio");
         let req = self
             .http
             .get(&url)
@@ -158,7 +158,7 @@ impl SimmerClient {
         limit: Option<u32>,
         min_volume: Option<f64>,
     ) -> Result<Value, String> {
-        let url = format!("{}/api/sdk/markets/importable", SIMMER_API_URL);
+        let url = format!("{SIMMER_API_URL}/api/sdk/markets/importable");
         let mut req = self
             .http
             .get(&url)
@@ -177,7 +177,7 @@ impl SimmerClient {
     }
 
     pub(crate) fn import_kalshi_market(&self, kalshi_url: &str) -> Result<Value, String> {
-        let url = format!("{}/api/sdk/markets/import/kalshi", SIMMER_API_URL);
+        let url = format!("{SIMMER_API_URL}/api/sdk/markets/import/kalshi");
         let req = self
             .http
             .post(&url)
@@ -202,7 +202,7 @@ pub(crate) fn simmer_register_agent(
     }
 
     let req = http
-        .post(format!("{}/api/sdk/agents/register", SIMMER_API_URL))
+        .post(format!("{SIMMER_API_URL}/api/sdk/agents/register"))
         .json(&body);
     SimmerClient::send_json(req, "register_agent")
 }
@@ -211,7 +211,7 @@ pub(crate) fn parse_venue(venue: &str) -> Result<String, String> {
     match venue.to_lowercase().as_str() {
         "sim" | "sandbox" | "simmer" => Ok("sim".to_string()),
         "kalshi" => Ok("kalshi".to_string()),
-        other => Err(format!("Unknown venue: {}. Use sim or kalshi.", other)),
+        other => Err(format!("Unknown venue: {other}. Use sim or kalshi.")),
     }
 }
 

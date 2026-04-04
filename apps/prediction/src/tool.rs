@@ -338,8 +338,7 @@ impl DynAomiTool for BuildPolymarketOrderPreview {
 
         if token_id.is_none() {
             return Err(format!(
-                "Failed to resolve token_id for outcome {} from market metadata.",
-                outcome
+                "Failed to resolve token_id for outcome {outcome} from market metadata."
             ));
         }
 

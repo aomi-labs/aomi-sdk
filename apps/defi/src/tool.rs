@@ -339,8 +339,7 @@ impl DynAomiTool for PlaceAggregatorEvmOrder {
         }
 
         Err(format!(
-            "Unsupported aggregator '{}'. Use '0x' or 'lifi'.",
-            preferred
+            "Unsupported aggregator '{preferred}'. Use '0x' or 'lifi'."
         ))
     }
 }
@@ -415,7 +414,7 @@ impl DynAomiTool for GetLammaProtocols {
                     "tvl": format!("${:.2}B", p.get("tvl").and_then(Value::as_f64).unwrap_or(0.0) / 1_000_000_000.0),
                     "category": p.get("category").cloned().unwrap_or(Value::Null),
                     "chains": p.get("chains").cloned().unwrap_or(Value::Null),
-                    "change_1d": p.get("change_1d").and_then(Value::as_f64).map(|c| format!("{:+.1}%", c)),
+                    "change_1d": p.get("change_1d").and_then(Value::as_f64).map(|c| format!("{c:+.1}%")),
                 })
             })
             .collect();

@@ -131,7 +131,7 @@ impl PolymarketClient {
     // ── Market APIs ──────────────────────────────────────────────────────
 
     pub(crate) fn get_markets(&self, params: &GetMarketsParams) -> Result<Vec<Market>, String> {
-        let url = format!("{}/markets", GAMMA_API_BASE);
+        let url = format!("{GAMMA_API_BASE}/markets");
         let mut query: Vec<(&str, String)> = Vec::new();
         if let Some(limit) = params.limit {
             query.push(("limit", limit.to_string()));
@@ -214,7 +214,7 @@ impl PolymarketClient {
     // ── Trades API ───────────────────────────────────────────────────────
 
     pub(crate) fn get_trades(&self, params: &GetTradesParams) -> Result<Vec<Trade>, String> {
-        let url = format!("{}/trades", DATA_API_BASE);
+        let url = format!("{DATA_API_BASE}/trades");
         let mut query: Vec<(&str, String)> = Vec::new();
         if let Some(limit) = params.limit {
             query.push(("limit", limit.to_string()));
@@ -295,7 +295,7 @@ impl PolymarketClient {
 
         let url = request
             .endpoint
-            .unwrap_or_else(|| format!("{}/order", CLOB_API_BASE));
+            .unwrap_or_else(|| format!("{CLOB_API_BASE}/order"));
 
         let body_string =
             serde_json::to_string(&body).map_err(|e| format!("serialize body: {e}"))?;
@@ -400,7 +400,7 @@ impl PolymarketClient {
         &self,
         l1_auth: &ClobL1Auth,
     ) -> Result<ClobApiCredentials, String> {
-        let url = format!("{}{}", CLOB_API_BASE, CLOB_AUTH_DERIVE_API_KEY_PATH);
+        let url = format!("{CLOB_API_BASE}{CLOB_AUTH_DERIVE_API_KEY_PATH}");
         let resp = self
             .with_l1_headers(self.http.get(&url), l1_auth)
             .send()
@@ -412,7 +412,7 @@ impl PolymarketClient {
         &self,
         l1_auth: &ClobL1Auth,
     ) -> Result<ClobApiCredentials, String> {
-        let url = format!("{}{}", CLOB_API_BASE, CLOB_AUTH_CREATE_API_KEY_PATH);
+        let url = format!("{CLOB_API_BASE}{CLOB_AUTH_CREATE_API_KEY_PATH}");
         let resp = self
             .with_l1_headers(self.http.post(&url), l1_auth)
             .send()
@@ -725,11 +725,11 @@ pub(crate) fn classify_market_lookup_target(raw: &str) -> MarketLookupTarget {
 pub(crate) fn build_market_lookup_request(target: &MarketLookupTarget) -> MarketLookupRequest {
     match target {
         MarketLookupTarget::MarketId(id) => MarketLookupRequest {
-            path: format!("/markets/{}", id),
+            path: format!("/markets/{id}"),
             query: HashMap::new(),
         },
         MarketLookupTarget::Slug(slug) => MarketLookupRequest {
-            path: format!("/markets/slug/{}", slug),
+            path: format!("/markets/slug/{slug}"),
             query: HashMap::new(),
         },
         MarketLookupTarget::ConditionId(condition_id) => {
@@ -872,7 +872,7 @@ pub(crate) fn rank_market_candidates(
             let url = m
                 .slug
                 .as_ref()
-                .map(|slug| format!("https://polymarket.com/market/{}", slug));
+                .map(|slug| format!("https://polymarket.com/market/{slug}"));
 
             Some(RankedMarketCandidate {
                 market_id: m.id.clone(),
