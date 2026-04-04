@@ -401,9 +401,7 @@ impl PolymarketClient {
             };
 
             let request_path = extract_request_path(&url)?;
-            let timestamp = auth_bundle
-                .l2_timestamp
-                .unwrap_or_else(now_unix_timestamp);
+            let timestamp = auth_bundle.l2_timestamp.unwrap_or_else(now_unix_timestamp);
 
             let l2_signature = match auth_bundle.l2_signature {
                 Some(sig) => sig,

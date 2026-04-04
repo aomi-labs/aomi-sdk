@@ -45,5 +45,6 @@ dyn_aomi_app!(
         client::GetKhalaniTokens,
         client::SearchKhalaniTokens,
         client::GetKhalaniChains,
-    ]
+    ],
+    namespaces = ["common"]
 );
