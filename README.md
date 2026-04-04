@@ -22,9 +22,11 @@ This repository contains public dynamic app crates, the public SDK they build ag
 
 - `defi`
 - `delta`
+- `kalshi`
 - `khalani`
 - `molinar`
 - `para`
+- `para-consumer`
 - `polymarket`
 - `prediction`
 - `social`
@@ -181,9 +183,11 @@ aomi-plugins-v0.1.0-x86_64-unknown-linux-gnu.tar.gz
     ├── manifest.json
     ├── defi.so
     ├── delta.so
+    ├── kalshi.so
     ├── khalani.so
     ├── molinar.so
     ├── para.so
+    ├── para_consumer.so
     ├── polymarket.so
     ├── prediction.so
     ├── social.so

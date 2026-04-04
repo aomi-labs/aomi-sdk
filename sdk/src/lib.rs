@@ -55,6 +55,7 @@
 //!     version = "0.1.0",
 //!     preamble = "You are a friendly greeter.",
 //!     tools = [Greet],
+//!     namespaces = ["common"],
 //! );
 //! ```
 //!

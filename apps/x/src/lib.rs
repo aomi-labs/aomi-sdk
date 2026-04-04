@@ -54,5 +54,6 @@ dyn_aomi_app!(
         client::SearchX,
         client::GetXTrends,
         client::GetXPost,
-    ]
+    ],
+    namespaces = ["common"]
 );

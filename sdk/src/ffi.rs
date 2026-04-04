@@ -312,16 +312,22 @@ macro_rules! declare_dyn {
 ///
 /// # Forms
 ///
-/// **Basic** (tools only):
+/// **Basic** (tools only, using the recommended explicit common namespace):
 /// ```rust,ignore
 /// dyn_aomi_app!(app = MyApp, name = "my", version = "0.1.0",
-///     preamble = "...", tools = [ToolA, ToolB]);
+///     preamble = "...", tools = [ToolA, ToolB], namespaces = ["common"]);
 /// ```
 ///
 /// **With host-side namespaces** (tools can be empty for namespace-only apps):
 /// ```rust,ignore
 /// dyn_aomi_app!(app = MyApp, name = "my", version = "0.1.0",
 ///     preamble = "...", tools = [], namespaces = ["database"]);
+/// ```
+///
+/// **With explicit no host namespaces**:
+/// ```rust,ignore
+/// dyn_aomi_app!(app = MyApp, name = "my", version = "0.1.0",
+///     preamble = "...", tools = [ToolA], namespaces = []);
 /// ```
 #[macro_export]
 macro_rules! dyn_aomi_app {
@@ -332,7 +338,7 @@ macro_rules! dyn_aomi_app {
         version = $version:expr,
         preamble = $preamble:expr,
         tools = [ $( $tool_type:ty ),* $(,)? ],
-        namespaces = [ $( $ns:expr ),+ $(,)? ]
+        namespaces = [ $( $ns:expr ),* $(,)? ]
     ) => {
         impl $crate::DynAomiApp for $app_type {
             fn name(&self) -> &'static str { $name }
@@ -344,7 +350,7 @@ macro_rules! dyn_aomi_app {
             }
 
             fn namespaces(&self) -> ::std::option::Option<::std::vec::Vec<::std::string::String>> {
-                ::std::option::Option::Some(::std::vec![ $( $ns.to_string() ),+ ])
+                ::std::option::Option::Some(::std::vec![ $( $ns.to_string() ),* ])
             }
 
             fn start_tool(

@@ -20,5 +20,6 @@ dyn_aomi_app!(
         client::GetPolymarketClobSignature,
         client::EnsurePolymarketClobCredentials,
         client::PlacePolymarketOrder,
-    ]
+    ],
+    namespaces = ["common"]
 );

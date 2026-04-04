@@ -100,5 +100,6 @@ dyn_aomi_app!(
         client::GetLammaChainTvl,
         client::GetLammaBridges,
         client::GetBridgeQuote,
-    ]
+    ],
+    namespaces = ["common"]
 );

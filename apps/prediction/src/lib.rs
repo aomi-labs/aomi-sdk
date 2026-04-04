@@ -28,5 +28,6 @@ dyn_aomi_app!(
         client::SimmerGetPositions,
         client::SimmerGetPortfolio,
         client::SearchSimmerMarkets,
-    ]
+    ],
+    namespaces = ["common"]
 );
