@@ -72,5 +72,6 @@ dyn_aomi_app!(
         client::SubmitZeroxGaslessSwap,
         client::GetZeroxGaslessStatus,
         client::GetZeroxGaslessChains,
-    ]
+    ],
+    namespaces = ["common"]
 );

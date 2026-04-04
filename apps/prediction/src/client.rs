@@ -111,7 +111,7 @@ impl SimmerClient {
     }
 
     pub(crate) fn get_agent_status(&self) -> Result<Value, String> {
-        let url = format!("{}/api/sdk/agents/me", SIMMER_API_URL);
+        let url = format!("{SIMMER_API_URL}/api/sdk/agents/me");
         let req = self
             .http
             .get(&url)
@@ -120,9 +120,9 @@ impl SimmerClient {
     }
 
     pub(crate) fn get_briefing(&self, since: Option<&str>) -> Result<Value, String> {
-        let mut url = format!("{}/api/sdk/briefing", SIMMER_API_URL);
+        let mut url = format!("{SIMMER_API_URL}/api/sdk/briefing");
         if let Some(since) = since {
-            url.push_str(&format!("?since={}", since));
+            url.push_str(&format!("?since={since}"));
         }
         let req = self
             .http
@@ -132,7 +132,7 @@ impl SimmerClient {
     }
 
     pub(crate) fn get_market_context(&self, market_id: &str) -> Result<Value, String> {
-        let url = format!("{}/api/sdk/context/{}", SIMMER_API_URL, market_id);
+        let url = format!("{SIMMER_API_URL}/api/sdk/context/{market_id}");
         let req = self
             .http
             .get(&url)
@@ -141,7 +141,7 @@ impl SimmerClient {
     }
 
     pub(crate) fn trade(&self, body: Value) -> Result<Value, String> {
-        let url = format!("{}/api/sdk/trade", SIMMER_API_URL);
+        let url = format!("{SIMMER_API_URL}/api/sdk/trade");
         let req = self
             .http
             .post(&url)
@@ -151,7 +151,7 @@ impl SimmerClient {
     }
 
     pub(crate) fn get_positions(&self, venue: Option<&str>) -> Result<Value, String> {
-        let url = format!("{}/api/sdk/positions", SIMMER_API_URL);
+        let url = format!("{SIMMER_API_URL}/api/sdk/positions");
         let mut req = self
             .http
             .get(&url)
@@ -163,7 +163,7 @@ impl SimmerClient {
     }
 
     pub(crate) fn get_portfolio(&self) -> Result<Value, String> {
-        let url = format!("{}/api/sdk/portfolio", SIMMER_API_URL);
+        let url = format!("{SIMMER_API_URL}/api/sdk/portfolio");
         let req = self
             .http
             .get(&url)
@@ -177,16 +177,16 @@ impl SimmerClient {
         status: Option<&str>,
         limit: Option<u32>,
     ) -> Result<Value, String> {
-        let mut url = format!("{}/api/sdk/markets", SIMMER_API_URL);
+        let mut url = format!("{SIMMER_API_URL}/api/sdk/markets");
         let mut params = vec![];
         if let Some(venue) = venue {
-            params.push(format!("venue={}", venue));
+            params.push(format!("venue={venue}"));
         }
         if let Some(st) = status {
-            params.push(format!("status={}", st));
+            params.push(format!("status={st}"));
         }
         if let Some(l) = limit {
-            params.push(format!("limit={}", l));
+            params.push(format!("limit={l}"));
         }
         if !params.is_empty() {
             url.push('?');
@@ -215,7 +215,7 @@ pub(crate) fn simmer_register_agent(
     }
 
     let req = http
-        .post(format!("{}/api/sdk/agents/register", SIMMER_API_URL))
+        .post(format!("{SIMMER_API_URL}/api/sdk/agents/register"))
         .json(&body);
     SimmerClient::send_json(req, "register_agent")
 }
@@ -224,14 +224,14 @@ pub(crate) fn parse_venue(venue: &str) -> Result<String, String> {
     match venue.to_lowercase().as_str() {
         "sim" | "sandbox" | "simmer" => Ok("sim".to_string()),
         "polymarket" => Ok("polymarket".to_string()),
-        other => Err(format!("Unknown venue: {}. Use sim or polymarket.", other)),
+        other => Err(format!("Unknown venue: {other}. Use sim or polymarket.")),
     }
 }
 
 pub(crate) fn parse_market_source(import_source: &str) -> Result<String, String> {
     match import_source.to_lowercase().as_str() {
         "polymarket" => Ok("polymarket".to_string()),
-        other => Err(format!("Unknown import_source: {}. Use polymarket.", other)),
+        other => Err(format!("Unknown import_source: {other}. Use polymarket.")),
     }
 }
 
@@ -260,7 +260,7 @@ impl PolymarketClient {
     }
 
     pub(crate) fn get_markets(&self, params: &GetMarketsParams) -> Result<Vec<Value>, String> {
-        let url = format!("{}/markets", GAMMA_API_BASE);
+        let url = format!("{GAMMA_API_BASE}/markets");
         let mut query: Vec<(&str, String)> = Vec::new();
         if let Some(limit) = params.limit {
             query.push(("limit", limit.to_string()));
@@ -297,7 +297,7 @@ impl PolymarketClient {
 
     pub(crate) fn get_market(&self, id_or_slug: &str) -> Result<Value, String> {
         let (path, query) = classify_polymarket_lookup(id_or_slug);
-        let url = format!("{}{}", GAMMA_API_BASE, path);
+        let url = format!("{GAMMA_API_BASE}{path}");
         let resp = self
             .http
             .get(&url)
@@ -326,7 +326,7 @@ impl PolymarketClient {
     }
 
     pub(crate) fn get_trades(&self, params: &GetTradesParams) -> Result<Vec<Value>, String> {
-        let url = format!("{}/trades", DATA_API_BASE);
+        let url = format!("{DATA_API_BASE}/trades");
         let mut query: Vec<(&str, String)> = Vec::new();
         if let Some(limit) = params.limit {
             query.push(("limit", limit.to_string()));
@@ -391,7 +391,7 @@ impl PolymarketClient {
 
         let url = request
             .endpoint
-            .unwrap_or_else(|| format!("{}/order", CLOB_API_BASE));
+            .unwrap_or_else(|| format!("{CLOB_API_BASE}/order"));
 
         let mut req_builder = self.http.post(&url).json(&body);
         let body_string =
@@ -462,7 +462,7 @@ impl PolymarketClient {
         &self,
         l1_auth: &ClobL1Auth,
     ) -> Result<ClobApiCredentials, String> {
-        let url = format!("{}/auth/derive-api-key", CLOB_API_BASE);
+        let url = format!("{CLOB_API_BASE}/auth/derive-api-key");
         let resp = self
             .with_l1_headers(self.http.get(&url), l1_auth)
             .send()
@@ -474,7 +474,7 @@ impl PolymarketClient {
         &self,
         l1_auth: &ClobL1Auth,
     ) -> Result<ClobApiCredentials, String> {
-        let url = format!("{}/auth/api-key", CLOB_API_BASE);
+        let url = format!("{CLOB_API_BASE}/auth/api-key");
         let resp = self
             .with_l1_headers(self.http.post(&url), l1_auth)
             .send()
@@ -574,9 +574,9 @@ pub(crate) fn classify_polymarket_lookup(raw: &str) -> (String, Vec<(String, Str
             ],
         )
     } else if raw.contains('-') {
-        (format!("/markets/slug/{}", raw), vec![])
+        (format!("/markets/slug/{raw}"), vec![])
     } else {
-        (format!("/markets/{}", raw), vec![])
+        (format!("/markets/{raw}"), vec![])
     }
 }
 
@@ -985,7 +985,7 @@ pub(crate) fn rank_market_candidates(intent: &ParsedTradeIntent, markets: &[Valu
 
             let (yes_price, no_price) = extract_yes_no_prices(m);
             let slug = m.get("slug").and_then(Value::as_str);
-            let url = slug.map(|s| format!("https://polymarket.com/market/{}", s));
+            let url = slug.map(|s| format!("https://polymarket.com/market/{s}"));
 
             Some((
                 score,

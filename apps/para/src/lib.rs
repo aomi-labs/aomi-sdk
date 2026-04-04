@@ -39,5 +39,6 @@ dyn_aomi_app!(
         client::ListParaWallets,
         client::SignRawWithParaWallet,
         client::WaitForParaWalletReady,
-    ]
+    ],
+    namespaces = []
 );

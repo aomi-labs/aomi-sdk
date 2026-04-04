@@ -52,13 +52,14 @@ dyn_aomi_app!(
         client::GetLammaChainTvl,
         client::GetLammaBridges,
         client::GetBridgeQuote,
-    ]
+    ],
+    namespaces = ["common"]
 );
 
 #[cfg(test)]
 mod tests {
-    use aomi_sdk::DynAomiApp;
     use crate::client::ParaConsumerApp;
+    use aomi_sdk::DynAomiApp;
 
     #[test]
     fn manifest_uses_defi_style_sections_for_para_consumer() {
@@ -66,14 +67,22 @@ mod tests {
 
         assert_eq!(manifest.name, "para-consumer");
         assert!(manifest.preamble.contains("## Your Capabilities"));
-        assert!(manifest.preamble.contains("https://docs.getpara.com/v2/introduction/welcome"));
+        assert!(
+            manifest
+                .preamble
+                .contains("https://docs.getpara.com/v2/introduction/welcome")
+        );
         assert!(manifest.preamble.contains("## Response Guidelines"));
     }
 
     #[test]
     fn manifest_uses_the_defi_tool_surface() {
         let manifest = ParaConsumerApp::default().manifest();
-        let tool_names: Vec<&str> = manifest.tools.iter().map(|tool| tool.name.as_str()).collect();
+        let tool_names: Vec<&str> = manifest
+            .tools
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect();
 
         assert_eq!(
             tool_names,

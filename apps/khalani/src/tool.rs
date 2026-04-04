@@ -342,8 +342,7 @@ impl DynAomiTool for SubmitKhalaniOrder {
             }
             other => {
                 return Err(format!(
-                    "submit_khalani_order unsupported submit_type '{}'",
-                    other
+                    "submit_khalani_order unsupported submit_type '{other}'"
                 ));
             }
         };

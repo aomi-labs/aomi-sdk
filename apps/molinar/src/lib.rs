@@ -66,5 +66,6 @@ dyn_aomi_app!(
         client::MolinarCreateObject,
         client::MolinarCustomize,
         client::MolinarPing,
-    ]
+    ],
+    namespaces = []
 );

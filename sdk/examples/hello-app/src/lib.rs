@@ -228,5 +228,6 @@ dyn_aomi_app!(
         FailAsyncTool,
         WaitForCancelAsyncTool,
         PanicSyncTool
-    ]
+    ],
+    namespaces = []
 );

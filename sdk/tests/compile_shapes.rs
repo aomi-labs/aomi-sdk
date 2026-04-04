@@ -132,6 +132,54 @@ dyn_aomi_app!(app = App, name = "shape_async", version = "0.1.0", preamble = "sh
 }
 
 #[test]
+fn valid_empty_namespace_dyn_app_shape_compiles() {
+    let output = cargo_check_temp_crate(
+        "dyn-sdk-shape-pass-empty-namespaces",
+        r#"
+use aomi_sdk::{DynAomiTool, DynToolCallCtx, dyn_aomi_app, schemars::JsonSchema, serde_json::{json, Value}};
+use serde::Deserialize;
+
+#[derive(Clone, Default)]
+struct App;
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+struct Args {
+    name: String,
+}
+
+struct Tool;
+
+impl DynAomiTool for Tool {
+    type App = App;
+    type Args = Args;
+
+    const NAME: &'static str = "tool";
+    const DESCRIPTION: &'static str = "shape test tool";
+
+    fn run(_app: &Self::App, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
+        Ok(json!({ "hello": args.name }))
+    }
+}
+
+dyn_aomi_app!(
+    app = App,
+    name = "shape_empty_namespaces",
+    version = "0.1.0",
+    preamble = "shape",
+    tools = [Tool],
+    namespaces = []
+);
+"#,
+    );
+
+    assert!(
+        output.status.success(),
+        "expected explicit empty namespaces shape to compile:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn dyn_app_missing_default_fails_to_compile() {
     let output = cargo_check_temp_crate(
         "dyn-sdk-shape-fail-default",

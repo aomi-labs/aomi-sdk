@@ -77,5 +77,6 @@ dyn_aomi_app!(
         client::GetCryptoSentiment,
         client::GetTrendingTopics,
         client::GetTopicSummary,
-    ]
+    ],
+    namespaces = []
 );

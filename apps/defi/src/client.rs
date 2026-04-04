@@ -211,7 +211,7 @@ pub(crate) fn normalize_token_id(token: &str) -> String {
         "mkr" | "maker" => "coingecko:maker".to_string(),
         "crv" | "curve" => "coingecko:curve-dao-token".to_string(),
         "ldo" | "lido" => "coingecko:lido-dao".to_string(),
-        _ => format!("coingecko:{}", token_lower),
+        _ => format!("coingecko:{token_lower}"),
     }
 }
 
@@ -726,7 +726,7 @@ impl Aggregator {
 
     pub(crate) fn place_order_cow(&self, chain: &str, payload: Value) -> Result<Value, String> {
         let base = self.cow_api_base_for_chain(chain)?;
-        let mut request = self.http.post(format!("{}/orders", base)).json(&payload);
+        let mut request = self.http.post(format!("{base}/orders")).json(&payload);
         if let Some(api_key) = self.cow_api_key.as_ref() {
             request = request.header("Authorization", format!("Bearer {api_key}"));
         }
@@ -848,8 +848,8 @@ impl Aggregator {
             .map_err(|e| format!("[lifi] invalid approval amount {amount_decimal}: {e}"))?;
         let amount_hex = format!("{amount:x}");
 
-        let spender_slot = format!("{:0>64}", spender_clean);
-        let amount_slot = format!("{:0>64}", amount_hex);
+        let spender_slot = format!("{spender_clean:0>64}");
+        let amount_slot = format!("{amount_hex:0>64}");
         Ok(format!("0x{selector}{spender_slot}{amount_slot}"))
     }
 }

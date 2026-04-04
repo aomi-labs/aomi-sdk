@@ -21,7 +21,8 @@ impl DynAomiTool for PingTool {
     type Args = PingArgs;
 
     const NAME: &'static str = "ping";
-    const DESCRIPTION: &'static str = "Return a deterministic payload to verify dynamic app loading.";
+    const DESCRIPTION: &'static str =
+        "Return a deterministic payload to verify dynamic app loading.";
 
     fn run(app: &Self::App, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
         let _ = app;
@@ -40,5 +41,6 @@ dyn_aomi_app!(
     name = "test-dyn",
     version = "0.1.0",
     preamble = "A minimal dynamic test app used to verify plugin fetch, load, authorization, and API-key gating.",
-    tools = [PingTool]
+    tools = [PingTool],
+    namespaces = []
 );
