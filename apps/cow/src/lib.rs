@@ -64,5 +64,6 @@ dyn_aomi_app!(
         client::GetCowNativePrice,
         client::GetCowOrdersByTx,
         client::DebugCowOrder,
-    ]
+    ],
+    namespaces = ["common"]
 );

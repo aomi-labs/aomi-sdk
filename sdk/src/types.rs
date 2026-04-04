@@ -20,9 +20,10 @@ use serde_json::{Map, Value};
 /// - `aomi_dyn_exec_poll`
 /// - `aomi_dyn_exec_cancel`
 ///
-/// ABI v3 adds namespace declarations to the manifest:
-/// - `DynManifest::namespaces` — host-side namespaces the plugin needs
-pub const DYN_ABI_VERSION: u32 = 3;
+/// ABI v3 adds namespace declarations to the manifest.
+/// ABI v4 requires explicit namespace declarations in the manifest, with
+/// `common` remaining the SDK default for backward compatibility.
+pub const DYN_ABI_VERSION: u32 = 4;
 
 // ============================================================================
 // Tool Context (crosses FFI boundary as JSON)
@@ -362,10 +363,10 @@ pub trait DynAomiApp: Clone + Default + Send + Sync + 'static {
         sink: DynAsyncSink,
     ) -> DynToolDispatch;
 
-    /// Host-side namespaces this plugin requires (e.g. `["database"]`).
-    /// Override to request namespace injection from the host.
+    /// Host-side namespaces this plugin requires (e.g. `["common"]`, `["database"]`).
+    /// Override to request a different set, or return `Some(vec![])` to opt out explicitly.
     fn namespaces(&self) -> Option<Vec<String>> {
-        None
+        Some(vec!["common".to_string()])
     }
 
     /// Build the full [`DynManifest`] for host consumption.
@@ -591,5 +592,52 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn test_manifest_defaults_to_common_namespace() {
+        let manifest = App.manifest();
+        assert_eq!(manifest.namespaces, Some(vec!["common".to_string()]));
+    }
+
+    #[test]
+    fn test_manifest_can_opt_out_of_host_namespaces() {
+        #[derive(Clone, Default)]
+        struct NoHostNamespacesApp;
+
+        impl DynAomiApp for NoHostNamespacesApp {
+            fn name(&self) -> &'static str {
+                "no-host-namespaces"
+            }
+
+            fn version(&self) -> &'static str {
+                "0.0.0"
+            }
+
+            fn preamble(&self) -> &'static str {
+                "test preamble"
+            }
+
+            fn tools(&self) -> Vec<DynToolMetadata> {
+                vec![]
+            }
+
+            fn start_tool(
+                &self,
+                _name: &str,
+                _args_json: &str,
+                _ctx_json: &str,
+                _sink: DynAsyncSink,
+            ) -> DynToolDispatch {
+                DynToolDispatch::Ready(DynToolResult::err("not needed in this test"))
+            }
+
+            fn namespaces(&self) -> Option<Vec<String>> {
+                Some(vec![])
+            }
+        }
+
+        let manifest = NoHostNamespacesApp.manifest();
+        assert_eq!(manifest.namespaces, Some(vec![]));
     }
 }

@@ -67,5 +67,6 @@ dyn_aomi_app!(
         client::GetLifiTools,
         client::GetLifiReverseQuote,
         client::GetLifiGasSuggestion,
-    ]
+    ],
+    namespaces = ["common"]
 );

@@ -4,7 +4,8 @@ The plugin ABI version (`DYN_ABI_VERSION`) is the contract between compiled plug
 
 ## Current Version
 
-**ABI v3** — adds `DynManifest::namespaces` for host-side namespace injection.
+**ABI v4** — requires explicit namespace declarations in the manifest; the SDK
+defaults plugins to `["common"]` unless they opt into another list or `[]`.
 
 ## Version History
 
@@ -13,6 +14,7 @@ The plugin ABI version (`DYN_ABI_VERSION`) is the contract between compiled plug
 | v1 | Initial sync-only plugin contract |
 | v2 | Async execution primitives: `aomi_async_tool_start`, `aomi_dyn_exec_poll`, `aomi_dyn_exec_cancel` |
 | v3 | Namespace declarations in manifest (`namespaces` field) |
+| v4 | Explicit namespace contract enforced by the host; SDK supports explicit `[]` and defaults omitted namespaces to `["common"]` for compatibility |
 
 ## What Bumps the ABI Version
 

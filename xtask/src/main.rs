@@ -449,7 +449,8 @@ serde_json = "1.0"
          \x20   preamble = PREAMBLE,\n\
          \x20   tools = [\n\
          \x20       tool::ExampleTool,\n\
-         \x20   ]\n\
+         \x20   ],\n\
+         \x20   namespaces = [\"common\"]\n\
          );\n"
     ));
     fs::write(src_dir.join("lib.rs"), lib_rs).expect("failed to write lib.rs");

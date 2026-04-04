@@ -53,7 +53,7 @@ fn namespace_tools() -> HashMap<&'static str, Vec<&'static str>> {
 }
 
 fn private_namespaces() -> &'static [&'static str] {
-    &["common", "database", "forge"]
+    &["database", "forge"]
 }
 
 // ── FFI helpers ──────────────────────────────────────────────────────────────
@@ -101,12 +101,8 @@ fn validate_manifest(manifest: &DynManifest) -> Vec<String> {
         }
     }
 
-    // Collect all host-side tool names the plugin will inherit.
+    // Collect all host-side tool names the plugin explicitly inherits.
     let mut inherited: HashSet<&str> = HashSet::new();
-    // CommonNamespace is always injected (common_namespace: true by default).
-    if let Some(tools) = ns_tools.get("common") {
-        inherited.extend(tools.iter());
-    }
     if let Some(ref declared) = manifest.namespaces {
         for ns in declared {
             if let Some(tools) = ns_tools.get(ns.as_str()) {

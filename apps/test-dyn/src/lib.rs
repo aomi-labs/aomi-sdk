@@ -40,5 +40,6 @@ dyn_aomi_app!(
     name = "test-dyn",
     version = "0.1.0",
     preamble = "A minimal dynamic test app used to verify plugin fetch, load, authorization, and API-key gating.",
-    tools = [PingTool]
+    tools = [PingTool],
+    namespaces = []
 );

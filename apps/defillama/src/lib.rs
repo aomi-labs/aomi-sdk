@@ -87,5 +87,6 @@ dyn_aomi_app!(
         client::GetLammaDexProtocolVolume,
         client::GetLammaStablecoinHistory,
         client::GetLammaYieldPoolHistory,
-    ]
+    ],
+    namespaces = ["common"]
 );
