@@ -27,6 +27,7 @@ This repository contains public dynamic app crates, the public SDK they build ag
 - `molinar`
 - `para`
 - `para-consumer`
+- `pelagos`
 - `polymarket`
 - `prediction`
 - `social`
@@ -188,6 +189,7 @@ aomi-plugins-v0.1.0-x86_64-unknown-linux-gnu.tar.gz
     ├── molinar.so
     ├── para.so
     ├── para_consumer.so
+    ├── pelagos.so
     ├── polymarket.so
     ├── prediction.so
     ├── social.so
