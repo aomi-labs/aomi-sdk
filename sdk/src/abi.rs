@@ -21,7 +21,7 @@ pub type DynInstancePtr = *mut c_void;
 /// `aomi_abi_version` — returns the plugin's ABI version number.
 ///
 /// Called once immediately after `dlopen`. If the returned value does not
-/// match [`DYN_ABI_VERSION`](crate::DYN_ABI_VERSION) the host refuses to
+/// match [`AOMI_ABI_VERSION`](crate::AOMI_ABI_VERSION) the host refuses to
 /// load the plugin.
 pub type DynAbiVersionFn = unsafe extern "C" fn() -> u32;
 
@@ -99,7 +99,7 @@ pub type DynDestroyFn = unsafe extern "C" fn(DynInstancePtr);
 /// this function. Passing null is safe (no-op).
 pub type DynFreeStringFn = unsafe extern "C" fn(*mut c_char);
 
-pub const AOMI_ABI_VERSION: &[u8] = b"aomi_abi_version\0";
+pub const SYM_AOMI_ABI_VERSION: &[u8] = b"aomi_abi_version\0";
 pub const AOMI_CREATE: &[u8] = b"aomi_create\0";
 pub const AOMI_MANIFEST: &[u8] = b"aomi_manifest\0";
 pub const SYM_AOMI_ASYNC_TOOL_START: &[u8] = b"aomi_async_tool_start\0";

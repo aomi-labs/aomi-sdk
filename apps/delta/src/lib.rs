@@ -55,5 +55,6 @@ dyn_aomi_app!(
         client::GetQuote,
         client::FillQuote,
         client::GetReceipts,
-    ]
+    ],
+    namespaces = []
 );

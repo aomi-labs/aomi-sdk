@@ -23,9 +23,12 @@ pub(crate) struct XClient {
 }
 
 impl XClient {
-    pub(crate) fn new() -> Result<Self, String> {
-        let api_key = std::env::var("X_API_KEY")
-            .map_err(|_| "X_API_KEY environment variable not set".to_string())?;
+    pub(crate) fn new(api_key: Option<&str>) -> Result<Self, String> {
+        let api_key = resolve_secret_value(
+            api_key,
+            "X_API_KEY",
+            "[social/x] missing api_key argument and X_API_KEY environment variable",
+        )?;
         let http = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
@@ -316,9 +319,12 @@ pub(crate) struct NeynarClient {
 }
 
 impl NeynarClient {
-    pub(crate) fn new() -> Result<Self, String> {
-        let api_key = std::env::var("NEYNAR_API_KEY")
-            .map_err(|_| "NEYNAR_API_KEY environment variable not set".to_string())?;
+    pub(crate) fn new(api_key: Option<&str>) -> Result<Self, String> {
+        let api_key = resolve_secret_value(
+            api_key,
+            "NEYNAR_API_KEY",
+            "[social/farcaster] missing api_key argument and NEYNAR_API_KEY environment variable",
+        )?;
         let http = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
@@ -332,7 +338,7 @@ impl NeynarClient {
         cursor: Option<&str>,
         limit: Option<u32>,
     ) -> Result<NeynarCastsResponse, String> {
-        let url = format!("{}/farcaster/cast/search", NEYNAR_API_BASE);
+        let url = format!("{NEYNAR_API_BASE}/farcaster/cast/search");
         let limit_val = limit.unwrap_or(25).to_string();
 
         let mut params: Vec<(&str, &str)> = vec![("q", query), ("limit", &limit_val)];
@@ -364,7 +370,7 @@ impl NeynarClient {
     }
 
     pub(crate) fn get_user_by_username(&self, username: &str) -> Result<FarcasterUser, String> {
-        let url = format!("{}/farcaster/user/by_username", NEYNAR_API_BASE);
+        let url = format!("{NEYNAR_API_BASE}/farcaster/user/by_username");
 
         let resp = self
             .http
@@ -389,7 +395,7 @@ impl NeynarClient {
     }
 
     pub(crate) fn get_user_by_fid(&self, fid: u64) -> Result<FarcasterUser, String> {
-        let url = format!("{}/farcaster/user/bulk", NEYNAR_API_BASE);
+        let url = format!("{NEYNAR_API_BASE}/farcaster/user/bulk");
 
         let resp = self
             .http
@@ -416,7 +422,7 @@ impl NeynarClient {
     }
 
     pub(crate) fn get_channel(&self, channel_id: &str) -> Result<FarcasterChannel, String> {
-        let url = format!("{}/farcaster/channel", NEYNAR_API_BASE);
+        let url = format!("{NEYNAR_API_BASE}/farcaster/channel");
 
         let resp = self
             .http
@@ -444,7 +450,7 @@ impl NeynarClient {
         &self,
         limit: Option<u32>,
     ) -> Result<Vec<FarcasterChannel>, String> {
-        let url = format!("{}/farcaster/channel/trending", NEYNAR_API_BASE);
+        let url = format!("{NEYNAR_API_BASE}/farcaster/channel/trending");
         let limit_val = limit.unwrap_or(10).to_string();
 
         let resp = self
@@ -473,7 +479,7 @@ impl NeynarClient {
         cursor: Option<&str>,
         limit: Option<u32>,
     ) -> Result<NeynarCastsResponse, String> {
-        let url = format!("{}/farcaster/feed/channels", NEYNAR_API_BASE);
+        let url = format!("{NEYNAR_API_BASE}/farcaster/feed/channels");
         let limit_val = limit.unwrap_or(25).to_string();
 
         let mut params: Vec<(&str, &str)> =
@@ -678,9 +684,12 @@ pub(crate) struct LunarCrushClient {
 }
 
 impl LunarCrushClient {
-    pub(crate) fn new() -> Result<Self, String> {
-        let api_key = std::env::var("LUNARCRUSH_API_KEY")
-            .map_err(|_| "LUNARCRUSH_API_KEY environment variable not set".to_string())?;
+    pub(crate) fn new(api_key: Option<&str>) -> Result<Self, String> {
+        let api_key = resolve_secret_value(
+            api_key,
+            "LUNARCRUSH_API_KEY",
+            "[social/lunarcrush] missing api_key argument and LUNARCRUSH_API_KEY environment variable",
+        )?;
         let http = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
@@ -689,7 +698,7 @@ impl LunarCrushClient {
     }
 
     pub(crate) fn get_trending_topics(&self) -> Result<Vec<LunarCrushTrendingTopic>, String> {
-        let url = format!("{}/public/topics/list/v1", LUNARCRUSH_API_BASE);
+        let url = format!("{LUNARCRUSH_API_BASE}/public/topics/list/v1");
 
         let resp = self
             .http
@@ -715,7 +724,7 @@ impl LunarCrushClient {
         topic: &str,
     ) -> Result<LunarCrushTopicSentiment, String> {
         let topic = topic.to_lowercase().replace(['$', '#'], "");
-        let url = format!("{}/public/topic/{}/v1", LUNARCRUSH_API_BASE, topic);
+        let url = format!("{LUNARCRUSH_API_BASE}/public/topic/{topic}/v1");
 
         let resp = self
             .http
@@ -740,7 +749,7 @@ impl LunarCrushClient {
 
     pub(crate) fn get_topic_summary(&self, topic: &str) -> Result<LunarCrushTopicSummary, String> {
         let topic = topic.to_lowercase().replace(['$', '#'], "");
-        let url = format!("{}/public/topic/{}/whatsup/v1", LUNARCRUSH_API_BASE, topic);
+        let url = format!("{LUNARCRUSH_API_BASE}/public/topic/{topic}/whatsup/v1");
 
         let resp = self
             .http
@@ -866,6 +875,8 @@ pub(crate) struct GetXUser;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetXUserArgs {
+    /// Optional X API key. Falls back to X_API_KEY when omitted.
+    pub(crate) api_key: Option<String>,
     /// X username without the @ symbol (e.g., 'elonmusk')
     pub(crate) username: String,
 }

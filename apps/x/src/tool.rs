@@ -11,7 +11,7 @@ impl DynAomiTool for GetXUser {
     const DESCRIPTION: &'static str = "Get an X (Twitter) user's profile information by username. Returns follower count, bio, verification status, and more.";
 
     fn run(_app: &XApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = XClient::new()?;
+        let client = XClient::new(args.api_key.as_deref())?;
         let username = args.username.trim_start_matches('@');
         let user: User = client.get("/twitter/user/info", &[("userName", username)])?;
         Ok(json!({
@@ -43,6 +43,9 @@ pub(crate) struct GetXUserPosts;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetXUserPostsArgs {
+    /// Optional X API key. Falls back to X_API_KEY when omitted.
+    #[serde(default)]
+    api_key: Option<String>,
     /// X username without the @ symbol
     username: String,
     /// Pagination cursor for fetching more results
@@ -56,7 +59,7 @@ impl DynAomiTool for GetXUserPosts {
     const DESCRIPTION: &'static str = "Get recent posts from an X (Twitter) user. Returns post text, engagement metrics, and metadata.";
 
     fn run(_app: &XApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = XClient::new()?;
+        let client = XClient::new(args.api_key.as_deref())?;
         let username = args.username.trim_start_matches('@');
         let mut query: Vec<(&str, &str)> = vec![("userName", username)];
         let cursor_val = args.cursor.unwrap_or_default();
@@ -83,6 +86,9 @@ pub(crate) struct SearchX;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SearchXArgs {
+    /// Optional X API key. Falls back to X_API_KEY when omitted.
+    #[serde(default)]
+    api_key: Option<String>,
     /// Search query. Supports operators: from:user, #hashtag, @mention, lang:en, since:2026-01-01, until:2026-02-01, min_faves:100
     query: String,
     /// Sort order: 'Latest' for recent posts, 'Top' for popular posts (default: Latest)
@@ -98,7 +104,7 @@ impl DynAomiTool for SearchX {
     const DESCRIPTION: &'static str = "Search for posts on X (Twitter) using advanced query operators. Supports filtering by user, hashtag, date range, and engagement metrics.";
 
     fn run(_app: &XApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = XClient::new()?;
+        let client = XClient::new(args.api_key.as_deref())?;
         let query_type = args.query_type.as_deref().unwrap_or("Latest");
         let mut params: Vec<(&str, &str)> = vec![("query", &args.query), ("queryType", query_type)];
         let cursor_val = args.cursor.unwrap_or_default();
@@ -126,7 +132,11 @@ impl DynAomiTool for SearchX {
 pub(crate) struct GetXTrends;
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct GetXTrendsArgs {}
+pub(crate) struct GetXTrendsArgs {
+    /// Optional X API key. Falls back to X_API_KEY when omitted.
+    #[serde(default)]
+    api_key: Option<String>,
+}
 
 impl DynAomiTool for GetXTrends {
     type App = XApp;
@@ -135,8 +145,8 @@ impl DynAomiTool for GetXTrends {
     const DESCRIPTION: &'static str =
         "Get current trending topics on X (Twitter). Returns trend names and post counts.";
 
-    fn run(_app: &XApp, _args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = XClient::new()?;
+    fn run(_app: &XApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
+        let client = XClient::new(args.api_key.as_deref())?;
         let data: TrendsData = client.get("/twitter/trends", &[])?;
         let trends = data.trends.unwrap_or_default();
         let formatted: Vec<Value> = trends
@@ -166,6 +176,9 @@ pub(crate) struct GetXPost;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetXPostArgs {
+    /// Optional X API key. Falls back to X_API_KEY when omitted.
+    #[serde(default)]
+    api_key: Option<String>,
     /// The ID of the post to retrieve
     post_id: String,
 }
@@ -177,7 +190,7 @@ impl DynAomiTool for GetXPost {
     const DESCRIPTION: &'static str = "Get details of a specific X (Twitter) post by its ID. Returns full post content, engagement metrics, and author info.";
 
     fn run(_app: &XApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = XClient::new()?;
+        let client = XClient::new(args.api_key.as_deref())?;
         let post: Post =
             client.get("/twitter/tweet/info", &[("tweetId", args.post_id.as_str())])?;
         Ok(format_post(&post))

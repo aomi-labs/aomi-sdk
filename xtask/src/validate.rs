@@ -53,7 +53,7 @@ fn namespace_tools() -> HashMap<&'static str, Vec<&'static str>> {
 }
 
 fn private_namespaces() -> &'static [&'static str] {
-    &["common", "database", "forge"]
+    &["database", "forge"]
 }
 
 // ── FFI helpers ──────────────────────────────────────────────────────────────
@@ -101,12 +101,8 @@ fn validate_manifest(manifest: &DynManifest) -> Vec<String> {
         }
     }
 
-    // Collect all host-side tool names the plugin will inherit.
+    // Collect all host-side tool names the plugin explicitly inherits.
     let mut inherited: HashSet<&str> = HashSet::new();
-    // CommonNamespace is always injected (common_namespace: true by default).
-    if let Some(tools) = ns_tools.get("common") {
-        inherited.extend(tools.iter());
-    }
     if let Some(ref declared) = manifest.namespaces {
         for ns in declared {
             if let Some(tools) = ns_tools.get(ns.as_str()) {
@@ -137,12 +133,12 @@ fn validate_manifest(manifest: &DynManifest) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use aomi_sdk::{DYN_ABI_VERSION, DynManifest, DynToolMetadata};
+    use aomi_sdk::{AOMI_ABI_VERSION, DynManifest, DynToolMetadata};
 
     #[test]
     fn validate_rejects_private_host_namespaces() {
         let manifest = DynManifest {
-            abi_version: DYN_ABI_VERSION,
+            abi_version: AOMI_ABI_VERSION,
             name: "bad-app".to_string(),
             version: "0.1.0".to_string(),
             preamble: "x".to_string(),

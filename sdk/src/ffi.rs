@@ -84,7 +84,7 @@ pub fn log_poll_error(execution_id: u64, error: &str) {
 ///
 /// | Symbol                      | Purpose                           |
 /// |-----------------------------|-----------------------------------|
-/// | `aomi_abi_version`          | Returns [`DYN_ABI_VERSION`]       |
+/// | `aomi_abi_version`          | Returns [`AOMI_ABI_VERSION`]       |
 /// | `aomi_create`               | Allocates a new plugin instance   |
 /// | `aomi_manifest`             | Serializes the plugin manifest    |
 /// | `aomi_async_tool_start`     | Dispatches a tool call            |
@@ -93,7 +93,7 @@ pub fn log_poll_error(execution_id: u64, error: &str) {
 /// | `aomi_destroy`              | Frees the plugin instance         |
 /// | `aomi_free_string`          | Frees a returned C string         |
 ///
-/// [`DYN_ABI_VERSION`]: crate::DYN_ABI_VERSION
+/// [`AOMI_ABI_VERSION`]: crate::AOMI_ABI_VERSION
 #[macro_export]
 macro_rules! declare_dyn {
     ($app_type:ty) => {
@@ -111,7 +111,7 @@ macro_rules! declare_dyn {
 
         #[unsafe(no_mangle)]
         pub extern "C" fn aomi_abi_version() -> u32 {
-            $crate::DYN_ABI_VERSION
+            $crate::AOMI_ABI_VERSION
         }
 
         #[unsafe(no_mangle)]
@@ -312,16 +312,22 @@ macro_rules! declare_dyn {
 ///
 /// # Forms
 ///
-/// **Basic** (tools only):
+/// **Basic** (tools only, using the recommended explicit common namespace):
 /// ```rust,ignore
 /// dyn_aomi_app!(app = MyApp, name = "my", version = "0.1.0",
-///     preamble = "...", tools = [ToolA, ToolB]);
+///     preamble = "...", tools = [ToolA, ToolB], namespaces = ["common"]);
 /// ```
 ///
 /// **With host-side namespaces** (tools can be empty for namespace-only apps):
 /// ```rust,ignore
 /// dyn_aomi_app!(app = MyApp, name = "my", version = "0.1.0",
 ///     preamble = "...", tools = [], namespaces = ["database"]);
+/// ```
+///
+/// **With explicit no host namespaces**:
+/// ```rust,ignore
+/// dyn_aomi_app!(app = MyApp, name = "my", version = "0.1.0",
+///     preamble = "...", tools = [ToolA], namespaces = []);
 /// ```
 #[macro_export]
 macro_rules! dyn_aomi_app {
@@ -332,7 +338,7 @@ macro_rules! dyn_aomi_app {
         version = $version:expr,
         preamble = $preamble:expr,
         tools = [ $( $tool_type:ty ),* $(,)? ],
-        namespaces = [ $( $ns:expr ),+ $(,)? ]
+        namespaces = [ $( $ns:expr ),* $(,)? ]
     ) => {
         impl $crate::DynAomiApp for $app_type {
             fn name(&self) -> &'static str { $name }
@@ -344,7 +350,7 @@ macro_rules! dyn_aomi_app {
             }
 
             fn namespaces(&self) -> ::std::option::Option<::std::vec::Vec<::std::string::String>> {
-                ::std::option::Option::Some(::std::vec![ $( $ns.to_string() ),+ ])
+                ::std::option::Option::Some(::std::vec![ $( $ns.to_string() ),* ])
             }
 
             fn start_tool(

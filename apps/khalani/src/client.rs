@@ -419,7 +419,7 @@ pub(crate) fn build_transaction_preflight(tx: &Value) -> Option<Value> {
         let spender_word = &payload[8..72];
         let amount_word = &payload[72..136];
         let spender = format!("0x{}", &spender_word[24..64]);
-        let amount_hex = format!("0x{}", amount_word);
+        let amount_hex = format!("0x{amount_word}");
 
         return Some(json!({
             "tool": "encode_and_simulate",

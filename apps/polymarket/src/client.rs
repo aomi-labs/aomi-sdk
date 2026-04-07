@@ -131,7 +131,7 @@ impl PolymarketClient {
     // ── Market APIs ──────────────────────────────────────────────────────
 
     pub(crate) fn get_markets(&self, params: &GetMarketsParams) -> Result<Vec<Market>, String> {
-        let url = format!("{}/markets", GAMMA_API_BASE);
+        let url = format!("{GAMMA_API_BASE}/markets");
         let mut query: Vec<(&str, String)> = Vec::new();
         if let Some(limit) = params.limit {
             query.push(("limit", limit.to_string()));
@@ -214,7 +214,7 @@ impl PolymarketClient {
     // ── Trades API ───────────────────────────────────────────────────────
 
     pub(crate) fn get_trades(&self, params: &GetTradesParams) -> Result<Vec<Trade>, String> {
-        let url = format!("{}/trades", DATA_API_BASE);
+        let url = format!("{DATA_API_BASE}/trades");
         let mut query: Vec<(&str, String)> = Vec::new();
         if let Some(limit) = params.limit {
             query.push(("limit", limit.to_string()));
@@ -295,7 +295,7 @@ impl PolymarketClient {
 
         let url = request
             .endpoint
-            .unwrap_or_else(|| format!("{}/orders", CLOB_API_BASE));
+            .unwrap_or_else(|| format!("{CLOB_API_BASE}/order"));
 
         let body_string =
             serde_json::to_string(&body).map_err(|e| format!("serialize body: {e}"))?;
@@ -400,7 +400,7 @@ impl PolymarketClient {
         &self,
         l1_auth: &ClobL1Auth,
     ) -> Result<ClobApiCredentials, String> {
-        let url = format!("{}{}", CLOB_API_BASE, CLOB_AUTH_DERIVE_API_KEY_PATH);
+        let url = format!("{CLOB_API_BASE}{CLOB_AUTH_DERIVE_API_KEY_PATH}");
         let resp = self
             .with_l1_headers(self.http.get(&url), l1_auth)
             .send()
@@ -412,7 +412,7 @@ impl PolymarketClient {
         &self,
         l1_auth: &ClobL1Auth,
     ) -> Result<ClobApiCredentials, String> {
-        let url = format!("{}{}", CLOB_API_BASE, CLOB_AUTH_CREATE_API_KEY_PATH);
+        let url = format!("{CLOB_API_BASE}{CLOB_AUTH_CREATE_API_KEY_PATH}");
         let resp = self
             .with_l1_headers(self.http.post(&url), l1_auth)
             .send()
@@ -725,11 +725,11 @@ pub(crate) fn classify_market_lookup_target(raw: &str) -> MarketLookupTarget {
 pub(crate) fn build_market_lookup_request(target: &MarketLookupTarget) -> MarketLookupRequest {
     match target {
         MarketLookupTarget::MarketId(id) => MarketLookupRequest {
-            path: format!("/markets/{}", id),
+            path: format!("/markets/{id}"),
             query: HashMap::new(),
         },
         MarketLookupTarget::Slug(slug) => MarketLookupRequest {
-            path: format!("/markets/slug/{}", slug),
+            path: format!("/markets/slug/{slug}"),
             query: HashMap::new(),
         },
         MarketLookupTarget::ConditionId(condition_id) => {
@@ -872,7 +872,7 @@ pub(crate) fn rank_market_candidates(
             let url = m
                 .slug
                 .as_ref()
-                .map(|slug| format!("https://polymarket.com/market/{}", slug));
+                .map(|slug| format!("https://polymarket.com/market/{slug}"));
 
             Some(RankedMarketCandidate {
                 market_id: m.id.clone(),
@@ -1198,4 +1198,82 @@ pub(crate) struct SearchPolymarketArgs {
     pub(crate) archived: Option<bool>,
     /// Filter by tag/category (e.g., 'crypto', 'sports', 'politics')
     pub(crate) tag: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn public_market_apis_smoke() {
+        let client = PolymarketClient::new().expect("client should build");
+        let markets = client
+            .get_markets(&GetMarketsParams {
+                limit: Some(1),
+                offset: Some(0),
+                active: Some(true),
+                closed: Some(false),
+                archived: Some(false),
+                tag: None,
+            })
+            .expect("market list request should succeed");
+
+        assert!(!markets.is_empty(), "expected at least one active market");
+
+        let first = &markets[0];
+        let slug = first
+            .slug
+            .as_deref()
+            .expect("market list response should include slug");
+        let condition_id = first
+            .condition_id
+            .as_deref()
+            .expect("market list response should include condition_id");
+
+        let by_slug = client
+            .get_market(slug)
+            .expect("market lookup by slug should succeed");
+        assert_eq!(by_slug.slug.as_deref(), Some(slug));
+
+        let by_condition_id = client
+            .get_market(condition_id)
+            .expect("market lookup by condition_id should succeed");
+        assert_eq!(by_condition_id.condition_id.as_deref(), Some(condition_id));
+
+        let trades = client
+            .get_trades(&GetTradesParams {
+                limit: Some(1),
+                offset: Some(0),
+                market: None,
+                user: None,
+                side: None,
+            })
+            .expect("trades request should succeed");
+        assert!(!trades.is_empty(), "expected at least one trade");
+    }
+
+    #[test]
+    fn default_order_path_matches_docs() {
+        let client = PolymarketClient::new().expect("client should build");
+        let request = SubmitOrderRequest {
+            owner: "0x1234567890123456789012345678901234567890".to_string(),
+            signature: "0xdeadbeef".to_string(),
+            order: json!({"maker":"0x1234567890123456789012345678901234567890"}),
+            client_id: None,
+            endpoint: None,
+            api_key: None,
+            clob_auth: None,
+            extra_fields: None,
+        };
+
+        let url = request
+            .endpoint
+            .unwrap_or_else(|| format!("{}/order", CLOB_API_BASE));
+        let path = client
+            .extract_request_path(&url)
+            .expect("request path extraction should succeed");
+
+        assert_eq!(path, "/order");
+    }
 }

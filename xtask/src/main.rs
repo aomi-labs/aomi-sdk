@@ -179,12 +179,7 @@ fn repo_root() -> PathBuf {
 }
 
 fn find_app_manifests(apps_dir: &Path) -> Vec<PathBuf> {
-    let tracked = tracked_app_manifests(apps_dir);
-    if !tracked.is_empty() {
-        return tracked;
-    }
-
-    let mut manifests = Vec::new();
+    let mut manifests = tracked_app_manifests(apps_dir);
     let entries = fs::read_dir(apps_dir).unwrap_or_else(|err| {
         panic!(
             "failed to read apps directory {}: {err}",
@@ -207,6 +202,7 @@ fn find_app_manifests(apps_dir: &Path) -> Vec<PathBuf> {
         }
     }
     manifests.sort();
+    manifests.dedup();
     manifests
 }
 
@@ -453,7 +449,8 @@ serde_json = "1.0"
          \x20   preamble = PREAMBLE,\n\
          \x20   tools = [\n\
          \x20       tool::ExampleTool,\n\
-         \x20   ]\n\
+         \x20   ],\n\
+         \x20   namespaces = [\"common\"]\n\
          );\n"
     ));
     fs::write(src_dir.join("lib.rs"), lib_rs).expect("failed to write lib.rs");
