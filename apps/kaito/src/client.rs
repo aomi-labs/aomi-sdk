@@ -140,7 +140,7 @@ pub(crate) struct KaitoSearch;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct KaitoSearchArgs {
     /// Kaito API key for authentication.
-    pub(crate) api_key: String,
+    pub(crate) api_key: Option<String>,
     /// Search query string for semantic search across Web3 sources (Twitter, Discord, Telegram, governance forums, Farcaster, podcasts, etc.).
     pub(crate) query: String,
     /// Maximum number of results to return. Optional.
@@ -156,7 +156,7 @@ pub(crate) struct KaitoGetTrending;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct KaitoGetTrendingArgs {
     /// Kaito API key for authentication.
-    pub(crate) api_key: String,
+    pub(crate) api_key: Option<String>,
     /// Maximum number of trending topics to return. Optional.
     #[serde(default)]
     pub(crate) limit: Option<u32>,
@@ -167,7 +167,7 @@ pub(crate) struct KaitoGetMindshare;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct KaitoGetMindshareArgs {
     /// Kaito API key for authentication.
-    pub(crate) api_key: String,
+    pub(crate) api_key: Option<String>,
     /// Token symbol or name to get attention/mindshare metrics for (e.g. "BTC", "ETH", "SOL").
     pub(crate) token: String,
 }

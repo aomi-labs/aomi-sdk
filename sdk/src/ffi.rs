@@ -84,7 +84,7 @@ pub fn log_poll_error(execution_id: u64, error: &str) {
 ///
 /// | Symbol                      | Purpose                           |
 /// |-----------------------------|-----------------------------------|
-/// | `aomi_abi_version`          | Returns [`DYN_ABI_VERSION`]       |
+/// | `aomi_abi_version`          | Returns [`AOMI_ABI_VERSION`]       |
 /// | `aomi_create`               | Allocates a new plugin instance   |
 /// | `aomi_manifest`             | Serializes the plugin manifest    |
 /// | `aomi_async_tool_start`     | Dispatches a tool call            |
@@ -93,7 +93,7 @@ pub fn log_poll_error(execution_id: u64, error: &str) {
 /// | `aomi_destroy`              | Frees the plugin instance         |
 /// | `aomi_free_string`          | Frees a returned C string         |
 ///
-/// [`DYN_ABI_VERSION`]: crate::DYN_ABI_VERSION
+/// [`AOMI_ABI_VERSION`]: crate::AOMI_ABI_VERSION
 #[macro_export]
 macro_rules! declare_dyn {
     ($app_type:ty) => {
@@ -111,7 +111,7 @@ macro_rules! declare_dyn {
 
         #[unsafe(no_mangle)]
         pub extern "C" fn aomi_abi_version() -> u32 {
-            $crate::DYN_ABI_VERSION
+            $crate::AOMI_ABI_VERSION
         }
 
         #[unsafe(no_mangle)]

@@ -2,6 +2,29 @@ use crate::client::*;
 use aomi_sdk::*;
 use serde_json::{Value, json};
 
+fn resolve_okx_credentials(
+    api_key: Option<&str>,
+    secret_key: Option<&str>,
+    passphrase: Option<&str>,
+) -> Result<(String, String, String), String> {
+    let api_key = resolve_secret_value(
+        api_key,
+        "OKX_API_KEY",
+        "[okx] missing api_key argument and OKX_API_KEY environment variable",
+    )?;
+    let secret_key = resolve_secret_value(
+        secret_key,
+        "OKX_SECRET_KEY",
+        "[okx] missing secret_key argument and OKX_SECRET_KEY environment variable",
+    )?;
+    let passphrase = resolve_secret_value(
+        passphrase,
+        "OKX_PASSPHRASE",
+        "[okx] missing passphrase argument and OKX_PASSPHRASE environment variable",
+    )?;
+    Ok((api_key, secret_key, passphrase))
+}
+
 // ============================================================================
 // Tool 1: GetTickers — GET /market/tickers
 // ============================================================================
@@ -84,6 +107,11 @@ impl DynAomiTool for PlaceOrder {
 
     fn run(_app: &OkxApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = OkxClient::new()?;
+        let (api_key, secret_key, passphrase) = resolve_okx_credentials(
+            args.api_key.as_deref(),
+            args.secret_key.as_deref(),
+            args.passphrase.as_deref(),
+        )?;
         let mut body = json!({
             "instId": args.inst_id,
             "tdMode": args.td_mode,
@@ -97,13 +125,7 @@ impl DynAomiTool for PlaceOrder {
                 .insert("px".to_string(), json!(px));
         }
         let path = "/trade/order";
-        let resp = client.auth_post(
-            path,
-            &body,
-            &args.api_key,
-            &args.secret_key,
-            &args.passphrase,
-        )?;
+        let resp = client.auth_post(path, &body, &api_key, &secret_key, &passphrase)?;
         Ok(resp)
     }
 }
@@ -121,18 +143,17 @@ impl DynAomiTool for CancelOrder {
 
     fn run(_app: &OkxApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = OkxClient::new()?;
+        let (api_key, secret_key, passphrase) = resolve_okx_credentials(
+            args.api_key.as_deref(),
+            args.secret_key.as_deref(),
+            args.passphrase.as_deref(),
+        )?;
         let body = json!({
             "instId": args.inst_id,
             "ordId": args.ord_id,
         });
         let path = "/trade/cancel-order";
-        let resp = client.auth_post(
-            path,
-            &body,
-            &args.api_key,
-            &args.secret_key,
-            &args.passphrase,
-        )?;
+        let resp = client.auth_post(path, &body, &api_key, &secret_key, &passphrase)?;
         Ok(resp)
     }
 }
@@ -149,11 +170,16 @@ impl DynAomiTool for GetBalance {
 
     fn run(_app: &OkxApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = OkxClient::new()?;
+        let (api_key, secret_key, passphrase) = resolve_okx_credentials(
+            args.api_key.as_deref(),
+            args.secret_key.as_deref(),
+            args.passphrase.as_deref(),
+        )?;
         let mut path = "/account/balance".to_string();
         if let Some(ref ccy) = args.ccy {
             path.push_str(&format!("?ccy={ccy}"));
         }
-        let resp = client.auth_get(&path, &args.api_key, &args.secret_key, &args.passphrase)?;
+        let resp = client.auth_get(&path, &api_key, &secret_key, &passphrase)?;
         Ok(resp)
     }
 }
@@ -170,6 +196,11 @@ impl DynAomiTool for GetPositions {
 
     fn run(_app: &OkxApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = OkxClient::new()?;
+        let (api_key, secret_key, passphrase) = resolve_okx_credentials(
+            args.api_key.as_deref(),
+            args.secret_key.as_deref(),
+            args.passphrase.as_deref(),
+        )?;
         let mut path = "/account/positions".to_string();
         let mut params = Vec::new();
         if let Some(ref inst_type) = args.inst_type {
@@ -182,7 +213,7 @@ impl DynAomiTool for GetPositions {
             path.push('?');
             path.push_str(&params.join("&"));
         }
-        let resp = client.auth_get(&path, &args.api_key, &args.secret_key, &args.passphrase)?;
+        let resp = client.auth_get(&path, &api_key, &secret_key, &passphrase)?;
         Ok(resp)
     }
 }
@@ -199,19 +230,18 @@ impl DynAomiTool for SetLeverage {
 
     fn run(_app: &OkxApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = OkxClient::new()?;
+        let (api_key, secret_key, passphrase) = resolve_okx_credentials(
+            args.api_key.as_deref(),
+            args.secret_key.as_deref(),
+            args.passphrase.as_deref(),
+        )?;
         let body = json!({
             "instId": args.inst_id,
             "lever": args.lever,
             "mgnMode": args.mgn_mode,
         });
         let path = "/account/set-leverage";
-        let resp = client.auth_post(
-            path,
-            &body,
-            &args.api_key,
-            &args.secret_key,
-            &args.passphrase,
-        )?;
+        let resp = client.auth_post(path, &body, &api_key, &secret_key, &passphrase)?;
         Ok(resp)
     }
 }

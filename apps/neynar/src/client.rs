@@ -23,9 +23,12 @@ pub(crate) struct NeynarClient {
 }
 
 impl NeynarClient {
-    pub(crate) fn new() -> Result<Self, String> {
-        let api_key = std::env::var("NEYNAR_API_KEY")
-            .map_err(|_| "[neynar] NEYNAR_API_KEY environment variable not set".to_string())?;
+    pub(crate) fn new(api_key: Option<&str>) -> Result<Self, String> {
+        let api_key = resolve_secret_value(
+            api_key,
+            "NEYNAR_API_KEY",
+            "[neynar] missing api_key argument and NEYNAR_API_KEY environment variable",
+        )?;
         let http = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
@@ -87,6 +90,9 @@ pub(crate) struct GetUserByUsername;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetUserByUsernameArgs {
+    /// Optional Neynar API key. Falls back to NEYNAR_API_KEY when omitted.
+    #[serde(default)]
+    pub(crate) api_key: Option<String>,
     /// Farcaster username to look up
     pub(crate) username: String,
 }
@@ -99,6 +105,9 @@ pub(crate) struct SearchUsers;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SearchUsersArgs {
+    /// Optional Neynar API key. Falls back to NEYNAR_API_KEY when omitted.
+    #[serde(default)]
+    pub(crate) api_key: Option<String>,
     /// Search query string to find users
     pub(crate) q: String,
 }
@@ -111,6 +120,9 @@ pub(crate) struct GetFeed;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetFeedArgs {
+    /// Optional Neynar API key. Falls back to NEYNAR_API_KEY when omitted.
+    #[serde(default)]
+    pub(crate) api_key: Option<String>,
     /// Feed type, e.g. 'filter' or 'following'
     pub(crate) feed_type: String,
     /// Farcaster ID to filter the feed by (optional for some feed types)
@@ -127,6 +139,9 @@ pub(crate) struct GetCast;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetCastArgs {
+    /// Optional Neynar API key. Falls back to NEYNAR_API_KEY when omitted.
+    #[serde(default)]
+    pub(crate) api_key: Option<String>,
     /// Cast identifier: a cast hash (0x...) or a Warpcast URL
     pub(crate) identifier: String,
     /// Type of the identifier: 'hash' or 'url'
@@ -142,6 +157,9 @@ pub(crate) struct SearchCasts;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SearchCastsArgs {
+    /// Optional Neynar API key. Falls back to NEYNAR_API_KEY when omitted.
+    #[serde(default)]
+    pub(crate) api_key: Option<String>,
     /// Search query string to find casts
     pub(crate) q: String,
     /// Maximum number of results to return (default 25, max 100)
@@ -156,6 +174,9 @@ pub(crate) struct PublishCast;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct PublishCastArgs {
+    /// Optional Neynar API key. Falls back to NEYNAR_API_KEY when omitted.
+    #[serde(default)]
+    pub(crate) api_key: Option<String>,
     /// UUID of the signer authorized to publish on behalf of the user
     pub(crate) signer_uuid: String,
     /// Text content of the cast (up to 1024 bytes)
@@ -178,6 +199,9 @@ pub(crate) struct GetChannel;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetChannelArgs {
+    /// Optional Neynar API key. Falls back to NEYNAR_API_KEY when omitted.
+    #[serde(default)]
+    pub(crate) api_key: Option<String>,
     /// Channel ID (e.g. 'ethereum', 'farcaster', 'memes')
     pub(crate) id: String,
 }
@@ -190,6 +214,9 @@ pub(crate) struct GetTrendingFeed;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetTrendingFeedArgs {
+    /// Optional Neynar API key. Falls back to NEYNAR_API_KEY when omitted.
+    #[serde(default)]
+    pub(crate) api_key: Option<String>,
     /// Maximum number of trending casts to return (default 10, max 100)
     pub(crate) limit: Option<u32>,
     /// Time window for trending calculation, e.g. '6h', '12h', '24h', '7d'
@@ -207,7 +234,7 @@ mod tests {
     /// Helper: build a client or skip the test when NEYNAR_API_KEY is absent.
     fn client_or_skip() -> Option<NeynarClient> {
         match std::env::var("NEYNAR_API_KEY") {
-            Ok(_) => Some(NeynarClient::new().expect("failed to build NeynarClient")),
+            Ok(_) => Some(NeynarClient::new(None).expect("failed to build NeynarClient")),
             Err(_) => {
                 println!("NEYNAR_API_KEY not set — skipping test");
                 None

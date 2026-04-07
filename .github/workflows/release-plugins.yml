@@ -92,9 +92,9 @@ jobs:
           repo = pathlib.Path.cwd()
           plugins_dir = repo / "plugins"
           sdk_types = (repo / "sdk" / "src" / "types.rs").read_text()
-          abi_match = re.search(r"pub const DYN_ABI_VERSION: u32 = (\d+);", sdk_types)
+          abi_match = re.search(r"pub const AOMI_ABI_VERSION: u32 = (\d+);", sdk_types)
           if abi_match is None:
-              raise SystemExit("failed to read DYN_ABI_VERSION from sdk/src/types.rs")
+              raise SystemExit("failed to read AOMI_ABI_VERSION from sdk/src/types.rs")
 
           plugins = {}
           for path in sorted(plugins_dir.iterdir()):

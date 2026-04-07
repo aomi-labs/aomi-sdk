@@ -80,7 +80,7 @@ jobs:
     needs: check
     runs-on: ubuntu-latest
     environment: prod
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && needs.check.outputs.publish_sdk == 'true'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     steps:
       - uses: actions/checkout@v4
 

@@ -11,7 +11,7 @@ impl DynAomiTool for GetXUser {
     const DESCRIPTION: &'static str = "Get an X (Twitter) user's profile information by username. Returns follower count, bio, verification status, and more.";
 
     fn run(_app: &SocialApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = XClient::new()?;
+        let client = XClient::new(args.api_key.as_deref())?;
         let username = args.username.trim_start_matches('@');
         let user: XUser = client.get("/twitter/user/info", &[("userName", username)])?;
         Ok(json!({
@@ -43,6 +43,8 @@ pub(crate) struct GetXUserPosts;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetXUserPostsArgs {
+    /// Optional X API key. Falls back to X_API_KEY when omitted.
+    api_key: Option<String>,
     /// X username without the @ symbol
     username: String,
     /// Pagination cursor for fetching more results
@@ -56,7 +58,7 @@ impl DynAomiTool for GetXUserPosts {
     const DESCRIPTION: &'static str = "Get recent posts from an X (Twitter) user. Returns post text, engagement metrics, and metadata.";
 
     fn run(_app: &SocialApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = XClient::new()?;
+        let client = XClient::new(args.api_key.as_deref())?;
         let username = args.username.trim_start_matches('@');
         let mut query: Vec<(&str, &str)> = vec![("userName", username)];
         let cursor_val = args.cursor.unwrap_or_default();
@@ -83,6 +85,8 @@ pub(crate) struct SearchX;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SearchXArgs {
+    /// Optional X API key. Falls back to X_API_KEY when omitted.
+    api_key: Option<String>,
     /// Search query. Supports operators: from:user, #hashtag, @mention, lang:en, since:2026-01-01, until:2026-02-01, min_faves:100
     query: String,
     /// Sort order: 'Latest' for recent posts, 'Top' for popular posts (default: Latest)
@@ -98,7 +102,7 @@ impl DynAomiTool for SearchX {
     const DESCRIPTION: &'static str = "Search for posts on X (Twitter) using advanced query operators. Supports filtering by user, hashtag, date range, and engagement metrics.";
 
     fn run(_app: &SocialApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = XClient::new()?;
+        let client = XClient::new(args.api_key.as_deref())?;
         let query_type = args.query_type.as_deref().unwrap_or("Latest");
         let mut params: Vec<(&str, &str)> = vec![("query", &args.query), ("queryType", query_type)];
         let cursor_val = args.cursor.unwrap_or_default();
@@ -126,7 +130,10 @@ impl DynAomiTool for SearchX {
 pub(crate) struct GetXTrends;
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct GetXTrendsArgs {}
+pub(crate) struct GetXTrendsArgs {
+    /// Optional X API key. Falls back to X_API_KEY when omitted.
+    api_key: Option<String>,
+}
 
 impl DynAomiTool for GetXTrends {
     type App = SocialApp;
@@ -135,8 +142,8 @@ impl DynAomiTool for GetXTrends {
     const DESCRIPTION: &'static str =
         "Get current trending topics on X (Twitter). Returns trend names and post counts.";
 
-    fn run(_app: &SocialApp, _args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = XClient::new()?;
+    fn run(_app: &SocialApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
+        let client = XClient::new(args.api_key.as_deref())?;
         let data: XTrendsData = client.get("/twitter/trends", &[])?;
         let trends = data.trends.unwrap_or_default();
         let formatted: Vec<Value> = trends
@@ -166,6 +173,8 @@ pub(crate) struct GetXPost;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetXPostArgs {
+    /// Optional X API key. Falls back to X_API_KEY when omitted.
+    api_key: Option<String>,
     /// The ID of the post to retrieve
     post_id: String,
 }
@@ -177,7 +186,7 @@ impl DynAomiTool for GetXPost {
     const DESCRIPTION: &'static str = "Get details of a specific X (Twitter) post by its ID. Returns full post content, engagement metrics, and author info.";
 
     fn run(_app: &SocialApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = XClient::new()?;
+        let client = XClient::new(args.api_key.as_deref())?;
         let post: XPost =
             client.get("/twitter/tweet/info", &[("tweetId", args.post_id.as_str())])?;
         Ok(format_x_post(&post))
@@ -196,6 +205,8 @@ pub(crate) struct SearchFarcaster;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SearchFarcasterArgs {
+    /// Optional Neynar API key. Falls back to NEYNAR_API_KEY when omitted.
+    api_key: Option<String>,
     /// Search query for casts. Supports text search, @mentions, and channel names.
     query: String,
     /// Pagination cursor for fetching more results
@@ -211,7 +222,7 @@ impl DynAomiTool for SearchFarcaster {
     const DESCRIPTION: &'static str = "Search for casts (posts) on Farcaster. Returns matching posts with author info, engagement metrics, and channel context.";
 
     fn run(_app: &SocialApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = NeynarClient::new()?;
+        let client = NeynarClient::new(args.api_key.as_deref())?;
         let response = client.search_casts(&args.query, args.cursor.as_deref(), args.limit)?;
 
         let formatted_casts: Vec<Value> = response.casts.iter().map(format_cast).collect();
@@ -233,6 +244,8 @@ pub(crate) struct GetFarcasterUser;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetFarcasterUserArgs {
+    /// Optional Neynar API key. Falls back to NEYNAR_API_KEY when omitted.
+    api_key: Option<String>,
     /// Username (e.g., 'vitalik.eth', 'dwr.eth') or FID (numeric ID like '3')
     identifier: String,
 }
@@ -244,7 +257,7 @@ impl DynAomiTool for GetFarcasterUser {
     const DESCRIPTION: &'static str = "Get a Farcaster user's profile by username or FID. Returns follower count, bio, verified addresses (ETH/SOL), and more.";
 
     fn run(_app: &SocialApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = NeynarClient::new()?;
+        let client = NeynarClient::new(args.api_key.as_deref())?;
         let identifier = args.identifier.trim_start_matches('@');
 
         let user = if let Ok(fid) = identifier.parse::<u64>() {
@@ -284,6 +297,8 @@ pub(crate) struct GetFarcasterChannel;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetFarcasterChannelArgs {
+    /// Optional Neynar API key. Falls back to NEYNAR_API_KEY when omitted.
+    api_key: Option<String>,
     /// Channel ID (e.g., 'base', 'degen', 'crypto', 'memes')
     channel_id: String,
     /// Include recent casts from the channel (default: true)
@@ -299,7 +314,7 @@ impl DynAomiTool for GetFarcasterChannel {
     const DESCRIPTION: &'static str = "Get information about a Farcaster channel including description, follower count, and optionally recent casts. Popular channels include /base, /degen, /crypto, /memes.";
 
     fn run(_app: &SocialApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = NeynarClient::new()?;
+        let client = NeynarClient::new(args.api_key.as_deref())?;
         let channel = client.get_channel(&args.channel_id)?;
 
         let mut result = json!({
@@ -336,6 +351,8 @@ pub(crate) struct GetFarcasterTrending;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetFarcasterTrendingArgs {
+    /// Optional Neynar API key. Falls back to NEYNAR_API_KEY when omitted.
+    api_key: Option<String>,
     /// Number of trending channels to return (default: 10)
     limit: Option<u32>,
 }
@@ -347,7 +364,7 @@ impl DynAomiTool for GetFarcasterTrending {
     const DESCRIPTION: &'static str = "Get trending Farcaster channels. Shows what topics and communities are gaining attention in the Web3 social space.";
 
     fn run(_app: &SocialApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = NeynarClient::new()?;
+        let client = NeynarClient::new(args.api_key.as_deref())?;
         let channels = client.get_trending_channels(args.limit)?;
 
         let formatted_channels: Vec<Value> = channels
@@ -382,6 +399,8 @@ pub(crate) struct GetCryptoSentiment;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetCryptoSentimentArgs {
+    /// Optional LunarCrush API key. Falls back to LUNARCRUSH_API_KEY when omitted.
+    api_key: Option<String>,
     /// Crypto topic to get sentiment for (e.g., 'bitcoin', 'ethereum', 'solana')
     topic: String,
 }
@@ -393,7 +412,7 @@ impl DynAomiTool for GetCryptoSentiment {
     const DESCRIPTION: &'static str = "Get aggregated sentiment data for a crypto topic from X, Reddit, YouTube, TikTok, and news. Returns sentiment scores, social volume, contributor counts, and platform breakdown.";
 
     fn run(_app: &SocialApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = LunarCrushClient::new()?;
+        let client = LunarCrushClient::new(args.api_key.as_deref())?;
         let sentiment = client.get_topic_sentiment(&args.topic)?;
 
         // Calculate overall sentiment from platform breakdown
@@ -447,6 +466,8 @@ pub(crate) struct GetTrendingTopics;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetTrendingTopicsArgs {
+    /// Optional LunarCrush API key. Falls back to LUNARCRUSH_API_KEY when omitted.
+    api_key: Option<String>,
     /// Maximum number of trending topics to return (default: 20)
     limit: Option<u32>,
 }
@@ -458,7 +479,7 @@ impl DynAomiTool for GetTrendingTopics {
     const DESCRIPTION: &'static str = "Get trending social topics across X, Reddit, YouTube, TikTok, and news. Shows what's gaining attention with rank changes and engagement metrics.";
 
     fn run(_app: &SocialApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = LunarCrushClient::new()?;
+        let client = LunarCrushClient::new(args.api_key.as_deref())?;
         let mut topics = client.get_trending_topics()?;
 
         // Limit results
@@ -505,6 +526,8 @@ pub(crate) struct GetTopicSummary;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetTopicSummaryArgs {
+    /// Optional LunarCrush API key. Falls back to LUNARCRUSH_API_KEY when omitted.
+    api_key: Option<String>,
     /// Crypto topic to get a summary for (e.g., 'bitcoin', 'ethereum', 'solana')
     topic: String,
 }
@@ -516,7 +539,7 @@ impl DynAomiTool for GetTopicSummary {
     const DESCRIPTION: &'static str = "Get an AI-generated summary of the hottest news and social posts for a crypto topic. Provides a quick overview of what's being discussed.";
 
     fn run(_app: &SocialApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = LunarCrushClient::new()?;
+        let client = LunarCrushClient::new(args.api_key.as_deref())?;
         let summary = client.get_topic_summary(&args.topic)?;
 
         Ok(json!({

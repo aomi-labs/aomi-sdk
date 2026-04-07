@@ -142,7 +142,7 @@ pub(crate) struct ExecuteQuery;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ExecuteQueryArgs {
     /// Dune API key for authentication.
-    pub api_key: String,
+    pub api_key: Option<String>,
     /// Numeric Dune query ID (from the dashboard URL).
     pub query_id: u64,
     /// Optional JSON object of query parameters that map to {{param}} placeholders in the SQL.
@@ -155,7 +155,7 @@ pub(crate) struct GetExecutionStatus;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetExecutionStatusArgs {
     /// Dune API key for authentication.
-    pub api_key: String,
+    pub api_key: Option<String>,
     /// Execution ID returned by execute_query.
     pub execution_id: String,
 }
@@ -165,7 +165,7 @@ pub(crate) struct GetExecutionResults;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetExecutionResultsArgs {
     /// Dune API key for authentication.
-    pub api_key: String,
+    pub api_key: Option<String>,
     /// Execution ID returned by execute_query.
     pub execution_id: String,
     /// Maximum number of rows to return.
@@ -181,7 +181,7 @@ pub(crate) struct GetQueryResults;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetQueryResultsArgs {
     /// Dune API key for authentication.
-    pub api_key: String,
+    pub api_key: Option<String>,
     /// Numeric Dune query ID.
     pub query_id: u64,
     /// Maximum number of rows to return.
