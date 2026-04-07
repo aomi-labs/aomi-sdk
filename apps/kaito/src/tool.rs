@@ -2,6 +2,14 @@ use crate::client::*;
 use aomi_sdk::*;
 use serde_json::Value;
 
+fn resolve_kaito_api_key(api_key: Option<&str>) -> Result<String, String> {
+    resolve_secret_value(
+        api_key,
+        "KAITO_API_KEY",
+        "[kaito] missing api_key argument and KAITO_API_KEY environment variable",
+    )
+}
+
 // ============================================================================
 // Tool 1: Search -- semantic search across Web3 corpus
 // ============================================================================
@@ -13,7 +21,8 @@ impl DynAomiTool for KaitoSearch {
     const DESCRIPTION: &'static str = "Semantic search across Kaito's Web3 corpus (Twitter, Discord, Telegram, governance forums, Farcaster, podcasts, conference transcripts). Returns AI-structured results with attention quantification.";
 
     fn run(_app: &KaitoApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = KaitoClient::new(&args.api_key)?;
+        let api_key = resolve_kaito_api_key(args.api_key.as_deref())?;
+        let client = KaitoClient::new(&api_key)?;
         client.search(&args.query, args.limit, args.source_type.as_deref())
     }
 }
@@ -29,7 +38,8 @@ impl DynAomiTool for KaitoGetTrending {
     const DESCRIPTION: &'static str = "Get trending topics and narratives across Web3 sources from Kaito. Shows what the crypto community is currently discussing.";
 
     fn run(_app: &KaitoApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = KaitoClient::new(&args.api_key)?;
+        let api_key = resolve_kaito_api_key(args.api_key.as_deref())?;
+        let client = KaitoClient::new(&api_key)?;
         client.get_trending(args.limit)
     }
 }
@@ -45,7 +55,8 @@ impl DynAomiTool for KaitoGetMindshare {
     const DESCRIPTION: &'static str = "Get attention and mindshare metrics for a specific token from Kaito. Quantifies how much discussion and attention a token is receiving across Web3 sources.";
 
     fn run(_app: &KaitoApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = KaitoClient::new(&args.api_key)?;
+        let api_key = resolve_kaito_api_key(args.api_key.as_deref())?;
+        let client = KaitoClient::new(&api_key)?;
         client.get_mindshare(&args.token)
     }
 }

@@ -21,9 +21,12 @@ pub(crate) struct ZeroxClient {
 }
 
 impl ZeroxClient {
-    pub(crate) fn new() -> Result<Self, String> {
-        let api_key =
-            std::env::var("ZEROX_API_KEY").map_err(|_| "[0x] missing ZEROX_API_KEY".to_string())?;
+    pub(crate) fn new(api_key: Option<&str>) -> Result<Self, String> {
+        let api_key = resolve_secret_value(
+            api_key,
+            "ZEROX_API_KEY",
+            "[0x] missing api_key argument and ZEROX_API_KEY environment variable",
+        )?;
         let http = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
@@ -432,6 +435,8 @@ pub(crate) struct GetZeroxSwapQuote;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetZeroxSwapQuoteArgs {
+    /// Optional 0x API key. Falls back to ZEROX_API_KEY when omitted.
+    pub(crate) api_key: Option<String>,
     /// Source chain
     pub(crate) chain: String,
     /// Sell token symbol or address
@@ -450,6 +455,8 @@ pub(crate) struct PlaceZeroxOrder;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct PlaceZeroxOrderArgs {
+    /// Optional 0x API key. Falls back to ZEROX_API_KEY when omitted.
+    pub(crate) api_key: Option<String>,
     /// Source chain
     pub(crate) chain: String,
     /// Sell token symbol or address
@@ -469,12 +476,17 @@ pub(crate) struct PlaceZeroxOrderArgs {
 pub(crate) struct GetZeroxSwapChains;
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct GetZeroxSwapChainsArgs {}
+pub(crate) struct GetZeroxSwapChainsArgs {
+    /// Optional 0x API key. Falls back to ZEROX_API_KEY when omitted.
+    pub(crate) api_key: Option<String>,
+}
 
 pub(crate) struct GetZeroxAllowanceHolderPrice;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetZeroxAllowanceHolderPriceArgs {
+    /// Optional 0x API key. Falls back to ZEROX_API_KEY when omitted.
+    pub(crate) api_key: Option<String>,
     /// Source chain (e.g. "ethereum", "polygon")
     pub(crate) chain: String,
     /// Sell token symbol or address
@@ -493,6 +505,8 @@ pub(crate) struct GetZeroxLiquiditySources;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetZeroxLiquiditySourcesArgs {
+    /// Optional 0x API key. Falls back to ZEROX_API_KEY when omitted.
+    pub(crate) api_key: Option<String>,
     /// Chain name (e.g. "ethereum", "polygon")
     pub(crate) chain: String,
 }
@@ -503,6 +517,8 @@ pub(crate) struct GetZeroxGaslessPrice;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetZeroxGaslessPriceArgs {
+    /// Optional 0x API key. Falls back to ZEROX_API_KEY when omitted.
+    pub(crate) api_key: Option<String>,
     /// Source chain (e.g. "ethereum", "polygon")
     pub(crate) chain: String,
     /// Sell token symbol or address (must be ERC-20, not native)
@@ -521,6 +537,8 @@ pub(crate) struct GetZeroxGaslessQuote;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetZeroxGaslessQuoteArgs {
+    /// Optional 0x API key. Falls back to ZEROX_API_KEY when omitted.
+    pub(crate) api_key: Option<String>,
     /// Source chain (e.g. "ethereum", "polygon")
     pub(crate) chain: String,
     /// Sell token symbol or address (must be ERC-20, not native)
@@ -539,6 +557,8 @@ pub(crate) struct SubmitZeroxGaslessSwap;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SubmitZeroxGaslessSwapArgs {
+    /// Optional 0x API key. Falls back to ZEROX_API_KEY when omitted.
+    pub(crate) api_key: Option<String>,
     /// Chain ID (numeric, e.g. 1 for Ethereum)
     pub(crate) chain_id: u64,
     /// Signed trade object from gasless quote
@@ -551,6 +571,8 @@ pub(crate) struct GetZeroxGaslessStatus;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetZeroxGaslessStatusArgs {
+    /// Optional 0x API key. Falls back to ZEROX_API_KEY when omitted.
+    pub(crate) api_key: Option<String>,
     /// Trade hash returned by submit_zerox_gasless_swap
     pub(crate) trade_hash: String,
     /// Chain ID (numeric, e.g. 1 for Ethereum)
@@ -560,7 +582,10 @@ pub(crate) struct GetZeroxGaslessStatusArgs {
 pub(crate) struct GetZeroxGaslessChains;
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct GetZeroxGaslessChainsArgs {}
+pub(crate) struct GetZeroxGaslessChainsArgs {
+    /// Optional 0x API key. Falls back to ZEROX_API_KEY when omitted.
+    pub(crate) api_key: Option<String>,
+}
 
 #[cfg(test)]
 mod tests {
@@ -571,7 +596,7 @@ mod tests {
     }
 
     fn client() -> ZeroxClient {
-        ZeroxClient::new().expect("client should build (ZEROX_API_KEY required)")
+        ZeroxClient::new(None).expect("client should build (ZEROX_API_KEY required)")
     }
 
     #[test]

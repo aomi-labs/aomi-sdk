@@ -218,9 +218,9 @@ pub(crate) struct PlaceOrder;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct PlaceOrderArgs {
     /// Binance API key
-    pub(crate) api_key: String,
+    pub(crate) api_key: Option<String>,
     /// Binance secret key for request signing
-    pub(crate) secret_key: String,
+    pub(crate) secret_key: Option<String>,
     /// Trading pair symbol (e.g., "BTCUSDT")
     pub(crate) symbol: String,
     /// Order side: "BUY" or "SELL"
@@ -240,9 +240,9 @@ pub(crate) struct CancelOrder;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct CancelOrderArgs {
     /// Binance API key
-    pub(crate) api_key: String,
+    pub(crate) api_key: Option<String>,
     /// Binance secret key for request signing
-    pub(crate) secret_key: String,
+    pub(crate) secret_key: Option<String>,
     /// Trading pair symbol (e.g., "BTCUSDT")
     pub(crate) symbol: String,
     /// Order ID to cancel
@@ -256,9 +256,9 @@ pub(crate) struct GetAccount;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetAccountArgs {
     /// Binance API key
-    pub(crate) api_key: String,
+    pub(crate) api_key: Option<String>,
     /// Binance secret key for request signing
-    pub(crate) secret_key: String,
+    pub(crate) secret_key: Option<String>,
 }
 
 pub(crate) struct GetTrades;
@@ -266,9 +266,9 @@ pub(crate) struct GetTrades;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetTradesArgs {
     /// Binance API key
-    pub(crate) api_key: String,
+    pub(crate) api_key: Option<String>,
     /// Binance secret key for request signing
-    pub(crate) secret_key: String,
+    pub(crate) secret_key: Option<String>,
     /// Trading pair symbol (e.g., "BTCUSDT")
     pub(crate) symbol: String,
     /// Trade ID to fetch from (optional)

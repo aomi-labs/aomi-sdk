@@ -196,9 +196,9 @@ pub(crate) struct GetKlineArgs {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct CreateOrderArgs {
     /// Bybit API key
-    pub(crate) api_key: String,
+    pub(crate) api_key: Option<String>,
     /// Bybit API secret
-    pub(crate) secret_key: String,
+    pub(crate) secret_key: Option<String>,
     /// Product category: "spot", "linear", "inverse", or "option"
     pub(crate) category: String,
     /// Trading pair symbol (e.g. "BTCUSDT")
@@ -216,9 +216,9 @@ pub(crate) struct CreateOrderArgs {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct CancelOrderArgs {
     /// Bybit API key
-    pub(crate) api_key: String,
+    pub(crate) api_key: Option<String>,
     /// Bybit API secret
-    pub(crate) secret_key: String,
+    pub(crate) secret_key: Option<String>,
     /// Product category: "spot", "linear", "inverse", or "option"
     pub(crate) category: String,
     /// Trading pair symbol (e.g. "BTCUSDT")
@@ -230,9 +230,9 @@ pub(crate) struct CancelOrderArgs {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct AmendOrderArgs {
     /// Bybit API key
-    pub(crate) api_key: String,
+    pub(crate) api_key: Option<String>,
     /// Bybit API secret
-    pub(crate) secret_key: String,
+    pub(crate) secret_key: Option<String>,
     /// Product category: "spot", "linear", "inverse", or "option"
     pub(crate) category: String,
     /// Trading pair symbol (e.g. "BTCUSDT")
@@ -248,9 +248,9 @@ pub(crate) struct AmendOrderArgs {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetPositionsArgs {
     /// Bybit API key
-    pub(crate) api_key: String,
+    pub(crate) api_key: Option<String>,
     /// Bybit API secret
-    pub(crate) secret_key: String,
+    pub(crate) secret_key: Option<String>,
     /// Product category: "linear" or "inverse"
     pub(crate) category: String,
     /// Trading pair symbol (e.g. "BTCUSDT"). Optional.
@@ -260,9 +260,9 @@ pub(crate) struct GetPositionsArgs {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetWalletBalanceArgs {
     /// Bybit API key
-    pub(crate) api_key: String,
+    pub(crate) api_key: Option<String>,
     /// Bybit API secret
-    pub(crate) secret_key: String,
+    pub(crate) secret_key: Option<String>,
     /// Account type: "UNIFIED" or "CONTRACT"
     pub(crate) account_type: String,
 }
@@ -270,9 +270,9 @@ pub(crate) struct GetWalletBalanceArgs {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SetLeverageArgs {
     /// Bybit API key
-    pub(crate) api_key: String,
+    pub(crate) api_key: Option<String>,
     /// Bybit API secret
-    pub(crate) secret_key: String,
+    pub(crate) secret_key: Option<String>,
     /// Product category: "linear" or "inverse"
     pub(crate) category: String,
     /// Trading pair symbol (e.g. "BTCUSDT")

@@ -4,6 +4,14 @@ use aomi_sdk::*;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+fn resolve_simmer_api_key(api_key: Option<&str>) -> Result<String, String> {
+    resolve_secret_value(
+        api_key,
+        "SIMMER_API_KEY",
+        "[simmer] missing api_key argument and SIMMER_API_KEY environment variable",
+    )
+}
+
 impl DynAomiTool for SearchPolymarket {
     type App = PredictionApp;
     type Args = SearchPolymarketArgs;
@@ -705,7 +713,7 @@ pub(crate) struct SimmerStatus;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SimmerStatusArgs {
     /// Simmer API key (sk_...)
-    api_key: String,
+    api_key: Option<String>,
 }
 
 impl DynAomiTool for SimmerStatus {
@@ -716,7 +724,8 @@ impl DynAomiTool for SimmerStatus {
         "Get agent status: balance, claim status, whether real trading is enabled, and limits.";
 
     fn run(_app: &PredictionApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = SimmerClient::new(&args.api_key, "sim")?;
+        let api_key = resolve_simmer_api_key(args.api_key.as_deref())?;
+        let client = SimmerClient::new(&api_key, "sim")?;
         let status = client.get_agent_status()?;
         Ok(json!({
             "agent_id": status.get("agent_id"),
@@ -740,7 +749,7 @@ pub(crate) struct SimmerBriefing;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SimmerBriefingArgs {
     /// Simmer API key (sk_...)
-    api_key: String,
+    api_key: Option<String>,
     /// ISO timestamp to get changes since (optional, defaults to 24h ago)
     since: Option<String>,
 }
@@ -752,7 +761,8 @@ impl DynAomiTool for SimmerBriefing {
     const DESCRIPTION: &'static str = "Get a full briefing from Simmer: portfolio, positions, opportunities, risk alerts, and performance. Use this for periodic check-ins instead of multiple API calls.";
 
     fn run(_app: &PredictionApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = SimmerClient::new(&args.api_key, "sim")?;
+        let api_key = resolve_simmer_api_key(args.api_key.as_deref())?;
+        let client = SimmerClient::new(&api_key, "sim")?;
         let briefing = client.get_briefing(args.since.as_deref())?;
         Ok(json!({
             "portfolio": briefing.get("portfolio"),
@@ -774,7 +784,7 @@ pub(crate) struct FetchSimmerMarketContext;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct FetchSimmerMarketContextArgs {
     /// Simmer API key (sk_...)
-    api_key: String,
+    api_key: Option<String>,
     /// Market ID to analyze before trading
     market_id: String,
 }
@@ -786,7 +796,8 @@ impl DynAomiTool for FetchSimmerMarketContext {
     const DESCRIPTION: &'static str = "Get detailed context for a specific market before trading. Returns position info, warnings, slippage estimate, fees, and resolution criteria.";
 
     fn run(_app: &PredictionApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = SimmerClient::new(&args.api_key, "sim")?;
+        let api_key = resolve_simmer_api_key(args.api_key.as_deref())?;
+        let client = SimmerClient::new(&api_key, "sim")?;
         let context = client.get_market_context(&args.market_id)?;
         Ok(json!({
             "market": context.get("market"),
@@ -813,7 +824,7 @@ pub(crate) struct SimmerPlaceOrder;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SimmerPlaceOrderArgs {
     /// Simmer API key (sk_...)
-    api_key: String,
+    api_key: Option<String>,
     /// Market ID to trade on
     market_id: String,
     /// Outcome to bet on: "yes" or "no"
@@ -870,7 +881,8 @@ impl DynAomiTool for SimmerPlaceOrder {
             return Err("Sell orders must use shares, not amount.".to_string());
         }
 
-        let client = SimmerClient::new(&args.api_key, &venue)?;
+        let api_key = resolve_simmer_api_key(args.api_key.as_deref())?;
+        let client = SimmerClient::new(&api_key, &venue)?;
 
         let mut body = json!({
             "market_id": args.market_id,
@@ -930,7 +942,7 @@ pub(crate) struct SimmerGetPositions;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SimmerGetPositionsArgs {
     /// Simmer API key (sk_...)
-    api_key: String,
+    api_key: Option<String>,
     /// Optional venue filter: sim or polymarket
     venue: Option<String>,
 }
@@ -949,7 +961,8 @@ impl DynAomiTool for SimmerGetPositions {
             .transpose()?
             .unwrap_or_else(|| "sim".to_string());
 
-        let client = SimmerClient::new(&args.api_key, &venue)?;
+        let api_key = resolve_simmer_api_key(args.api_key.as_deref())?;
+        let client = SimmerClient::new(&api_key, &venue)?;
         let result = client.get_positions(Some(venue.as_str()))?;
 
         let positions = result
@@ -980,7 +993,7 @@ pub(crate) struct SimmerGetPortfolio;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SimmerGetPortfolioArgs {
     /// Simmer API key (sk_...)
-    api_key: String,
+    api_key: Option<String>,
 }
 
 impl DynAomiTool for SimmerGetPortfolio {
@@ -990,7 +1003,8 @@ impl DynAomiTool for SimmerGetPortfolio {
     const DESCRIPTION: &'static str = "Get portfolio summary from Simmer. Shows balance, positions value, total value, realized and unrealized P&L.";
 
     fn run(_app: &PredictionApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = SimmerClient::new(&args.api_key, "sim")?;
+        let api_key = resolve_simmer_api_key(args.api_key.as_deref())?;
+        let client = SimmerClient::new(&api_key, "sim")?;
         let portfolio = client.get_portfolio()?;
         Ok(json!({
             "balance": portfolio.get("balance"),
@@ -1012,7 +1026,7 @@ pub(crate) struct SearchSimmerMarkets;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SearchSimmerMarketsArgs {
     /// Simmer API key (sk_...)
-    api_key: String,
+    api_key: Option<String>,
     /// Filter by import source: polymarket
     import_source: Option<String>,
     /// Filter by status: active, resolved
@@ -1035,7 +1049,8 @@ impl DynAomiTool for SearchSimmerMarkets {
             .map(parse_market_source)
             .transpose()?
             .unwrap_or_else(|| "polymarket".to_string());
-        let client = SimmerClient::new(&args.api_key, "sim")?;
+        let api_key = resolve_simmer_api_key(args.api_key.as_deref())?;
+        let client = SimmerClient::new(&api_key, "sim")?;
         let result = client.get_markets(
             Some(import_source.as_str()),
             args.status.as_deref(),

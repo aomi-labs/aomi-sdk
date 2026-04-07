@@ -30,9 +30,9 @@ use serde_json::Value;
 
 use crate::{
     AOMI_ABI_VERSION, AOMI_CREATE, AOMI_DESTROY, AOMI_DYN_EXEC_CANCEL, AOMI_DYN_EXEC_POLL,
-    AOMI_FREE_STRING, AOMI_MANIFEST, AsyncExecPool, DYN_ABI_VERSION, DynAbiVersionFn, DynCreateFn,
-    DynDestroyFn, DynExecCancel, DynFreeStringFn, DynInstancePtr, DynManifest, DynManifestFn,
-    DynToolCancelFn, DynToolPollFn, DynToolResult, DynToolStart, DynToolStartFn,
+    AOMI_FREE_STRING, AOMI_MANIFEST, AsyncExecPool, DynAbiVersionFn, DynCreateFn, DynDestroyFn,
+    DynExecCancel, DynFreeStringFn, DynInstancePtr, DynManifest, DynManifestFn, DynToolCancelFn,
+    DynToolPollFn, DynToolResult, DynToolStart, DynToolStartFn, SYM_AOMI_ABI_VERSION,
     SYM_AOMI_ASYNC_TOOL_START,
 };
 
@@ -75,13 +75,13 @@ impl DynFnHandle {
 
         let fn_abi_version: DynAbiVersionFn = unsafe {
             *library
-                .get::<DynAbiVersionFn>(AOMI_ABI_VERSION)
-                .context("symbol aomi_dyn_abi_version not found")?
+                .get::<DynAbiVersionFn>(SYM_AOMI_ABI_VERSION)
+                .context("symbol aomi_abi_version not found")?
         };
         let abi_version = unsafe { fn_abi_version() };
-        if abi_version != DYN_ABI_VERSION {
+        if abi_version != AOMI_ABI_VERSION {
             bail!(
-                "ABI version mismatch: plugin={abi_version}, host={DYN_ABI_VERSION} ({})",
+                "ABI version mismatch: plugin={abi_version}, host={AOMI_ABI_VERSION} ({})",
                 path.display()
             );
         }

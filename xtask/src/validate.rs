@@ -133,12 +133,12 @@ fn validate_manifest(manifest: &DynManifest) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use aomi_sdk::{DYN_ABI_VERSION, DynManifest, DynToolMetadata};
+    use aomi_sdk::{AOMI_ABI_VERSION, DynManifest, DynToolMetadata};
 
     #[test]
     fn validate_rejects_private_host_namespaces() {
         let manifest = DynManifest {
-            abi_version: DYN_ABI_VERSION,
+            abi_version: AOMI_ABI_VERSION,
             name: "bad-app".to_string(),
             version: "0.1.0".to_string(),
             preamble: "x".to_string(),

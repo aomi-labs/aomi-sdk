@@ -2,6 +2,23 @@ use crate::client::*;
 use aomi_sdk::*;
 use serde_json::Value;
 
+fn resolve_binance_credentials(
+    api_key: Option<&str>,
+    secret_key: Option<&str>,
+) -> Result<(String, String), String> {
+    let api_key = resolve_secret_value(
+        api_key,
+        "BINANCE_API_KEY",
+        "[binance] missing api_key argument and BINANCE_API_KEY environment variable",
+    )?;
+    let secret_key = resolve_secret_value(
+        secret_key,
+        "BINANCE_SECRET_KEY",
+        "[binance] missing secret_key argument and BINANCE_SECRET_KEY environment variable",
+    )?;
+    Ok((api_key, secret_key))
+}
+
 // ============================================================================
 // Tool 1: GetPrice — GET /ticker/price (public)
 // ============================================================================
@@ -101,6 +118,8 @@ impl DynAomiTool for PlaceOrder {
 
     fn run(_app: &BinanceApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = BinanceClient::new()?;
+        let (api_key, secret_key) =
+            resolve_binance_credentials(args.api_key.as_deref(), args.secret_key.as_deref())?;
         let mut query = format!(
             "symbol={}&side={}&type={}",
             args.symbol, args.side, args.order_type
@@ -114,13 +133,7 @@ impl DynAomiTool for PlaceOrder {
         if let Some(ref price) = args.price {
             query.push_str(&format!("&price={price}"));
         }
-        client.signed_post(
-            SPOT_BASE_URL,
-            "/order",
-            &args.api_key,
-            &args.secret_key,
-            &query,
-        )
+        client.signed_post(SPOT_BASE_URL, "/order", &api_key, &secret_key, &query)
     }
 }
 
@@ -136,6 +149,8 @@ impl DynAomiTool for CancelOrder {
 
     fn run(_app: &BinanceApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = BinanceClient::new()?;
+        let (api_key, secret_key) =
+            resolve_binance_credentials(args.api_key.as_deref(), args.secret_key.as_deref())?;
         let mut query = format!("symbol={}", args.symbol);
         if let Some(oid) = args.order_id {
             query.push_str(&format!("&orderId={oid}"));
@@ -143,13 +158,7 @@ impl DynAomiTool for CancelOrder {
         if let Some(ref cid) = args.orig_client_order_id {
             query.push_str(&format!("&origClientOrderId={cid}"));
         }
-        client.signed_delete(
-            SPOT_BASE_URL,
-            "/order",
-            &args.api_key,
-            &args.secret_key,
-            &query,
-        )
+        client.signed_delete(SPOT_BASE_URL, "/order", &api_key, &secret_key, &query)
     }
 }
 
@@ -165,13 +174,9 @@ impl DynAomiTool for GetAccount {
 
     fn run(_app: &BinanceApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = BinanceClient::new()?;
-        client.signed_get(
-            SPOT_BASE_URL,
-            "/account",
-            &args.api_key,
-            &args.secret_key,
-            "",
-        )
+        let (api_key, secret_key) =
+            resolve_binance_credentials(args.api_key.as_deref(), args.secret_key.as_deref())?;
+        client.signed_get(SPOT_BASE_URL, "/account", &api_key, &secret_key, "")
     }
 }
 
@@ -188,6 +193,8 @@ impl DynAomiTool for GetTrades {
 
     fn run(_app: &BinanceApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = BinanceClient::new()?;
+        let (api_key, secret_key) =
+            resolve_binance_credentials(args.api_key.as_deref(), args.secret_key.as_deref())?;
         let mut query = format!("symbol={}", args.symbol);
         if let Some(from_id) = args.from_id {
             query.push_str(&format!("&fromId={from_id}"));
@@ -201,12 +208,6 @@ impl DynAomiTool for GetTrades {
         if let Some(limit) = args.limit {
             query.push_str(&format!("&limit={limit}"));
         }
-        client.signed_get(
-            SPOT_BASE_URL,
-            "/myTrades",
-            &args.api_key,
-            &args.secret_key,
-            &query,
-        )
+        client.signed_get(SPOT_BASE_URL, "/myTrades", &api_key, &secret_key, &query)
     }
 }
