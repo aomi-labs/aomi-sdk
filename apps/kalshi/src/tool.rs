@@ -4,6 +4,14 @@ use aomi_sdk::*;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+fn resolve_simmer_api_key(api_key: Option<&str>) -> Result<String, String> {
+    resolve_secret_value(
+        api_key,
+        "SIMMER_API_KEY",
+        "[simmer] missing api_key argument and SIMMER_API_KEY environment variable",
+    )
+}
+
 pub(crate) struct SimmerRegister;
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -46,7 +54,7 @@ pub(crate) struct SimmerStatus;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SimmerStatusArgs {
     /// Simmer API key (sk_...)
-    api_key: String,
+    api_key: Option<String>,
 }
 
 impl DynAomiTool for SimmerStatus {
@@ -56,7 +64,8 @@ impl DynAomiTool for SimmerStatus {
     const DESCRIPTION: &'static str = "Get Simmer agent status, balances, claim state, and whether live Kalshi trading is enabled.";
 
     fn run(_app: &KalshiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = SimmerClient::new(&args.api_key)?;
+        let api_key = resolve_simmer_api_key(args.api_key.as_deref())?;
+        let client = SimmerClient::new(&api_key)?;
         let status = client.get_agent_status()?;
         Ok(json!({
             "agent_id": status.get("agent_id"),
@@ -76,7 +85,7 @@ pub(crate) struct SimmerBriefing;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SimmerBriefingArgs {
     /// Simmer API key (sk_...)
-    api_key: String,
+    api_key: Option<String>,
     /// ISO timestamp to get changes since (optional, defaults to backend default)
     since: Option<String>,
 }
@@ -88,7 +97,8 @@ impl DynAomiTool for SimmerBriefing {
     const DESCRIPTION: &'static str = "Get a Simmer briefing covering portfolio, positions, opportunities, risk alerts, and performance.";
 
     fn run(_app: &KalshiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = SimmerClient::new(&args.api_key)?;
+        let api_key = resolve_simmer_api_key(args.api_key.as_deref())?;
+        let client = SimmerClient::new(&api_key)?;
         let briefing = client.get_briefing(args.since.as_deref())?;
         Ok(json!({
             "portfolio": briefing.get("portfolio"),
@@ -106,7 +116,7 @@ pub(crate) struct SearchSimmerMarkets;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SearchSimmerMarketsArgs {
     /// Simmer API key (sk_...)
-    api_key: String,
+    api_key: Option<String>,
     /// Optional free-text search query
     query: Option<String>,
     /// Optional minimum external volume filter (default in API docs: 10000)
@@ -122,7 +132,8 @@ impl DynAomiTool for SearchSimmerMarkets {
     const DESCRIPTION: &'static str = "List importable Kalshi markets from Simmer. Returns Kalshi URLs that can be imported into Simmer before trading.";
 
     fn run(_app: &KalshiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = SimmerClient::new(&args.api_key)?;
+        let api_key = resolve_simmer_api_key(args.api_key.as_deref())?;
+        let client = SimmerClient::new(&api_key)?;
         let result = client.list_importable_kalshi_markets(
             args.query.as_deref(),
             args.limit,
@@ -148,7 +159,7 @@ pub(crate) struct ImportKalshiMarket;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct ImportKalshiMarketArgs {
     /// Simmer API key (sk_...)
-    api_key: String,
+    api_key: Option<String>,
     /// Kalshi market URL returned by search_simmer_markets
     kalshi_url: String,
 }
@@ -160,7 +171,8 @@ impl DynAomiTool for ImportKalshiMarket {
     const DESCRIPTION: &'static str = "Import a Kalshi market into Simmer and return the Simmer market_id UUID required for context and trading calls.";
 
     fn run(_app: &KalshiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = SimmerClient::new(&args.api_key)?;
+        let api_key = resolve_simmer_api_key(args.api_key.as_deref())?;
+        let client = SimmerClient::new(&api_key)?;
         let result = client.import_kalshi_market(&args.kalshi_url)?;
         Ok(json!({
             "market_id": result.get("market_id"),
@@ -176,7 +188,7 @@ pub(crate) struct FetchSimmerMarketContext;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct FetchSimmerMarketContextArgs {
     /// Simmer API key (sk_...)
-    api_key: String,
+    api_key: Option<String>,
     /// Simmer market ID to analyze before trading
     market_id: String,
 }
@@ -188,7 +200,8 @@ impl DynAomiTool for FetchSimmerMarketContext {
     const DESCRIPTION: &'static str = "Get detailed context for an imported Kalshi market before trading, including warnings, slippage, fees, and resolution criteria.";
 
     fn run(_app: &KalshiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = SimmerClient::new(&args.api_key)?;
+        let api_key = resolve_simmer_api_key(args.api_key.as_deref())?;
+        let client = SimmerClient::new(&api_key)?;
         let context = client.get_market_context(&args.market_id)?;
         Ok(json!({
             "market": context.get("market"),
@@ -211,7 +224,7 @@ pub(crate) struct SimmerPlaceOrder;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SimmerPlaceOrderArgs {
     /// Simmer API key (sk_...)
-    api_key: String,
+    api_key: Option<String>,
     /// Simmer market ID to trade on
     market_id: String,
     /// Outcome to bet on: "yes" or "no"
@@ -268,7 +281,8 @@ impl DynAomiTool for SimmerPlaceOrder {
             return Err("Sell orders must use shares, not amount.".to_string());
         }
 
-        let client = SimmerClient::new(&args.api_key)?;
+        let api_key = resolve_simmer_api_key(args.api_key.as_deref())?;
+        let client = SimmerClient::new(&api_key)?;
         let mut body = json!({
             "market_id": args.market_id,
             "side": args.side.to_lowercase(),
@@ -323,7 +337,7 @@ pub(crate) struct SimmerGetPositions;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SimmerGetPositionsArgs {
     /// Simmer API key (sk_...)
-    api_key: String,
+    api_key: Option<String>,
     /// Optional venue filter: sim or kalshi
     venue: Option<String>,
 }
@@ -342,7 +356,8 @@ impl DynAomiTool for SimmerGetPositions {
             .transpose()?
             .unwrap_or_else(|| "sim".to_string());
 
-        let client = SimmerClient::new(&args.api_key)?;
+        let api_key = resolve_simmer_api_key(args.api_key.as_deref())?;
+        let client = SimmerClient::new(&api_key)?;
         let result = client.get_positions(Some(venue.as_str()))?;
         let positions = result
             .get("positions")
@@ -369,7 +384,7 @@ pub(crate) struct SimmerGetPortfolio;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SimmerGetPortfolioArgs {
     /// Simmer API key (sk_...)
-    api_key: String,
+    api_key: Option<String>,
 }
 
 impl DynAomiTool for SimmerGetPortfolio {
@@ -380,7 +395,8 @@ impl DynAomiTool for SimmerGetPortfolio {
         "Get portfolio summary from Simmer for the linked Kalshi account.";
 
     fn run(_app: &KalshiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = SimmerClient::new(&args.api_key)?;
+        let api_key = resolve_simmer_api_key(args.api_key.as_deref())?;
+        let client = SimmerClient::new(&api_key)?;
         let portfolio = client.get_portfolio()?;
         Ok(json!({
             "balance": portfolio.get("balance"),

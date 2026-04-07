@@ -9,7 +9,7 @@ impl DynAomiTool for GetOneInchQuote {
     const DESCRIPTION: &'static str = "Get a 1inch swap quote for price discovery (no transaction data). Returns optimal routing across DEXs.";
 
     fn run(_app: &OneInchApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = OneInchClient::new()?;
+        let client = OneInchClient::new(args.api_key.as_deref())?;
         let chain_id = args.chain_id.unwrap_or(1);
         client.get_quote(
             chain_id,
@@ -28,7 +28,7 @@ impl DynAomiTool for GetOneInchSwap {
     const DESCRIPTION: &'static str = "Get a 1inch swap quote with executable transaction calldata. Returns tx object (to, data, value, gas) that the host should verify with `encode_and_simulate` and send with `send_transaction_to_wallet`.";
 
     fn run(_app: &OneInchApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = OneInchClient::new()?;
+        let client = OneInchClient::new(args.api_key.as_deref())?;
         let chain_id = args.chain_id.unwrap_or(1);
         client.get_swap(
             chain_id,
@@ -49,7 +49,7 @@ impl DynAomiTool for GetOneInchApproveTransaction {
     const DESCRIPTION: &'static str = "Get transaction data to approve the 1inch router to spend a token. Returns tx object (to, data, value) for the approval. Omit amount for unlimited approval.";
 
     fn run(_app: &OneInchApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = OneInchClient::new()?;
+        let client = OneInchClient::new(args.api_key.as_deref())?;
         let chain_id = args.chain_id.unwrap_or(1);
         client.get_approve_transaction(chain_id, &args.token_address, args.amount.as_deref())
     }
@@ -62,7 +62,7 @@ impl DynAomiTool for GetOneInchAllowance {
     const DESCRIPTION: &'static str = "Check the current allowance the 1inch router has for a token from a given wallet. Returns the allowance amount.";
 
     fn run(_app: &OneInchApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = OneInchClient::new()?;
+        let client = OneInchClient::new(args.api_key.as_deref())?;
         let chain_id = args.chain_id.unwrap_or(1);
         client.get_allowance(chain_id, &args.token_address, &args.wallet_address)
     }
@@ -76,7 +76,7 @@ impl DynAomiTool for GetOneInchLiquiditySources {
         "List available DEXs and AMMs (liquidity sources) on a given chain for 1inch routing.";
 
     fn run(_app: &OneInchApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = OneInchClient::new()?;
+        let client = OneInchClient::new(args.api_key.as_deref())?;
         let chain_id = args.chain_id.unwrap_or(1);
         client.get_liquidity_sources(chain_id)
     }
@@ -89,7 +89,7 @@ impl DynAomiTool for GetOneInchTokens {
     const DESCRIPTION: &'static str = "List all supported tokens on a given chain. Returns token addresses, symbols, decimals, and logos.";
 
     fn run(_app: &OneInchApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = OneInchClient::new()?;
+        let client = OneInchClient::new(args.api_key.as_deref())?;
         let chain_id = args.chain_id.unwrap_or(1);
         client.get_tokens(chain_id)
     }

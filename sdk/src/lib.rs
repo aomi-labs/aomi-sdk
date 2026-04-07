@@ -151,6 +151,29 @@ pub use types::*;
 pub use schemars;
 pub use serde_json;
 
+/// Resolve a secret from a tool argument first, then from an optional
+/// environment variable fallback, and return a consistent error when neither is
+/// available.
+pub fn resolve_secret_value(
+    arg_value: Option<&str>,
+    env_name: &str,
+    missing_message: &str,
+) -> Result<String, String> {
+    if let Some(value) = arg_value.map(str::trim).filter(|value| !value.is_empty()) {
+        return Ok(value.to_string());
+    }
+
+    if let Some(value) = std::env::var(env_name)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+    {
+        return Ok(value);
+    }
+
+    Err(missing_message.to_string())
+}
+
 /// Internal helpers for macros. Do not use directly.
 #[doc(hidden)]
 pub mod __private {

@@ -27,9 +27,12 @@ pub(crate) struct OneInchClient {
 }
 
 impl OneInchClient {
-    pub(crate) fn new() -> Result<Self, String> {
-        let api_key = std::env::var("ONEINCH_API_KEY")
-            .map_err(|_| "[1inch] missing ONEINCH_API_KEY".to_string())?;
+    pub(crate) fn new(api_key: Option<&str>) -> Result<Self, String> {
+        let api_key = resolve_secret_value(
+            api_key,
+            "ONEINCH_API_KEY",
+            "[1inch] missing api_key argument and ONEINCH_API_KEY environment variable",
+        )?;
         let http = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
@@ -213,6 +216,9 @@ pub(crate) struct GetOneInchQuote;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetOneInchQuoteArgs {
+    /// Optional 1inch API key. Falls back to ONEINCH_API_KEY when omitted.
+    #[serde(default)]
+    pub(crate) api_key: Option<String>,
     /// Chain ID (default: 1 for Ethereum). Supported: 1, 10, 56, 100, 137, 8453, 42161, 43114.
     pub(crate) chain_id: Option<u64>,
     /// Source token address (e.g. "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48" for USDC)
@@ -229,6 +235,9 @@ pub(crate) struct GetOneInchSwap;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetOneInchSwapArgs {
+    /// Optional 1inch API key. Falls back to ONEINCH_API_KEY when omitted.
+    #[serde(default)]
+    pub(crate) api_key: Option<String>,
     /// Chain ID (default: 1 for Ethereum). Supported: 1, 10, 56, 100, 137, 8453, 42161, 43114.
     pub(crate) chain_id: Option<u64>,
     /// Source token address
@@ -249,6 +258,9 @@ pub(crate) struct GetOneInchApproveTransaction;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetOneInchApproveTransactionArgs {
+    /// Optional 1inch API key. Falls back to ONEINCH_API_KEY when omitted.
+    #[serde(default)]
+    pub(crate) api_key: Option<String>,
     /// Chain ID (default: 1 for Ethereum). Supported: 1, 10, 56, 100, 137, 8453, 42161, 43114.
     pub(crate) chain_id: Option<u64>,
     /// Token contract address to approve
@@ -261,6 +273,9 @@ pub(crate) struct GetOneInchAllowance;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetOneInchAllowanceArgs {
+    /// Optional 1inch API key. Falls back to ONEINCH_API_KEY when omitted.
+    #[serde(default)]
+    pub(crate) api_key: Option<String>,
     /// Chain ID (default: 1 for Ethereum). Supported: 1, 10, 56, 100, 137, 8453, 42161, 43114.
     pub(crate) chain_id: Option<u64>,
     /// Token contract address to check
@@ -273,6 +288,9 @@ pub(crate) struct GetOneInchLiquiditySources;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetOneInchLiquiditySourcesArgs {
+    /// Optional 1inch API key. Falls back to ONEINCH_API_KEY when omitted.
+    #[serde(default)]
+    pub(crate) api_key: Option<String>,
     /// Chain ID (default: 1 for Ethereum). Supported: 1, 10, 56, 100, 137, 8453, 42161, 43114.
     pub(crate) chain_id: Option<u64>,
 }
@@ -281,6 +299,9 @@ pub(crate) struct GetOneInchTokens;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetOneInchTokensArgs {
+    /// Optional 1inch API key. Falls back to ONEINCH_API_KEY when omitted.
+    #[serde(default)]
+    pub(crate) api_key: Option<String>,
     /// Chain ID (default: 1 for Ethereum). Supported: 1, 10, 56, 100, 137, 8453, 42161, 43114.
     pub(crate) chain_id: Option<u64>,
 }
@@ -301,7 +322,7 @@ mod tests {
     }
 
     fn client() -> OneInchClient {
-        OneInchClient::new().expect("client should build (ONEINCH_API_KEY required)")
+        OneInchClient::new(None).expect("client should build (ONEINCH_API_KEY required)")
     }
 
     /// Swap 10k USDC for ETH at the best rate: quote -> allowance -> approve -> ready to swap.

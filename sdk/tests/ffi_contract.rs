@@ -1,10 +1,10 @@
 mod common;
 
 use aomi_sdk::{
-    AOMI_ABI_VERSION, AOMI_CREATE, AOMI_DESTROY, AOMI_DYN_EXEC_CANCEL, AOMI_DYN_EXEC_POLL,
-    AOMI_FREE_STRING, AOMI_MANIFEST, AsyncExecPool, DYN_ABI_VERSION, DynAbiVersionFn, DynCreateFn,
-    DynDestroyFn, DynFreeStringFn, DynManifestFn, DynToolCancelFn, DynToolPollFn, DynToolStart,
-    DynToolStartFn, SYM_AOMI_ASYNC_TOOL_START,
+    AOMI_ABI_VERSION, AOMI_CREATE, AOMI_DESTROY, AOMI_DYN_EXEC_CANCEL,
+    AOMI_DYN_EXEC_POLL, AOMI_FREE_STRING, AOMI_MANIFEST, AsyncExecPool, DynAbiVersionFn,
+    DynCreateFn, DynDestroyFn, DynFreeStringFn, DynManifestFn, DynToolCancelFn, DynToolPollFn,
+    DynToolStart, DynToolStartFn, SYM_AOMI_ABI_VERSION, SYM_AOMI_ASYNC_TOOL_START,
 };
 use libloading::Library;
 
@@ -16,7 +16,7 @@ fn raw_ffi_symbols_match_the_documented_abi_surface() {
 
     unsafe {
         let abi_version = *library
-            .get::<DynAbiVersionFn>(AOMI_ABI_VERSION)
+            .get::<DynAbiVersionFn>(SYM_AOMI_ABI_VERSION)
             .expect("missing aomi_abi_version");
         let create = *library
             .get::<DynCreateFn>(AOMI_CREATE)
@@ -45,7 +45,7 @@ fn raw_ffi_symbols_match_the_documented_abi_surface() {
             !instance.is_null(),
             "create should return a non-null instance"
         );
-        assert_eq!(abi_version(), DYN_ABI_VERSION);
+        assert_eq!(abi_version(), AOMI_ABI_VERSION);
 
         let manifest_raw = manifest(instance);
         assert!(!manifest_raw.is_null(), "manifest should return JSON");

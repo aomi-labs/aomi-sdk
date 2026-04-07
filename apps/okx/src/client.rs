@@ -214,11 +214,11 @@ pub(crate) struct PlaceOrder;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct PlaceOrderArgs {
     /// OKX API key
-    pub(crate) api_key: String,
+    pub(crate) api_key: Option<String>,
     /// OKX API secret key
-    pub(crate) secret_key: String,
+    pub(crate) secret_key: Option<String>,
     /// OKX API passphrase
-    pub(crate) passphrase: String,
+    pub(crate) passphrase: Option<String>,
     /// Instrument ID, e.g. BTC-USDT
     pub(crate) inst_id: String,
     /// Trade mode: cash, cross, or isolated
@@ -239,11 +239,11 @@ pub(crate) struct CancelOrder;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct CancelOrderArgs {
     /// OKX API key
-    pub(crate) api_key: String,
+    pub(crate) api_key: Option<String>,
     /// OKX API secret key
-    pub(crate) secret_key: String,
+    pub(crate) secret_key: Option<String>,
     /// OKX API passphrase
-    pub(crate) passphrase: String,
+    pub(crate) passphrase: Option<String>,
     /// Instrument ID, e.g. BTC-USDT
     pub(crate) inst_id: String,
     /// Order ID to cancel
@@ -256,11 +256,11 @@ pub(crate) struct GetBalance;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetBalanceArgs {
     /// OKX API key
-    pub(crate) api_key: String,
+    pub(crate) api_key: Option<String>,
     /// OKX API secret key
-    pub(crate) secret_key: String,
+    pub(crate) secret_key: Option<String>,
     /// OKX API passphrase
-    pub(crate) passphrase: String,
+    pub(crate) passphrase: Option<String>,
     /// Optional comma-separated currency list, e.g. BTC,USDT
     pub(crate) ccy: Option<String>,
 }
@@ -271,11 +271,11 @@ pub(crate) struct GetPositions;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetPositionsArgs {
     /// OKX API key
-    pub(crate) api_key: String,
+    pub(crate) api_key: Option<String>,
     /// OKX API secret key
-    pub(crate) secret_key: String,
+    pub(crate) secret_key: Option<String>,
     /// OKX API passphrase
-    pub(crate) passphrase: String,
+    pub(crate) passphrase: Option<String>,
     /// Instrument type: SPOT, SWAP, FUTURES, OPTION (optional)
     pub(crate) inst_type: Option<String>,
     /// Instrument ID (optional)
@@ -288,11 +288,11 @@ pub(crate) struct SetLeverage;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct SetLeverageArgs {
     /// OKX API key
-    pub(crate) api_key: String,
+    pub(crate) api_key: Option<String>,
     /// OKX API secret key
-    pub(crate) secret_key: String,
+    pub(crate) secret_key: Option<String>,
     /// OKX API passphrase
-    pub(crate) passphrase: String,
+    pub(crate) passphrase: Option<String>,
     /// Instrument ID, e.g. BTC-USDT-SWAP
     pub(crate) inst_id: String,
     /// Leverage ratio, e.g. "10"

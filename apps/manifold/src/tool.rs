@@ -4,6 +4,14 @@ use aomi_sdk::*;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+fn resolve_manifold_api_key(api_key: Option<&str>) -> Result<String, String> {
+    resolve_secret_value(
+        api_key,
+        "MANIFOLD_API_KEY",
+        "[manifold] missing api_key argument and MANIFOLD_API_KEY environment variable",
+    )
+}
+
 // ============================================================================
 // ListMarkets
 // ============================================================================
@@ -206,7 +214,7 @@ pub(crate) struct PlaceBet;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct PlaceBetArgs {
     /// Manifold API key for authentication
-    api_key: String,
+    api_key: Option<String>,
     /// The contract/market ID to bet on
     contract_id: String,
     /// Amount of mana (M$) to bet
@@ -231,6 +239,7 @@ impl DynAomiTool for PlaceBet {
             return Err("amount must be greater than 0".to_string());
         }
 
+        let api_key = resolve_manifold_api_key(args.api_key.as_deref())?;
         let client = ManifoldClient::new()?;
         let body = json!({
             "contractId": args.contract_id,
@@ -238,7 +247,7 @@ impl DynAomiTool for PlaceBet {
             "outcome": outcome,
         });
 
-        let result = client.post("/bet", &args.api_key, &body, "place_bet")?;
+        let result = client.post("/bet", &api_key, &body, "place_bet")?;
 
         Ok(json!({
             "status": "success",
@@ -260,7 +269,7 @@ pub(crate) struct CreateMarket;
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct CreateMarketArgs {
     /// Manifold API key for authentication
-    api_key: String,
+    api_key: Option<String>,
     /// The question for the market (e.g., "Will X happen by Y date?")
     question: String,
     /// Market type (use "BINARY" for yes/no markets)
@@ -287,6 +296,7 @@ impl DynAomiTool for CreateMarket {
             return Err("initial_prob must be between 1 and 99".to_string());
         }
 
+        let api_key = resolve_manifold_api_key(args.api_key.as_deref())?;
         let client = ManifoldClient::new()?;
         let mut body = json!({
             "outcomeType": market_type,
@@ -298,7 +308,7 @@ impl DynAomiTool for CreateMarket {
             body["closeTime"] = json!(close_time);
         }
 
-        let result = client.post("/market", &args.api_key, &body, "create_market")?;
+        let result = client.post("/market", &api_key, &body, "create_market")?;
 
         Ok(json!({
             "status": "created",

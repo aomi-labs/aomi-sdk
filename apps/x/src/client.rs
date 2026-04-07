@@ -23,9 +23,12 @@ pub(crate) struct XClient {
 }
 
 impl XClient {
-    pub(crate) fn new() -> Result<Self, String> {
-        let api_key = std::env::var("X_API_KEY")
-            .map_err(|_| "X_API_KEY environment variable not set".to_string())?;
+    pub(crate) fn new(api_key: Option<&str>) -> Result<Self, String> {
+        let api_key = resolve_secret_value(
+            api_key,
+            "X_API_KEY",
+            "[x] missing api_key argument and X_API_KEY environment variable",
+        )?;
         let http = reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs(30))
             .build()
@@ -311,6 +314,9 @@ pub(crate) struct GetXUser;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub(crate) struct GetXUserArgs {
+    /// Optional X API key. Falls back to X_API_KEY when omitted.
+    #[serde(default)]
+    pub(crate) api_key: Option<String>,
     /// X username without the @ symbol (e.g., 'elonmusk')
     pub(crate) username: String,
 }
