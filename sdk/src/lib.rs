@@ -66,7 +66,7 @@
 //! crate-type = ["cdylib"]
 //!
 //! [dependencies]
-//! aomi-sdk = "0.1"
+//! aomi-sdk = "^0.1.13"
 //! schemars = "1"
 //! serde = { version = "1", features = ["derive"] }
 //! serde_json = "1"

@@ -48,6 +48,10 @@ jobs:
       - name: Test SDK
         run: cargo test -p aomi-sdk
 
+      - name: Dry-run SDK publish
+        if: steps.sdk-version.outputs.publish_sdk == 'true'
+        run: cargo publish -p aomi-sdk --dry-run
+
       - name: Detect changed apps
         id: changed-apps
         run: |
