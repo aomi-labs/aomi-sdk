@@ -30,14 +30,18 @@ Today is {} ({}). Use this exact date when interpreting relative terms like 'tod
 ## Trading Flow
 1. resolve_polymarket_trade_intent — match request to candidate markets; if ambiguous, ask user to pick
 2. build_polymarket_order_preview — resolve token_id/price/size; show preview, require confirmation
-3. get_polymarket_clob_signature — build ClobAuth EIP-712 typed data and send it to the wallet for signing
-4. ensure_polymarket_clob_credentials — pass exact same address/timestamp/nonce + signature from step 3; returns api_key/secret/passphrase
+3. get_polymarket_clob_signature — returns SYSTEM_NEXT_ACTION for the wallet ClobAuth EIP-712 signature flow
+4. ensure_polymarket_clob_credentials — use the exact address/timestamp/nonce from step 3 plus the wallet callback signature; returns clob_auth credentials
 5. place_polymarket_order — submit with clob_auth credentials; requires confirmation='confirm'
 
 ## Guidelines
 - Never skip the preview step or place orders without explicit user confirmation
-- If step 3 returns PendingApproval, wait for wallet signature before calling step 4
+- When a tool returns SYSTEM_NEXT_ACTION, follow those exact steps and preserve args exactly
+- get_polymarket_clob_signature already returns the wallet step and the follow-up args template; do not rebuild them manually
 - L1 auth values (address, timestamp, nonce) in step 4 must be identical to what was signed in step 3
+- Pass the returned clob_auth object from step 4 directly into place_polymarket_order
+- The order signature and the CLOB L1 auth signature are different signatures for different payloads; never reuse the order signature as POLY_SIGNATURE for /auth/derive-api-key
+- The CLOB L1 auth signature must be created with a fresh current/server timestamp, then reused unchanged only for the immediate create/derive call
 - You have tool access to Polymarket CLOB HTTP APIs; never claim clob.polymarket.com is inaccessible
 
 ## Account Context
@@ -277,9 +281,14 @@ impl PolymarketClient {
             return Err("order payload cannot be empty".to_string());
         }
 
+        let order_signature = request.signature.clone();
+
         let mut body = Map::new();
         body.insert("owner".to_string(), Value::String(owner.clone()));
-        body.insert("signature".to_string(), Value::String(request.signature));
+        body.insert(
+            "signature".to_string(),
+            Value::String(order_signature.clone()),
+        );
         body.insert("order".to_string(), Value::Object(order_obj.clone()));
 
         if let Some(client_id) = request.client_id {
@@ -312,6 +321,7 @@ impl PolymarketClient {
                     let l1_auth = auth_bundle.l1_auth.as_ref().ok_or(
                         "CLOB credentials are missing and no L1 auth payload was provided for create/derive.",
                     )?;
+                    self.validate_l1_auth_for_bootstrap(l1_auth, &order_signature)?;
                     self.create_or_derive_api_credentials(l1_auth)?
                 }
                 None => {
@@ -441,6 +451,11 @@ impl PolymarketClient {
         let status = response.status();
         let body = response.text().unwrap_or_default();
         if !status.is_success() {
+            if body.to_ascii_lowercase().contains("invalid signature") {
+                return Err(format!(
+                    "{operation} request failed with status {status}: {body}. Polymarket rejected the CLOB L1 auth signature. Common causes: reusing the order signature instead of a dedicated ClobAuth EIP-712 signature, signing ClobAuth with a stale/non-current timestamp, or signing the wrong address/timestamp/nonce/message."
+                ));
+            }
             return Err(format!(
                 "{operation} request failed with status {status}: {body}"
             ));
@@ -490,6 +505,42 @@ impl PolymarketClient {
         if creds.passphrase.trim().is_empty() {
             return Err("CLOB passphrase is empty".to_string());
         }
+        Ok(())
+    }
+
+    pub(crate) fn validate_l1_auth_for_bootstrap(
+        &self,
+        l1_auth: &ClobL1Auth,
+        order_signature: &str,
+    ) -> Result<(), String> {
+        if !l1_auth.address.starts_with("0x") || l1_auth.address.len() != 42 {
+            return Err("CLOB L1 auth address must be a 0x-prefixed address".to_string());
+        }
+        if !l1_auth.signature.starts_with("0x") {
+            return Err("CLOB L1 auth signature must be a 0x-prefixed hex string".to_string());
+        }
+        if l1_auth.signature.eq_ignore_ascii_case(order_signature) {
+            return Err("CLOB L1 auth signature cannot reuse the signed order signature. Sign the ClobAuth EIP-712 payload from get_polymarket_clob_signature, then pass that wallet signature to ensure_polymarket_clob_credentials or clob_auth.l1_auth.".to_string());
+        }
+        if !l1_auth.timestamp.chars().all(|c| c.is_ascii_digit()) {
+            return Err("CLOB L1 auth timestamp must be a Unix-seconds numeric string".to_string());
+        }
+
+        let timestamp = l1_auth
+            .timestamp
+            .parse::<u64>()
+            .map_err(|_| "CLOB L1 auth timestamp must fit in u64".to_string())?;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(timestamp);
+        let skew = now.abs_diff(timestamp);
+        if skew > 86_400 {
+            return Err(format!(
+                "CLOB L1 auth timestamp is stale or far in the future ({timestamp}). Rebuild the ClobAuth payload with a fresh current/server timestamp, re-sign it, and retry."
+            ));
+        }
+
         Ok(())
     }
 
@@ -1275,5 +1326,48 @@ mod tests {
             .expect("request path extraction should succeed");
 
         assert_eq!(path, "/order");
+    }
+
+    #[test]
+    fn rejects_reusing_order_signature_for_clob_l1_auth() {
+        let client = PolymarketClient::new().expect("client should build");
+        let shared_signature = "0x4f5ebd67f345143fe72b896c26bc11cc69c44fc8e75f2c4bfa2aa6b51316cf84552633fe49c00e9e43bd3d16d1a7c993095f0f7c8d35e04e72993f2d93c122741c";
+        let err = client
+            .validate_l1_auth_for_bootstrap(
+                &ClobL1Auth {
+                    address: "0x5D907BEa404e6F821d467314a9cA07663CF64c9B".to_string(),
+                    signature: shared_signature.to_string(),
+                    timestamp: PolymarketClient::now_unix_timestamp(),
+                    nonce: Some("0".to_string()),
+                },
+                shared_signature,
+            )
+            .expect_err("should reject reused signature");
+
+        assert!(
+            err.contains("cannot reuse the signed order signature"),
+            "unexpected error: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_stale_clob_l1_timestamp() {
+        let client = PolymarketClient::new().expect("client should build");
+        let err = client
+            .validate_l1_auth_for_bootstrap(
+                &ClobL1Auth {
+                    address: "0x5D907BEa404e6F821d467314a9cA07663CF64c9B".to_string(),
+                    signature: "0xdeadbeef".to_string(),
+                    timestamp: "1744329600".to_string(),
+                    nonce: Some("0".to_string()),
+                },
+                "0xbeadfeed",
+            )
+            .expect_err("should reject stale timestamp");
+
+        assert!(
+            err.contains("fresh current/server timestamp"),
+            "unexpected error: {err}"
+        );
     }
 }

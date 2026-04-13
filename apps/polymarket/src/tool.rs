@@ -1,9 +1,69 @@
 use crate::client::*;
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+const SYSTEM_NEXT_ACTION_KEY: &str = "SYSTEM_NEXT_ACTION";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+enum NextAction {
+    ToolCalls(Vec<NextActionTool>),
+    #[allow(dead_code)]
+    Instructions(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct NextActionTool {
+    name: String,
+    reason: String,
+    args: Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    condition: Option<String>,
+}
+
+fn build_polymarket_wallet_result(
+    source: &str,
+    wallet_tool: &str,
+    wallet_request: Value,
+    follow_up_step: &str,
+    follow_up_args_template: Value,
+    follow_up_reason: &str,
+) -> Result<Value, String> {
+    let tool_calls = vec![
+        NextActionTool {
+            name: wallet_tool.to_string(),
+            reason: "REQUIRED: Call this tool with these exact args. Do NOT skip or assume it was already sent.".to_string(),
+            args: wallet_request.clone(),
+            condition: None,
+        },
+        NextActionTool {
+            name: follow_up_step.to_string(),
+            reason: follow_up_reason.to_string(),
+            args: follow_up_args_template,
+            condition: Some(
+                "After wallet callback reports signature success; include signature from callback."
+                    .to_string(),
+            ),
+        },
+    ];
+
+    let action_value = serde_json::to_value(NextAction::ToolCalls(tool_calls))
+        .map_err(|e| format!("Failed to serialize SYSTEM_NEXT_ACTION: {e}"))?;
+
+    let mut result = json!({
+        "source": source,
+        "wallet_request": wallet_request,
+    });
+    let obj = result
+        .as_object_mut()
+        .ok_or_else(|| "result is not an object".to_string())?;
+    obj.insert(SYSTEM_NEXT_ACTION_KEY.to_string(), action_value);
+
+    Ok(result)
+}
 
 impl DynAomiTool for SearchPolymarket {
     type App = PolymarketApp;
@@ -390,7 +450,7 @@ impl DynAomiTool for BuildPolymarketOrderPreview {
             "requires_user_confirmation": true,
             "confirmation_phrase": "confirm",
             "warnings": warnings,
-            "next_step_hint": "After user confirms, construct/sign the final order and call place_polymarket_order.",
+            "next_step_hint": "After user confirms, obtain the order signature, run get_polymarket_clob_signature, follow its SYSTEM_NEXT_ACTION, then call place_polymarket_order with the returned clob_auth.",
         }))
     }
 }
@@ -415,7 +475,7 @@ impl DynAomiTool for GetPolymarketClobSignature {
     type App = PolymarketApp;
     type Args = GetPolymarketClobSignatureArgs;
     const NAME: &'static str = "get_polymarket_clob_signature";
-    const DESCRIPTION: &'static str = "Build the canonical Polymarket ClobAuth EIP-712 typed data payload. Returns address, timestamp, nonce, and the full EIP-712 typed_data JSON. The host should then use `send_eip712_to_wallet` to request a signature, and pass that signature to ensure_polymarket_clob_credentials.";
+    const DESCRIPTION: &'static str = "Build the Polymarket ClobAuth EIP-712 payload and return the exact runtime wallet action plus follow-up step for ensure_polymarket_clob_credentials.";
 
     fn run(_app: &PolymarketApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
         let address = ctx
@@ -479,14 +539,44 @@ impl DynAomiTool for GetPolymarketClobSignature {
             }
         });
 
-        Ok(json!({
-            "address": typed_data["message"]["address"],
-            "timestamp": typed_data["message"]["timestamp"],
-            "nonce": nonce,
-            "typed_data": typed_data,
-            "description": "Polymarket CLOB auth (L1): sign to create/derive API credentials",
-            "next_step": "Use the host's send_eip712_to_wallet tool to send typed_data to the wallet. After signature is produced, call ensure_polymarket_clob_credentials with the exact same address/timestamp/nonce and returned signature."
-        }))
+        let description = "Polymarket CLOB auth (L1): sign to create/derive API credentials";
+        let wallet_request = json!({
+            "typed_data": typed_data.clone(),
+            "description": description,
+        });
+
+        let mut result = build_polymarket_wallet_result(
+            "polymarket",
+            "send_eip712_to_wallet",
+            wallet_request,
+            "ensure_polymarket_clob_credentials",
+            json!({
+                "address": typed_data["message"]["address"],
+                "timestamp": typed_data["message"]["timestamp"],
+                "nonce": nonce.clone(),
+            }),
+            "Derive or create Polymarket CLOB credentials using the returned wallet signature.",
+        )?;
+
+        let obj = result
+            .as_object_mut()
+            .ok_or_else(|| "result is not an object".to_string())?;
+        obj.insert(
+            "address".to_string(),
+            typed_data["message"]["address"].clone(),
+        );
+        obj.insert(
+            "timestamp".to_string(),
+            typed_data["message"]["timestamp"].clone(),
+        );
+        obj.insert("nonce".to_string(), Value::String(nonce));
+        obj.insert("typed_data".to_string(), typed_data);
+        obj.insert(
+            "description".to_string(),
+            Value::String(description.to_string()),
+        );
+
+        Ok(result)
     }
 }
 
@@ -512,7 +602,7 @@ impl DynAomiTool for EnsurePolymarketClobCredentials {
     type App = PolymarketApp;
     type Args = EnsurePolymarketClobCredentialsArgs;
     const NAME: &'static str = "ensure_polymarket_clob_credentials";
-    const DESCRIPTION: &'static str = "Create or derive Polymarket CLOB API credentials (key, secret, passphrase) from L1 auth headers. Requires address/signature/timestamp from the EIP-712 signing step (get_polymarket_clob_signature + send_eip712_to_wallet).";
+    const DESCRIPTION: &'static str = "Create or derive Polymarket CLOB API credentials from the ClobAuth signature flow. Returns a clob_auth bundle ready for place_polymarket_order.";
 
     fn run(_app: &PolymarketApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let l1_auth = ClobL1Auth {
@@ -524,11 +614,20 @@ impl DynAomiTool for EnsurePolymarketClobCredentials {
 
         let client = PolymarketClient::new()?;
         let creds = client.create_or_derive_api_credentials(&l1_auth)?;
+        let api_key = creds.key;
+        let api_secret = creds.secret;
+        let passphrase = creds.passphrase;
 
         Ok(json!({
-            "api_key": creds.key,
-            "api_secret": creds.secret,
-            "passphrase": creds.passphrase,
+            "api_key": api_key.clone(),
+            "api_secret": api_secret.clone(),
+            "passphrase": passphrase.clone(),
+            "clob_auth": {
+                "api_key": api_key,
+                "api_secret": api_secret,
+                "passphrase": passphrase,
+            },
+            "next_step_hint": "Pass clob_auth directly into place_polymarket_order. Do not reuse the L1 auth signature as the order signature.",
         }))
     }
 }
@@ -601,7 +700,7 @@ impl DynAomiTool for PlacePolymarketOrder {
     type App = PolymarketApp;
     type Args = PlacePolymarketOrderArgs;
     const NAME: &'static str = "place_polymarket_order";
-    const DESCRIPTION: &'static str = "Submit a signed Polymarket order to the CLOB API. Provide the wallet address that signed, the 0x signature string, and the order JSON. Requires confirmation='confirm'.";
+    const DESCRIPTION: &'static str = "Submit a signed Polymarket order to the CLOB API. Provide the order signature at top level and prefer clob_auth api_key/api_secret/passphrase from ensure_polymarket_clob_credentials. Requires confirmation='confirm'.";
 
     fn run(_app: &PolymarketApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         validate_confirmation_token(args.confirmation.as_deref())?;
