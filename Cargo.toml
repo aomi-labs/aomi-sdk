@@ -36,6 +36,7 @@ exclude = [
     "apps/social",
     "apps/test-dyn",
     "apps/x",
+    "apps/pelagos",
     "apps/yearn",
     "apps/zerox",
 ]
