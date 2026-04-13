@@ -76,7 +76,3 @@ dyn_aomi_app!(
     // This gives ZeroX app access to onchain EVM tools in addition to ZeroX APIs
     namespaces = ["common"]
 );
-
-
-
-

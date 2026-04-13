@@ -190,7 +190,7 @@ pub(crate) fn extract_size_usd(raw_input: &str) -> Option<f64> {
         for ch in slice.chars() {
             if ch.is_ascii_digit() || ch == '.' {
                 number.push(ch);
-            } else {zx
+            } else {
                 break;
             }
         }
