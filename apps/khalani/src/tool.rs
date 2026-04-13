@@ -15,17 +15,21 @@ impl DynAomiTool for GetKhalaniQuote {
     fn run(_app: &Self::App, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = KhalaniClient::new()?;
         let sender_address = resolve_sender_address(&ctx, args.sender_address.as_deref())?;
-        let to_chain = args
+        let destination_chain = args
             .destination_chain
             .clone()
             .unwrap_or_else(|| args.chain.clone());
-        let amount_base_units = quote_amount_base_units(&args.sell_token, args.amount)?;
+        let from_chain_id = resolve_chain_id(&args.chain)?;
+        let to_chain_id = resolve_chain_id(&destination_chain)?;
+        let sell_token = client.resolve_token(&args.sell_token, from_chain_id)?;
+        let buy_token = client.resolve_token(&args.buy_token, to_chain_id)?;
+        let amount_base_units = amount_to_base_units(args.amount, sell_token.decimals)?;
 
         client.get_quote(
-            &args.chain,
-            &to_chain,
-            &args.sell_token,
-            &args.buy_token,
+            from_chain_id,
+            to_chain_id,
+            &sell_token.address,
+            &buy_token.address,
             &amount_base_units,
             &sender_address,
             args.receiver_address.as_deref(),
@@ -70,18 +74,22 @@ impl DynAomiTool for BuildKhalaniOrder {
     fn run(_app: &Self::App, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = KhalaniClient::new()?;
         let sender_address = resolve_sender_address(&ctx, args.sender_address.as_deref())?;
-        let to_chain = args
+        let destination_chain = args
             .destination_chain
             .clone()
             .unwrap_or_else(|| args.chain.clone());
-        let amount_base_units = quote_amount_base_units(&args.sell_token, args.amount)?;
+        let from_chain_id = resolve_chain_id(&args.chain)?;
+        let to_chain_id = resolve_chain_id(&destination_chain)?;
+        let sell_token = client.resolve_token(&args.sell_token, from_chain_id)?;
+        let buy_token = client.resolve_token(&args.buy_token, to_chain_id)?;
+        let amount_base_units = amount_to_base_units(args.amount, sell_token.decimals)?;
 
         // Step 1: Get a fresh quote
         let quote = client.get_quote(
-            &args.chain,
-            &to_chain,
-            &args.sell_token,
-            &args.buy_token,
+            from_chain_id,
+            to_chain_id,
+            &sell_token.address,
+            &buy_token.address,
             &amount_base_units,
             &sender_address,
             args.receiver_address.as_deref(),
@@ -101,6 +109,11 @@ impl DynAomiTool for BuildKhalaniOrder {
         let mut build_payloads: Vec<Value> = Vec::new();
 
         if let Some(ref rid) = route_id {
+            build_payloads.push(json!({
+                "from": &sender_address,
+                "quoteId": &quote_id,
+                "routeId": rid,
+            }));
             for addr_key in ["from", "fromAddress", "userAddress"] {
                 let mut payload = json!({
                     addr_key: &sender_address,
@@ -359,6 +372,8 @@ impl DynAomiTool for SubmitKhalaniOrder {
 pub(crate) struct GetKhalaniOrderStatusArgs {
     /// Khalani order ID.
     order_id: String,
+    /// Optional wallet address used for the documented orders lookup. Defaults to the connected wallet.
+    address: Option<String>,
 }
 
 pub(crate) struct GetKhalaniOrderStatus;
@@ -370,9 +385,22 @@ impl DynAomiTool for GetKhalaniOrderStatus {
     const NAME: &'static str = "get_khalani_order_status";
     const DESCRIPTION: &'static str = "Fetch a Khalani order by order_id.";
 
-    fn run(_app: &Self::App, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
+    fn run(_app: &Self::App, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = KhalaniClient::new()?;
-        client.get_order(&args.order_id)
+        let address = resolve_sender_address(&ctx, args.address.as_deref())?;
+        let value =
+            client.get_orders_by_address(&address, None, Some(1), Some(0), Some(&args.order_id))?;
+        let order = value
+            .get("data")
+            .and_then(Value::as_array)
+            .and_then(|items| items.first())
+            .cloned()
+            .ok_or_else(|| format!("No Khalani order found for order_id '{}'", args.order_id))?;
+
+        Ok(json!({
+            "source": "khalani",
+            "order": order,
+        }))
     }
 }
 
@@ -408,6 +436,7 @@ impl DynAomiTool for GetKhalaniOrdersByAddress {
             args.status.as_deref(),
             args.limit,
             args.offset,
+            None,
         )
     }
 }
