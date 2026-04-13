@@ -1,5 +1,6 @@
 use crate::client::{
-    PolymarketClient, build_polymarket_order_plan_from_market, submit_direct_order_plan,
+    BuildOrderPlanRequest, PolymarketClient, build_polymarket_order_plan_from_market,
+    submit_direct_order_plan,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -22,21 +23,21 @@ pub struct LiveTradeRequest {
 pub fn place_live_order(request: LiveTradeRequest) -> Result<Value, String> {
     let client = PolymarketClient::new()?;
     let market = client.get_market(&request.market_id_or_slug)?;
-    let order_plan = build_polymarket_order_plan_from_market(
-        &market,
-        &request.market_id_or_slug,
-        &request.outcome,
-        request.side.as_deref(),
-        request.size_usd,
-        request.shares,
-        request.limit_price,
-        request.order_type.as_deref(),
-        request.post_only,
-        request.signature_type.as_deref(),
-        request.funder.as_deref(),
-        "DIRECT_SDK",
-        None,
-    )?;
+    let order_plan = build_polymarket_order_plan_from_market(BuildOrderPlanRequest {
+        market: &market,
+        market_id_or_slug: &request.market_id_or_slug,
+        outcome: &request.outcome,
+        side: request.side.as_deref(),
+        size_usd: request.size_usd,
+        shares: request.shares,
+        limit_price: request.limit_price,
+        order_type: request.order_type.as_deref(),
+        post_only: request.post_only,
+        signature_type: request.signature_type.as_deref(),
+        funder: request.funder.as_deref(),
+        execution_mode: "DIRECT_SDK",
+        wallet_address: None,
+    })?;
 
     submit_direct_order_plan(&order_plan, request.private_key.as_deref())
 }

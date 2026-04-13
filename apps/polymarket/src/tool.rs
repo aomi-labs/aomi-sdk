@@ -423,21 +423,21 @@ impl DynAomiTool for BuildPolymarketOrder {
             }
         }
 
-        let plan = build_polymarket_order_plan_from_market(
-            &market,
-            &args.market_id_or_slug,
-            &args.outcome,
-            args.side.as_deref(),
-            args.size_usd,
-            args.shares,
-            args.limit_price,
-            args.order_type.as_deref(),
-            args.post_only,
-            args.signature_type.as_deref(),
-            args.funder.as_deref(),
-            &execution_mode,
-            wallet_address.as_deref(),
-        )?;
+        let plan = build_polymarket_order_plan_from_market(BuildOrderPlanRequest {
+            market: &market,
+            market_id_or_slug: &args.market_id_or_slug,
+            outcome: &args.outcome,
+            side: args.side.as_deref(),
+            size_usd: args.size_usd,
+            shares: args.shares,
+            limit_price: args.limit_price,
+            order_type: args.order_type.as_deref(),
+            post_only: args.post_only,
+            signature_type: args.signature_type.as_deref(),
+            funder: args.funder.as_deref(),
+            execution_mode: &execution_mode,
+            wallet_address: wallet_address.as_deref(),
+        })?;
 
         let (yes_price, no_price) = extract_yes_no_prices(&market);
         let mut result = json!({

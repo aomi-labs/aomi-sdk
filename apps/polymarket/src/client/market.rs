@@ -2,6 +2,8 @@ use crate::client::{Market, TOKIO_RT};
 use serde_json::{Value, json};
 use std::collections::HashMap;
 
+pub(crate) type FetchedOutcomeTokenIds = (Option<String>, Option<String>, Option<Value>);
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum MarketLookupTarget {
     MarketId(String),
@@ -224,7 +226,7 @@ pub(crate) fn parse_tokens_array(value: &Value) -> (Option<String>, Option<Strin
 
 pub(crate) fn fetch_clob_outcome_token_ids(
     condition_id: &str,
-) -> Result<(Option<String>, Option<String>, Option<Value>), String> {
+) -> Result<FetchedOutcomeTokenIds, String> {
     let market = TOKIO_RT
         .block_on(polymarket_client_sdk::clob::Client::default().market(condition_id))
         .map_err(|e| format!("failed to fetch CLOB market for {condition_id}: {e}"))?;

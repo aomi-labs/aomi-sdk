@@ -5,6 +5,9 @@ use crate::client::{
     PreparedPolymarketOrder, SdkAuthedClobClient, TOKIO_RT, extract_outcome_token_ids,
     extract_yes_no_prices, fetch_clob_outcome_token_ids, normalize_side, normalize_yes_no,
 };
+use alloy::signers::{
+    Error as AlloySignerError, UnsupportedSignerOperation, local::PrivateKeySigner,
+};
 use async_trait::async_trait;
 use polymarket_client_sdk::{
     POLYGON, PRIVATE_KEY_VAR,
@@ -25,7 +28,7 @@ const EXCHANGE_EIP712_VERSION: &str = "1";
 const CLOB_AUTH_EIP712_NAME: &str = "ClobAuthDomain";
 const CLOB_AUTH_EIP712_VERSION: &str = "1";
 
-type RuntimeSigner = LocalSigner<alloy_signer::k256::ecdsa::SigningKey>;
+type RuntimeSigner = PrivateKeySigner;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ExecutionTarget {
@@ -75,6 +78,23 @@ struct OrderPlanBuilder<'a> {
 }
 
 #[derive(Debug, Clone)]
+pub(crate) struct BuildOrderPlanRequest<'a> {
+    pub(crate) market: &'a Market,
+    pub(crate) market_id_or_slug: &'a str,
+    pub(crate) outcome: &'a str,
+    pub(crate) side: Option<&'a str>,
+    pub(crate) size_usd: Option<f64>,
+    pub(crate) shares: Option<f64>,
+    pub(crate) limit_price: Option<f64>,
+    pub(crate) order_type: Option<&'a str>,
+    pub(crate) post_only: Option<bool>,
+    pub(crate) signature_type: Option<&'a str>,
+    pub(crate) funder: Option<&'a str>,
+    pub(crate) execution_mode: &'a str,
+    pub(crate) wallet_address: Option<&'a str>,
+}
+
+#[derive(Debug, Clone)]
 struct OrderPreviewNumbers {
     amount: Option<Decimal>,
     amount_kind: Option<&'static str>,
@@ -113,9 +133,9 @@ impl AddressOnlySigner {
 
 #[async_trait]
 impl SdkSigner for AddressOnlySigner {
-    async fn sign_hash(&self, _hash: &B256) -> alloy_signer::Result<Signature> {
-        Err(alloy_signer::Error::UnsupportedOperation(
-            alloy_signer::UnsupportedSignerOperation::SignHash,
+    async fn sign_hash(&self, _hash: &B256) -> Result<Signature, AlloySignerError> {
+        Err(AlloySignerError::UnsupportedOperation(
+            UnsupportedSignerOperation::SignHash,
         ))
     }
 
@@ -379,22 +399,7 @@ impl DirectOrderExecutor {
             .block_on(self.client.post_order(signed_order))
             .map_err(|e| format!("failed to submit Polymarket order: {e}"))?;
 
-        Ok(format_sdk_submit_result(
-            "DIRECT_SDK",
-            plan,
-            response.order_id,
-            response.success,
-            response.status.to_string(),
-            response.error_msg,
-            response.making_amount.to_string(),
-            response.taking_amount.to_string(),
-            response
-                .transaction_hashes
-                .into_iter()
-                .map(|hash| hash.to_string())
-                .collect(),
-            response.trade_ids,
-        ))
+        Ok(format_sdk_submit_result("DIRECT_SDK", plan, response))
     }
 }
 
@@ -449,40 +454,28 @@ pub(crate) fn determine_polymarket_execution(
 }
 
 pub(crate) fn build_polymarket_order_plan_from_market(
-    market: &Market,
-    market_id_or_slug: &str,
-    outcome: &str,
-    side: Option<&str>,
-    size_usd: Option<f64>,
-    shares: Option<f64>,
-    limit_price: Option<f64>,
-    order_type: Option<&str>,
-    post_only: Option<bool>,
-    signature_type: Option<&str>,
-    funder: Option<&str>,
-    execution_mode: &str,
-    wallet_address: Option<&str>,
+    request: BuildOrderPlanRequest<'_>,
 ) -> Result<PolymarketOrderPlan, String> {
-    let execution_target = match execution_mode {
+    let execution_target = match request.execution_mode {
         "DIRECT_SDK" => ExecutionTarget::DirectSdk,
         "WALLET" => ExecutionTarget::Wallet,
         other => return Err(format!("unsupported execution mode: {other}")),
     };
 
     OrderPlanBuilder {
-        market,
-        market_id_or_slug,
-        outcome,
-        side,
-        size_usd,
-        shares,
-        limit_price,
-        order_type,
-        post_only,
-        signature_type,
-        funder,
+        market: request.market,
+        market_id_or_slug: request.market_id_or_slug,
+        outcome: request.outcome,
+        side: request.side,
+        size_usd: request.size_usd,
+        shares: request.shares,
+        limit_price: request.limit_price,
+        order_type: request.order_type,
+        post_only: request.post_only,
+        signature_type: request.signature_type,
+        funder: request.funder,
         execution_target,
-        wallet_address,
+        wallet_address: request.wallet_address,
     }
     .build()
 }
@@ -961,26 +954,19 @@ pub(crate) fn build_signed_order_body(
 fn format_sdk_submit_result(
     execution_mode: &str,
     plan: &PolymarketOrderPlan,
-    order_id: String,
-    success: bool,
-    status: String,
-    error_msg: Option<String>,
-    making_amount: String,
-    taking_amount: String,
-    transaction_hashes: Vec<String>,
-    trade_ids: Vec<String>,
+    response: polymarket_client_sdk::clob::types::response::PostOrderResponse,
 ) -> Value {
     json!({
         "source": "polymarket",
         "execution_mode": execution_mode,
-        "submitted": success,
-        "order_id": order_id,
-        "status": status,
-        "error_msg": error_msg,
-        "making_amount": making_amount,
-        "taking_amount": taking_amount,
-        "transaction_hashes": transaction_hashes,
-        "trade_ids": trade_ids,
+        "submitted": response.success,
+        "order_id": response.order_id,
+        "status": response.status.to_string(),
+        "error_msg": response.error_msg,
+        "making_amount": response.making_amount.to_string(),
+        "taking_amount": response.taking_amount.to_string(),
+        "transaction_hashes": response.transaction_hashes.into_iter().map(|hash| hash.to_string()).collect::<Vec<_>>(),
+        "trade_ids": response.trade_ids,
         "order_plan": plan,
     })
 }
