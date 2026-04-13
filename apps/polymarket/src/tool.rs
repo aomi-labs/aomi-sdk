@@ -3,7 +3,6 @@ use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 const SYSTEM_NEXT_ACTION_KEY: &str = "SYSTEM_NEXT_ACTION";
 
@@ -24,13 +23,14 @@ struct NextActionTool {
     condition: Option<String>,
 }
 
-fn build_polymarket_wallet_result(
-    source: &str,
+fn build_polymarket_follow_up_result(
+    mut result: Value,
     wallet_tool: &str,
     wallet_request: Value,
     follow_up_step: &str,
     follow_up_args_template: Value,
     follow_up_reason: &str,
+    callback_field: &str,
 ) -> Result<Value, String> {
     let tool_calls = vec![
         NextActionTool {
@@ -44,8 +44,9 @@ fn build_polymarket_wallet_result(
             reason: follow_up_reason.to_string(),
             args: follow_up_args_template,
             condition: Some(
-                "After wallet callback reports signature success; include signature from callback."
-                    .to_string(),
+                format!(
+                    "After wallet callback reports signature success; include {callback_field} from callback."
+                ),
             ),
         },
     ];
@@ -53,16 +54,35 @@ fn build_polymarket_wallet_result(
     let action_value = serde_json::to_value(NextAction::ToolCalls(tool_calls))
         .map_err(|e| format!("Failed to serialize SYSTEM_NEXT_ACTION: {e}"))?;
 
-    let mut result = json!({
-        "source": source,
-        "wallet_request": wallet_request,
-    });
     let obj = result
         .as_object_mut()
         .ok_or_else(|| "result is not an object".to_string())?;
+    obj.insert("wallet_request".to_string(), wallet_request);
     obj.insert(SYSTEM_NEXT_ACTION_KEY.to_string(), action_value);
 
     Ok(result)
+}
+
+// ============================================================================
+// Tool 1: SearchPolymarket
+// ============================================================================
+
+pub(crate) struct SearchPolymarket;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct SearchPolymarketArgs {
+    /// Maximum number of markets to return (default: 100, max: 1000)
+    pub(crate) limit: Option<u32>,
+    /// Pagination offset (default: 0)
+    pub(crate) offset: Option<u32>,
+    /// Filter for active markets
+    pub(crate) active: Option<bool>,
+    /// Filter for closed markets
+    pub(crate) closed: Option<bool>,
+    /// Filter for archived markets
+    pub(crate) archived: Option<bool>,
+    /// Filter by tag/category (e.g., 'crypto', 'sports', 'politics')
+    pub(crate) tag: Option<String>,
 }
 
 impl DynAomiTool for SearchPolymarket {
@@ -132,15 +152,34 @@ impl DynAomiTool for GetPolymarketDetails {
     fn run(_app: &PolymarketApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = PolymarketClient::new()?;
         let market = client.get_market(&args.market_id_or_slug)?;
+        let (mut yes_token_id, mut no_token_id) = extract_outcome_token_ids(&market);
+        let mut tokens = market.extra.get("tokens").cloned();
+        if (yes_token_id.is_none() || no_token_id.is_none())
+            && let Some(condition_id) = market.condition_id.as_deref()
+            && let Ok((sdk_yes, sdk_no, sdk_tokens)) = fetch_clob_outcome_token_ids(condition_id)
+        {
+            if yes_token_id.is_none() {
+                yes_token_id = sdk_yes;
+            }
+            if no_token_id.is_none() {
+                no_token_id = sdk_no;
+            }
+            if tokens.is_none() {
+                tokens = sdk_tokens;
+            }
+        }
 
         Ok(json!({
             "id": market.id,
             "question": market.question,
             "slug": market.slug,
             "condition_id": market.condition_id,
+            "yes_token_id": yes_token_id,
+            "no_token_id": no_token_id,
             "description": market.description,
             "outcomes": market.outcomes,
             "outcome_prices": market.outcome_prices,
+            "tokens": tokens,
             "volume": market.volume,
             "volume_num": market.volume_num,
             "liquidity": market.liquidity,
@@ -320,112 +359,90 @@ impl DynAomiTool for ResolvePolymarketTradeIntent {
 }
 
 // ============================================================================
-// Tool 5: BuildPolymarketOrderPreview
+// Tool 5: BuildPolymarketOrder
 // ============================================================================
 
-pub(crate) struct BuildPolymarketOrderPreview;
+pub(crate) struct BuildPolymarketOrder;
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct BuildPolymarketOrderPreviewArgs {
-    /// Market id or slug selected by user (typically from resolve_polymarket_trade_intent candidates)
+pub(crate) struct BuildPolymarketOrderArgs {
+    /// Market id, slug, or condition id selected by the user.
     market_id_or_slug: String,
-    /// Desired outcome side: YES or NO
+    /// Desired outcome: YES or NO.
     outcome: String,
-    /// Optional side (default: BUY)
+    /// Optional side (default: BUY).
     side: Option<String>,
-    /// Optional notional in USD/USDC
+    /// Optional notional in USDC.
     size_usd: Option<f64>,
-    /// Optional explicit shares quantity
+    /// Optional explicit shares quantity.
     shares: Option<f64>,
-    /// Optional limit price in [0, 1]
+    /// Optional limit price in (0, 1]. If omitted, build a market order plan.
     limit_price: Option<f64>,
-    /// Optional order time in force (e.g., GTC, IOC)
-    time_in_force: Option<String>,
+    /// Optional order type. Limit: GTC/FOK/GTD/FAK. Market: FOK/FAK.
+    order_type: Option<String>,
+    /// Optional post-only flag for limit orders.
+    post_only: Option<bool>,
+    /// Optional signature type override: proxy, eoa, or gnosis-safe.
+    signature_type: Option<String>,
+    /// Optional Polymarket funder override.
+    funder: Option<String>,
+    /// Optional wallet address override for wallet-mode execution.
+    wallet_address: Option<String>,
 }
 
-impl DynAomiTool for BuildPolymarketOrderPreview {
+impl DynAomiTool for BuildPolymarketOrder {
     type App = PolymarketApp;
-    type Args = BuildPolymarketOrderPreviewArgs;
-    const NAME: &'static str = "build_polymarket_order_preview";
-    const DESCRIPTION: &'static str = "Build a deterministic order preview (token_id, side, price/size interpretation) and require explicit user confirmation before submission.";
+    type Args = BuildPolymarketOrderArgs;
+    const NAME: &'static str = "build_polymarket_order";
+    const DESCRIPTION: &'static str = "Build a canonical Polymarket order plan. Preferred behavior: return a preview plus submit_args_template. If wallet signing is required, also return SYSTEM_NEXT_ACTION with the exact signing step.";
 
-    fn run(_app: &PolymarketApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let size_mode = match (args.size_usd, args.shares) {
-            (Some(_), Some(_)) => {
-                return Err("Provide either size_usd or shares, not both.".to_string());
-            }
-            (None, None) => {
-                return Err("Missing order size. Provide either size_usd or shares.".to_string());
-            }
-            (Some(v), None) if v > 0.0 => ("usd", v),
-            (None, Some(v)) if v > 0.0 => ("shares", v),
-            _ => return Err("Size values must be positive numbers.".to_string()),
-        };
-
-        let side = normalize_side(args.side.as_deref())?;
-        let outcome = normalize_yes_no(&args.outcome)?;
-
-        if let Some(price) = args.limit_price
-            && (!(0.0..=1.0).contains(&price) || price == 0.0)
-        {
-            return Err("limit_price must be within (0, 1].".to_string());
-        }
+    fn run(_app: &PolymarketApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
+        let connected_wallet = args
+            .wallet_address
+            .clone()
+            .or_else(|| ctx.attribute_string(&["domain", "evm", "address"]));
+        let (execution_mode, wallet_address) =
+            determine_polymarket_execution(connected_wallet.as_deref())?;
 
         let client = PolymarketClient::new()?;
         let market = client.get_market(&args.market_id_or_slug)?;
+        let (mut yes_token_id, mut no_token_id) = extract_outcome_token_ids(&market);
+        let mut tokens = market.extra.get("tokens").cloned();
+        if (yes_token_id.is_none() || no_token_id.is_none())
+            && let Some(condition_id) = market.condition_id.as_deref()
+            && let Ok((sdk_yes, sdk_no, sdk_tokens)) = fetch_clob_outcome_token_ids(condition_id)
+        {
+            if yes_token_id.is_none() {
+                yes_token_id = sdk_yes;
+            }
+            if no_token_id.is_none() {
+                no_token_id = sdk_no;
+            }
+            if tokens.is_none() {
+                tokens = sdk_tokens;
+            }
+        }
+
+        let plan = build_polymarket_order_plan_from_market(
+            &market,
+            &args.market_id_or_slug,
+            &args.outcome,
+            args.side.as_deref(),
+            args.size_usd,
+            args.shares,
+            args.limit_price,
+            args.order_type.as_deref(),
+            args.post_only,
+            args.signature_type.as_deref(),
+            args.funder.as_deref(),
+            &execution_mode,
+            wallet_address.as_deref(),
+        )?;
 
         let (yes_price, no_price) = extract_yes_no_prices(&market);
-        let market_price = if outcome == "YES" {
-            yes_price
-        } else {
-            no_price
-        };
-        let execution_price = args.limit_price.or(market_price);
-
-        let (yes_token_id, no_token_id) = extract_outcome_token_ids(&market);
-        let token_id = if outcome == "YES" {
-            yes_token_id
-        } else {
-            no_token_id
-        };
-
-        if token_id.is_none() {
-            return Err(format!(
-                "Failed to resolve token_id for outcome {outcome} from market metadata."
-            ));
-        }
-
-        let estimated_shares = if size_mode.0 == "usd" {
-            execution_price.and_then(|px| {
-                if px > 0.0 {
-                    Some(size_mode.1 / px)
-                } else {
-                    None
-                }
-            })
-        } else {
-            Some(size_mode.1)
-        };
-
-        let mut warnings = Vec::<String>::new();
-        if market_price.is_none() {
-            warnings.push(
-                "Live outcome price unavailable from market metadata; provide explicit limit_price before submission."
-                    .to_string(),
-            );
-        }
-        if size_mode.0 == "usd" && execution_price.is_none() {
-            warnings.push(
-                "Unable to estimate shares because no reference price is available.".to_string(),
-            );
-        }
-        if size_mode.0 == "usd" && execution_price.is_some_and(|px| px <= 0.0) {
-            warnings.push(
-                "Unable to estimate shares because reference or limit price is zero.".to_string(),
-            );
-        }
-
-        Ok(json!({
+        let mut result = json!({
+            "source": "polymarket",
+            "execution_mode": plan.execution_mode,
             "market": {
                 "market_id": market.id,
                 "slug": market.slug,
@@ -434,324 +451,200 @@ impl DynAomiTool for BuildPolymarketOrderPreview {
                 "close_time": market.end_date,
                 "yes_price": yes_price,
                 "no_price": no_price,
+                "yes_token_id": yes_token_id,
+                "no_token_id": no_token_id,
+                "tokens": tokens,
             },
             "order_preview": {
-                "side": side,
-                "outcome": outcome,
-                "token_id": token_id,
-                "size_mode": size_mode.0,
-                "size_value": size_mode.1,
-                "limit_price": args.limit_price,
-                "reference_price": market_price,
-                "execution_price": execution_price,
-                "estimated_shares": estimated_shares,
-                "time_in_force": args.time_in_force,
+                "order_kind": plan.order_kind,
+                "side": plan.side,
+                "outcome": plan.outcome,
+                "token_id": plan.token_id,
+                "amount": plan.amount,
+                "amount_kind": plan.amount_kind,
+                "price": plan.price,
+                "size": plan.size,
+                "reference_price": plan.reference_price,
+                "estimated_shares": plan.estimated_shares,
+                "order_type": plan.order_type,
+                "post_only": plan.post_only,
             },
             "requires_user_confirmation": true,
             "confirmation_phrase": "confirm",
-            "warnings": warnings,
-            "next_step_hint": "After user confirms, obtain the order signature, run get_polymarket_clob_signature, follow its SYSTEM_NEXT_ACTION, then call place_polymarket_order with the returned clob_auth.",
-        }))
-    }
-}
+            "warnings": plan.warnings,
+            "submit_args_template": {
+                "confirmation": "confirm",
+                "order_plan": plan.clone(),
+            },
+            "next_step_hint": "After the user confirms, call submit_polymarket_order with submit_args_template unless SYSTEM_NEXT_ACTION already defines the next step.",
+        });
 
-// ============================================================================
-// Tool 6: GetPolymarketClobSignature
-// ============================================================================
-
-pub(crate) struct GetPolymarketClobSignature;
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct GetPolymarketClobSignatureArgs {
-    /// Optional override for Unix timestamp (seconds as string). If omitted, uses current UTC time.
-    timestamp: Option<String>,
-    /// Optional nonce for ClobAuth (default: "0")
-    nonce: Option<String>,
-    /// Optional override for the ClobAuth attestation message.
-    message: Option<String>,
-}
-
-impl DynAomiTool for GetPolymarketClobSignature {
-    type App = PolymarketApp;
-    type Args = GetPolymarketClobSignatureArgs;
-    const NAME: &'static str = "get_polymarket_clob_signature";
-    const DESCRIPTION: &'static str = "Build the Polymarket ClobAuth EIP-712 payload and return the exact runtime wallet action plus follow-up step for ensure_polymarket_clob_credentials.";
-
-    fn run(_app: &PolymarketApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
-        let address = ctx
-            .attribute_string(&["domain", "evm", "address"])
-            .ok_or_else(|| {
-                "No wallet connected. Ask the user to run /connect first.".to_string()
-            })?;
-
-        let timestamp = args
-            .timestamp
-            .filter(|v| !v.trim().is_empty())
-            .unwrap_or_else(|| {
-                SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map(|d| d.as_secs().to_string())
-                    .unwrap_or_else(|_| "0".to_string())
+        if plan.execution_mode == "WALLET" {
+            let clob_auth = build_clob_auth_context(
+                plan.wallet_address
+                    .as_deref()
+                    .ok_or_else(|| "wallet mode requires wallet_address".to_string())?,
+            );
+            let wallet_request = json!({
+                "typed_data": build_clob_auth_typed_data(&clob_auth),
+                "description": "Polymarket CLOB auth: sign to prepare order submission",
             });
+            let obj = result
+                .as_object_mut()
+                .ok_or_else(|| "result is not an object".to_string())?;
+            obj.insert(
+                "submit_args_template".to_string(),
+                json!({
+                    "confirmation": "confirm",
+                    "order_plan": plan.clone(),
+                    "clob_auth": clob_auth.clone(),
+                }),
+            );
 
-        if !timestamp.chars().all(|c| c.is_ascii_digit()) {
-            return Err("timestamp must be Unix seconds as a numeric string".to_string());
+            return build_polymarket_follow_up_result(
+                result,
+                "send_eip712_to_wallet",
+                wallet_request,
+                "submit_polymarket_order",
+                json!({
+                    "confirmation": "confirm",
+                    "order_plan": plan,
+                    "clob_auth": clob_auth,
+                }),
+                "Create or derive Polymarket credentials, build the exact order payload, and request the final order signature.",
+                "clob_l1_signature",
+            );
         }
-
-        let nonce = args
-            .nonce
-            .filter(|v| !v.trim().is_empty())
-            .unwrap_or_else(|| "0".to_string());
-        let nonce_u64: u64 = nonce
-            .parse()
-            .map_err(|_| "nonce must be an unsigned integer string".to_string())?;
-
-        let message = args
-            .message
-            .filter(|v| !v.trim().is_empty())
-            .unwrap_or_else(|| "This message attests that I control the given wallet".to_string());
-
-        let typed_data = json!({
-            "domain": {
-                "name": "ClobAuthDomain",
-                "version": "1",
-                "chainId": 137
-            },
-            "types": {
-                "EIP712Domain": [
-                    { "name": "name", "type": "string" },
-                    { "name": "version", "type": "string" },
-                    { "name": "chainId", "type": "uint256" }
-                ],
-                "ClobAuth": [
-                    { "name": "address", "type": "address" },
-                    { "name": "timestamp", "type": "string" },
-                    { "name": "nonce", "type": "uint256" },
-                    { "name": "message", "type": "string" }
-                ]
-            },
-            "primaryType": "ClobAuth",
-            "message": {
-                "address": address,
-                "timestamp": timestamp,
-                "nonce": nonce_u64,
-                "message": message
-            }
-        });
-
-        let description = "Polymarket CLOB auth (L1): sign to create/derive API credentials";
-        let wallet_request = json!({
-            "typed_data": typed_data.clone(),
-            "description": description,
-        });
-
-        let mut result = build_polymarket_wallet_result(
-            "polymarket",
-            "send_eip712_to_wallet",
-            wallet_request,
-            "ensure_polymarket_clob_credentials",
-            json!({
-                "address": typed_data["message"]["address"],
-                "timestamp": typed_data["message"]["timestamp"],
-                "nonce": nonce.clone(),
-            }),
-            "Derive or create Polymarket CLOB credentials using the returned wallet signature.",
-        )?;
-
-        let obj = result
-            .as_object_mut()
-            .ok_or_else(|| "result is not an object".to_string())?;
-        obj.insert(
-            "address".to_string(),
-            typed_data["message"]["address"].clone(),
-        );
-        obj.insert(
-            "timestamp".to_string(),
-            typed_data["message"]["timestamp"].clone(),
-        );
-        obj.insert("nonce".to_string(), Value::String(nonce));
-        obj.insert("typed_data".to_string(), typed_data);
-        obj.insert(
-            "description".to_string(),
-            Value::String(description.to_string()),
-        );
 
         Ok(result)
     }
 }
 
 // ============================================================================
-// Tool 7: EnsurePolymarketClobCredentials
+// Tool 6: SubmitPolymarketOrder
 // ============================================================================
 
-pub(crate) struct EnsurePolymarketClobCredentials;
+pub(crate) struct SubmitPolymarketOrder;
 
 #[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct EnsurePolymarketClobCredentialsArgs {
-    /// Wallet address used for CLOB L1 authentication (must match what was signed in get_polymarket_clob_signature)
-    address: String,
-    /// L1 signature from wallet for CLOB auth challenge (from send_eip712_to_wallet result)
-    signature: String,
-    /// Timestamp used in the L1 signature (must be identical to get_polymarket_clob_signature output)
-    timestamp: String,
-    /// Optional nonce for CLOB L1 auth (default: "0")
-    nonce: Option<String>,
-}
-
-impl DynAomiTool for EnsurePolymarketClobCredentials {
-    type App = PolymarketApp;
-    type Args = EnsurePolymarketClobCredentialsArgs;
-    const NAME: &'static str = "ensure_polymarket_clob_credentials";
-    const DESCRIPTION: &'static str = "Create or derive Polymarket CLOB API credentials from the ClobAuth signature flow. Returns a clob_auth bundle ready for place_polymarket_order.";
-
-    fn run(_app: &PolymarketApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let l1_auth = ClobL1Auth {
-            address: args.address,
-            signature: args.signature,
-            timestamp: args.timestamp,
-            nonce: args.nonce,
-        };
-
-        let client = PolymarketClient::new()?;
-        let creds = client.create_or_derive_api_credentials(&l1_auth)?;
-        let api_key = creds.key;
-        let api_secret = creds.secret;
-        let passphrase = creds.passphrase;
-
-        Ok(json!({
-            "api_key": api_key.clone(),
-            "api_secret": api_secret.clone(),
-            "passphrase": passphrase.clone(),
-            "clob_auth": {
-                "api_key": api_key,
-                "api_secret": api_secret,
-                "passphrase": passphrase,
-            },
-            "next_step_hint": "Pass clob_auth directly into place_polymarket_order. Do not reuse the L1 auth signature as the order signature.",
-        }))
-    }
-}
-
-// ============================================================================
-// Tool 8: PlacePolymarketOrder
-// ============================================================================
-
-pub(crate) struct PlacePolymarketOrder;
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct ClobAuthArgs {
-    /// Existing CLOB API key
-    api_key: Option<String>,
-    /// Existing CLOB API secret
-    api_secret: Option<String>,
-    /// Existing CLOB passphrase
-    passphrase: Option<String>,
-    /// L1 auth payload used to create/derive API creds when credentials are missing
-    l1_auth: Option<ClobL1AuthArgs>,
-    /// Optional precomputed L2 headers (if omitted, backend computes from secret)
-    l2_auth: Option<ClobL2AuthArgs>,
-    /// Auto bootstrap credentials when missing (default: true)
-    auto_create_or_derive: Option<bool>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct ClobL1AuthArgs {
-    /// Wallet address used for L1 auth
-    address: String,
-    /// L1 signature for CLOB auth
-    signature: String,
-    /// L1 timestamp used in signature
-    timestamp: String,
-    /// Optional L1 nonce (default: 0)
-    nonce: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct ClobL2AuthArgs {
-    /// Precomputed POLY_SIGNATURE
-    signature: Option<String>,
-    /// POLY_TIMESTAMP used in L2 signature
-    timestamp: Option<String>,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct PlacePolymarketOrderArgs {
-    /// Explicit user confirmation token; must be "confirm"
+pub(crate) struct SubmitPolymarketOrderArgs {
+    /// Explicit confirmation token; must be "confirm".
     confirmation: Option<String>,
-    /// Wallet address (0x-prefixed) that signed the order
-    owner: String,
-    /// 0x signature returned from the wallet
-    signature: String,
-    /// JSON object describing the order payload per Polymarket docs
-    order: Value,
-    /// Optional client order id for idempotency
-    client_id: Option<String>,
-    /// Optional override URL for the orders endpoint
-    endpoint: Option<String>,
-    /// Optional API key value inserted as X-API-KEY
-    api_key: Option<String>,
-    /// Optional CLOB auth bundle for L2 headers and automatic create/derive bootstrap via L1 auth
-    clob_auth: Option<ClobAuthArgs>,
-    /// Optional JSON object with additional top-level fields to merge into the request
-    extra_fields: Option<Value>,
+    /// Canonical order plan returned by build_polymarket_order.
+    order_plan: PolymarketOrderPlan,
+    /// Optional override private key for direct SDK execution.
+    private_key: Option<String>,
+    /// Wallet-mode CLOB auth context returned by build_polymarket_order.
+    clob_auth: Option<ClobAuthContext>,
+    /// Wallet signature for the ClobAuth EIP-712 payload.
+    clob_l1_signature: Option<String>,
+    /// Prepared exact order returned by a previous submit_polymarket_order wallet stage.
+    prepared_order: Option<PreparedPolymarketOrder>,
+    /// Wallet signature for the final Polymarket order EIP-712 payload.
+    order_signature: Option<String>,
 }
 
-impl DynAomiTool for PlacePolymarketOrder {
+impl DynAomiTool for SubmitPolymarketOrder {
     type App = PolymarketApp;
-    type Args = PlacePolymarketOrderArgs;
-    const NAME: &'static str = "place_polymarket_order";
-    const DESCRIPTION: &'static str = "Submit a signed Polymarket order to the CLOB API. Provide the order signature at top level and prefer clob_auth api_key/api_secret/passphrase from ensure_polymarket_clob_credentials. Requires confirmation='confirm'.";
+    type Args = SubmitPolymarketOrderArgs;
+    const NAME: &'static str = "submit_polymarket_order";
+    const DESCRIPTION: &'static str = "Execute a canonical Polymarket order plan. Direct mode submits through the official SDK. Wallet mode returns the exact next signing step or submits the final wallet-signed order.";
 
     fn run(_app: &PolymarketApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         validate_confirmation_token(args.confirmation.as_deref())?;
 
-        let clob_auth = args.clob_auth.map(|auth| {
-            let has_any_creds =
-                auth.api_key.is_some() || auth.api_secret.is_some() || auth.passphrase.is_some();
-            let credentials = if has_any_creds {
-                Some(ClobApiCredentials {
-                    key: auth.api_key.unwrap_or_default(),
-                    secret: auth.api_secret.unwrap_or_default(),
-                    passphrase: auth.passphrase.unwrap_or_default(),
-                })
-            } else {
-                None
-            };
+        if args.order_plan.execution_mode == "DIRECT_SDK" {
+            return submit_direct_order_plan(&args.order_plan, args.private_key.as_deref());
+        }
 
-            ClobAuthBundle {
-                credentials,
-                l1_auth: auth.l1_auth.map(|l1| ClobL1Auth {
-                    address: l1.address,
-                    signature: l1.signature,
-                    timestamp: l1.timestamp,
-                    nonce: l1.nonce,
-                }),
-                l2: auth.l2_auth.map(|l2| ClobL2Auth {
-                    signature: l2.signature,
-                    timestamp: l2.timestamp,
-                }),
-                auto_create_or_derive: auth.auto_create_or_derive,
+        let clob_auth = args.clob_auth.clone().ok_or_else(|| {
+            "wallet-mode submit requires clob_auth from build_polymarket_order".to_string()
+        })?;
+        let clob_l1_signature = args.clob_l1_signature.clone().ok_or_else(|| {
+            "wallet-mode submit requires clob_l1_signature from the ClobAuth wallet callback"
+                .to_string()
+        })?;
+
+        if let Some(prepared_order) = args.prepared_order.clone() {
+            if let Some(order_signature) = args.order_signature.as_deref() {
+                return submit_wallet_signed_order(
+                    &args.order_plan,
+                    &clob_auth,
+                    &clob_l1_signature,
+                    &prepared_order,
+                    order_signature,
+                );
             }
+
+            let result = json!({
+                "source": "polymarket",
+                "execution_mode": "WALLET",
+                "stage": "awaiting_order_signature",
+                "prepared_order": prepared_order,
+                "submit_args_template": {
+                    "confirmation": "confirm",
+                    "order_plan": args.order_plan.clone(),
+                    "clob_auth": clob_auth.clone(),
+                    "clob_l1_signature": clob_l1_signature.clone(),
+                    "prepared_order": prepared_order.clone(),
+                },
+            });
+            let wallet_request = json!({
+                "typed_data": build_order_typed_data(&prepared_order),
+                "description": build_prepared_order_description(&args.order_plan),
+            });
+            return build_polymarket_follow_up_result(
+                result,
+                "send_eip712_to_wallet",
+                wallet_request,
+                "submit_polymarket_order",
+                json!({
+                    "confirmation": "confirm",
+                    "order_plan": args.order_plan,
+                    "clob_auth": clob_auth,
+                    "clob_l1_signature": clob_l1_signature,
+                    "prepared_order": prepared_order,
+                }),
+                "Submit the exact prepared Polymarket order after the wallet signs it.",
+                "order_signature",
+            );
+        }
+
+        let (prepared_order, typed_data, funder_address) =
+            prepare_wallet_order_signature(&args.order_plan, &clob_auth, &clob_l1_signature)?;
+        let result = json!({
+            "source": "polymarket",
+            "execution_mode": "WALLET",
+            "stage": "awaiting_order_signature",
+            "funder_address": funder_address.map(|addr| addr.to_string()),
+            "prepared_order": prepared_order,
+            "submit_args_template": {
+                "confirmation": "confirm",
+                "order_plan": args.order_plan.clone(),
+                "clob_auth": clob_auth.clone(),
+                "clob_l1_signature": clob_l1_signature.clone(),
+                "prepared_order": prepared_order.clone(),
+            },
+        });
+        let wallet_request = json!({
+            "typed_data": typed_data,
+            "description": build_prepared_order_description(&args.order_plan),
         });
 
-        let order = match args.order {
-            Value::String(raw) => serde_json::from_str::<Value>(&raw)
-                .map_err(|e| format!("order must be valid JSON string: {e}"))?,
-            other => other,
-        };
-
-        let request = SubmitOrderRequest {
-            owner: args.owner,
-            signature: args.signature,
-            order,
-            client_id: args.client_id,
-            endpoint: args.endpoint,
-            api_key: args.api_key,
-            clob_auth,
-            extra_fields: args.extra_fields,
-        };
-
-        let client = PolymarketClient::new()?;
-        client.submit_order(request)
+        build_polymarket_follow_up_result(
+            result,
+            "send_eip712_to_wallet",
+            wallet_request,
+            "submit_polymarket_order",
+            json!({
+                "confirmation": "confirm",
+                "order_plan": args.order_plan,
+                "clob_auth": clob_auth,
+                "clob_l1_signature": clob_l1_signature,
+                "prepared_order": prepared_order,
+            }),
+            "Submit the exact prepared Polymarket order after the wallet signs it.",
+            "order_signature",
+        )
     }
 }

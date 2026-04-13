@@ -2,6 +2,7 @@ use aomi_sdk::*;
 use std::sync::LazyLock;
 
 mod client;
+pub mod testing;
 mod tool;
 
 static PREAMBLE: LazyLock<String> = LazyLock::new(client::build_preamble);
@@ -16,10 +17,8 @@ dyn_aomi_app!(
         client::GetPolymarketDetails,
         client::GetPolymarketTrades,
         client::ResolvePolymarketTradeIntent,
-        client::BuildPolymarketOrderPreview,
-        client::GetPolymarketClobSignature,
-        client::EnsurePolymarketClobCredentials,
-        client::PlacePolymarketOrder,
+        client::BuildPolymarketOrder,
+        client::SubmitPolymarketOrder,
     ],
     namespaces = ["common"]
 );

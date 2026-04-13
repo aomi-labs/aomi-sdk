@@ -4,10 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 aomi-sdk = { path = "../../sdk" }
+async-trait = "0.1"
+alloy-signer = "1.8.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
 schemars = "1.0.4"
 serde = { version = "1.0", features = ["derive"] }
@@ -16,3 +18,5 @@ chrono = "0.4"
 hmac = "0.12"
 sha2 = "0.10"
 base64 = "0.22"
+polymarket-client-sdk = { version = "0.4.4", features = ["gamma", "data", "clob"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
