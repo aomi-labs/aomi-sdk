@@ -23,29 +23,39 @@ struct NextActionTool {
     condition: Option<String>,
 }
 
+struct FollowUpSpec<'a> {
+    step: &'a str,
+    args_template: Value,
+    reason: &'a str,
+    callback_field: &'a str,
+    wallet_requires_confirmation: bool,
+}
+
 fn build_polymarket_follow_up_result(
     mut result: Value,
     wallet_tool: &str,
     wallet_request: Value,
-    follow_up_step: &str,
-    follow_up_args_template: Value,
-    follow_up_reason: &str,
-    callback_field: &str,
+    follow_up: FollowUpSpec<'_>,
 ) -> Result<Value, String> {
     let tool_calls = vec![
         NextActionTool {
             name: wallet_tool.to_string(),
             reason: "REQUIRED: Call this tool with these exact args. Do NOT skip or assume it was already sent.".to_string(),
             args: wallet_request.clone(),
-            condition: None,
+            condition: Some(if follow_up.wallet_requires_confirmation {
+                "Only after the user explicitly confirms this order. The first wallet signature request is the confirmed execution step.".to_string()
+            } else {
+                "After the prior confirmed step succeeds, call this tool with these exact args. Do not ask for another confirmation.".to_string()
+            }),
         },
         NextActionTool {
-            name: follow_up_step.to_string(),
-            reason: follow_up_reason.to_string(),
-            args: follow_up_args_template,
+            name: follow_up.step.to_string(),
+            reason: follow_up.reason.to_string(),
+            args: follow_up.args_template,
             condition: Some(
                 format!(
-                    "After wallet callback reports signature success; include {callback_field} from callback."
+                    "After wallet callback reports signature success; include {} from callback.",
+                    follow_up.callback_field
                 ),
             ),
         },
@@ -58,6 +68,19 @@ fn build_polymarket_follow_up_result(
         .as_object_mut()
         .ok_or_else(|| "result is not an object".to_string())?;
     obj.insert("wallet_request".to_string(), wallet_request);
+    obj.insert(
+        "wallet_signature_step".to_string(),
+        json!({
+            "wallet_tool": wallet_tool,
+            "signing_primitive": if wallet_tool == "send_eip712_to_wallet" {
+                Some("EIP712_TYPED_DATA_V4")
+            } else {
+                None::<&str>
+            },
+            "callback_field": follow_up.callback_field,
+            "requires_user_confirmation_before_call": follow_up.wallet_requires_confirmation,
+        }),
+    );
     obj.insert(SYSTEM_NEXT_ACTION_KEY.to_string(), action_value);
 
     Ok(result)
@@ -394,7 +417,7 @@ impl DynAomiTool for BuildPolymarketOrder {
     type App = PolymarketApp;
     type Args = BuildPolymarketOrderArgs;
     const NAME: &'static str = "build_polymarket_order";
-    const DESCRIPTION: &'static str = "Build a canonical Polymarket order plan. Preferred behavior: return a preview plus submit_args_template. If wallet signing is required, also return SYSTEM_NEXT_ACTION with the exact signing step.";
+    const DESCRIPTION: &'static str = "Build a canonical Polymarket order preview and continuation template. This tool never places the order itself. In wallet mode it also returns the explicit post-confirmation signing sequence.";
 
     fn run(_app: &PolymarketApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
         let connected_wallet = args
@@ -476,7 +499,7 @@ impl DynAomiTool for BuildPolymarketOrder {
                 "confirmation": "confirm",
                 "order_plan": plan.clone(),
             },
-            "next_step_hint": "After the user confirms, call submit_polymarket_order with submit_args_template unless SYSTEM_NEXT_ACTION already defines the next step.",
+            "next_step_hint": "Wait for explicit user confirmation before executing any next step from this result. After confirmation, either follow SYSTEM_NEXT_ACTION exactly or call submit_polymarket_order with submit_args_template.",
         });
 
         if plan.execution_mode == "WALLET" {
@@ -505,14 +528,17 @@ impl DynAomiTool for BuildPolymarketOrder {
                 result,
                 "send_eip712_to_wallet",
                 wallet_request,
-                "submit_polymarket_order",
-                json!({
-                    "confirmation": "confirm",
-                    "order_plan": plan,
-                    "clob_auth": clob_auth,
-                }),
-                "Create or derive Polymarket credentials, build the exact order payload, and request the final order signature.",
-                "clob_l1_signature",
+                FollowUpSpec {
+                    step: "submit_polymarket_order",
+                    args_template: json!({
+                        "confirmation": "confirm",
+                        "order_plan": plan,
+                        "clob_auth": clob_auth,
+                    }),
+                    reason: "Create or derive Polymarket credentials, build the exact order payload, and request the final order signature.",
+                    callback_field: "clob_l1_signature",
+                    wallet_requires_confirmation: true,
+                },
             );
         }
 
@@ -548,7 +574,7 @@ impl DynAomiTool for SubmitPolymarketOrder {
     type App = PolymarketApp;
     type Args = SubmitPolymarketOrderArgs;
     const NAME: &'static str = "submit_polymarket_order";
-    const DESCRIPTION: &'static str = "Execute a canonical Polymarket order plan. Direct mode submits through the official SDK. Wallet mode returns the exact next signing step or submits the final wallet-signed order.";
+    const DESCRIPTION: &'static str = "Advance or execute a previously built Polymarket order. Direct mode submits through the official SDK. Wallet mode returns the next signing step or submits the final wallet-signed order. Treat returned continuation fields as opaque runtime state.";
 
     fn run(_app: &PolymarketApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         validate_confirmation_token(args.confirmation.as_deref())?;
@@ -597,16 +623,19 @@ impl DynAomiTool for SubmitPolymarketOrder {
                 result,
                 "send_eip712_to_wallet",
                 wallet_request,
-                "submit_polymarket_order",
-                json!({
-                    "confirmation": "confirm",
-                    "order_plan": args.order_plan,
-                    "clob_auth": clob_auth,
-                    "clob_l1_signature": clob_l1_signature,
-                    "prepared_order": prepared_order,
-                }),
-                "Submit the exact prepared Polymarket order after the wallet signs it.",
-                "order_signature",
+                FollowUpSpec {
+                    step: "submit_polymarket_order",
+                    args_template: json!({
+                        "confirmation": "confirm",
+                        "order_plan": args.order_plan,
+                        "clob_auth": clob_auth,
+                        "clob_l1_signature": clob_l1_signature,
+                        "prepared_order": prepared_order,
+                    }),
+                    reason: "Submit the exact prepared Polymarket order after the wallet signs it.",
+                    callback_field: "order_signature",
+                    wallet_requires_confirmation: false,
+                },
             );
         }
 
@@ -635,16 +664,19 @@ impl DynAomiTool for SubmitPolymarketOrder {
             result,
             "send_eip712_to_wallet",
             wallet_request,
-            "submit_polymarket_order",
-            json!({
-                "confirmation": "confirm",
-                "order_plan": args.order_plan,
-                "clob_auth": clob_auth,
-                "clob_l1_signature": clob_l1_signature,
-                "prepared_order": prepared_order,
-            }),
-            "Submit the exact prepared Polymarket order after the wallet signs it.",
-            "order_signature",
+            FollowUpSpec {
+                step: "submit_polymarket_order",
+                args_template: json!({
+                    "confirmation": "confirm",
+                    "order_plan": args.order_plan,
+                    "clob_auth": clob_auth,
+                    "clob_l1_signature": clob_l1_signature,
+                    "prepared_order": prepared_order,
+                }),
+                reason: "Submit the exact prepared Polymarket order after the wallet signs it.",
+                callback_field: "order_signature",
+                wallet_requires_confirmation: false,
+            },
         )
     }
 }

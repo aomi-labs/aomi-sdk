@@ -893,23 +893,29 @@ fn post_signed_order_with_credentials(
         body_string.as_str(),
     )?;
 
-    let response = client
-        .http
-        .post(&url)
-        .header("Content-Type", "application/json")
-        .header(HEADER_POLY_ADDRESS, wallet_address)
-        .header(HEADER_POLY_API_KEY, credentials.key.as_str())
-        .header(HEADER_POLY_PASSPHRASE, credentials.passphrase.as_str())
-        .header(HEADER_POLY_TIMESTAMP, timestamp.as_str())
-        .header(HEADER_POLY_SIGNATURE, l2_signature.as_str())
-        .body(body_string)
-        .send()
-        .map_err(|e| format!("wallet order submission failed: {e}"))?;
+    let (status, text) = TOKIO_RT.block_on(async move {
+        let response = client
+            .http
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .header(HEADER_POLY_ADDRESS, wallet_address)
+            .header(HEADER_POLY_API_KEY, credentials.key.as_str())
+            .header(HEADER_POLY_PASSPHRASE, credentials.passphrase.as_str())
+            .header(HEADER_POLY_TIMESTAMP, timestamp.as_str())
+            .header(HEADER_POLY_SIGNATURE, l2_signature.as_str())
+            .body(body_string)
+            .send()
+            .await
+            .map_err(|e| format!("wallet order submission failed: {e}"))?;
 
-    let status = response.status();
-    let text = response
-        .text()
-        .map_err(|e| format!("failed to read order submission response: {e}"))?;
+        let status = response.status();
+        let text = response
+            .text()
+            .await
+            .map_err(|e| format!("failed to read order submission response: {e}"))?;
+        Ok::<_, String>((status, text))
+    })?;
+
     if !status.is_success() {
         return Err(format!("wallet order submission failed {status}: {text}"));
     }
