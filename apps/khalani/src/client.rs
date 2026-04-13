@@ -13,8 +13,14 @@ pub(crate) use crate::tool::*;
 // Khalani HTTP Client (blocking)
 // ============================================================================
 
-pub(crate) const DEFAULT_KHALANI_API: &str = "https://api.khalani.network";
+pub(crate) const DEFAULT_KHALANI_API: &str = "https://api.hyperstream.dev";
 pub(crate) const SYSTEM_NEXT_ACTION_KEY: &str = "SYSTEM_NEXT_ACTION";
+
+#[derive(Debug, Clone)]
+pub(crate) struct ResolvedKhalaniToken {
+    pub(crate) address: String,
+    pub(crate) decimals: u8,
+}
 
 #[derive(Clone)]
 pub(crate) struct KhalaniClient {
@@ -72,22 +78,23 @@ impl KhalaniClient {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn get_quote(
         &self,
-        chain: &str,
-        destination_chain: &str,
-        sell_token: &str,
-        buy_token: &str,
+        from_chain_id: u64,
+        to_chain_id: u64,
+        from_token: &str,
+        to_token: &str,
         amount: &str,
         sender_address: &str,
         receiver_address: Option<&str>,
         slippage_bps: Option<u32>,
     ) -> Result<Value, String> {
         let mut payload = json!({
-            "fromChain": chain,
-            "toChain": destination_chain,
-            "fromToken": sell_token,
-            "toToken": buy_token,
+            "tradeType": "EXACT_INPUT",
+            "fromChainId": from_chain_id,
+            "toChainId": to_chain_id,
+            "fromToken": from_token,
+            "toToken": to_token,
             "amount": amount,
-            "sender": sender_address,
+            "fromAddress": sender_address,
         });
         if let Some(receiver) = receiver_address {
             payload["receiver"] = Value::String(receiver.to_string());
@@ -123,15 +130,6 @@ impl KhalaniClient {
         Ok(Self::with_source(value))
     }
 
-    // ---- Order Status ----
-    pub(crate) fn get_order(&self, order_id: &str) -> Result<Value, String> {
-        let request = self
-            .http
-            .get(format!("{}/v1/orders/id/{}", self.api_endpoint, order_id));
-        let value = Self::send_json(request, "get order")?;
-        Ok(Self::with_source(value))
-    }
-
     // ---- Orders by Address ----
     pub(crate) fn get_orders_by_address(
         &self,
@@ -139,6 +137,7 @@ impl KhalaniClient {
         status: Option<&str>,
         limit: Option<u32>,
         offset: Option<u32>,
+        order_ids: Option<&str>,
     ) -> Result<Value, String> {
         let mut request = self
             .http
@@ -153,6 +152,9 @@ impl KhalaniClient {
         }
         if let Some(o) = offset {
             query_params.push(("offset", o.to_string()));
+        }
+        if let Some(ids) = order_ids {
+            query_params.push(("orderIds", ids.to_string()));
         }
         if !query_params.is_empty() {
             request = request.query(&query_params);
@@ -174,7 +176,7 @@ impl KhalaniClient {
 
         let mut query_params: Vec<(&str, String)> = Vec::new();
         if let Some(cid) = chain_id {
-            query_params.push(("chainId", cid.to_string()));
+            query_params.push(("chainIds", cid.to_string()));
         }
         if let Some(l) = limit {
             query_params.push(("limit", l.to_string()));
@@ -183,7 +185,7 @@ impl KhalaniClient {
             query_params.push(("offset", o.to_string()));
         }
         if let Some(q) = query {
-            query_params.push(("query", q.to_string()));
+            query_params.push(("q", q.to_string()));
         }
         if !query_params.is_empty() {
             request = request.query(&query_params);
@@ -204,11 +206,11 @@ impl KhalaniClient {
         let mut request = self
             .http
             .get(format!("{}/v1/tokens/search", self.api_endpoint))
-            .query(&[("query", query)]);
+            .query(&[("q", query)]);
 
         let mut query_params: Vec<(&str, String)> = Vec::new();
         if let Some(cid) = chain_id {
-            query_params.push(("chainId", cid.to_string()));
+            query_params.push(("chainIds", cid.to_string()));
         }
         if let Some(l) = limit {
             query_params.push(("limit", l.to_string()));
@@ -230,6 +232,90 @@ impl KhalaniClient {
         let value = Self::send_json(request, "get chains")?;
         Ok(Self::with_source(value))
     }
+
+    pub(crate) fn resolve_token(
+        &self,
+        token: &str,
+        chain_id: u64,
+    ) -> Result<ResolvedKhalaniToken, String> {
+        let token = token.trim();
+        if token.is_empty() {
+            return Err("token cannot be empty".to_string());
+        }
+
+        let results = self.search_tokens(token, Some(chain_id), Some(50), Some(0))?;
+        let data = results
+            .get("data")
+            .and_then(Value::as_array)
+            .ok_or_else(|| format!("Khalani token search returned no token list for '{token}'"))?;
+
+        let token_lower = token.to_ascii_lowercase();
+        let mut best: Option<(i32, ResolvedKhalaniToken)> = None;
+        for candidate in data {
+            let Some(candidate_chain_id) = candidate.get("chainId").and_then(Value::as_u64) else {
+                continue;
+            };
+            if candidate_chain_id != chain_id {
+                continue;
+            }
+
+            let Some(address) = candidate.get("address").and_then(Value::as_str) else {
+                continue;
+            };
+            let decimals = candidate
+                .get("decimals")
+                .and_then(Value::as_u64)
+                .and_then(|v| u8::try_from(v).ok())
+                .unwrap_or(18);
+            let symbol = candidate
+                .get("symbol")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let name = candidate
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            let address_lower = address.to_ascii_lowercase();
+
+            let score = if is_hex_address(token) && address_lower == token_lower {
+                100
+            } else if symbol == token_lower {
+                95
+            } else if name == token_lower {
+                85
+            } else if symbol.starts_with(&token_lower) {
+                60
+            } else if name.contains(&token_lower) {
+                40
+            } else {
+                0
+            };
+
+            if score == 0 {
+                continue;
+            }
+
+            let resolved = ResolvedKhalaniToken {
+                address: address_lower,
+                decimals,
+            };
+
+            if best
+                .as_ref()
+                .is_none_or(|(best_score, _)| score > *best_score)
+            {
+                best = Some((score, resolved));
+            }
+        }
+
+        best.map(|(_, resolved)| resolved).ok_or_else(|| {
+            format!(
+                "Unable to resolve token '{token}' on chain {chain_id} via Khalani token search"
+            )
+        })
+    }
 }
 
 // ============================================================================
@@ -240,8 +326,9 @@ pub(crate) fn resolve_sender_address(
     ctx: &DynToolCallCtx,
     provided: Option<&str>,
 ) -> Result<String, String> {
-    ctx.attribute_string(&["user_address"])
-        .or_else(|| provided.map(ToString::to_string))
+    provided
+        .map(ToString::to_string)
+        .or_else(|| ctx.attribute_string(&["user_address"]))
         .ok_or_else(|| "No connected wallet address found in context".to_string())
 }
 
@@ -266,18 +353,39 @@ pub(crate) fn amount_to_base_units(amount: f64, decimals: u8) -> Result<String, 
     Ok((scaled.round() as u128).to_string())
 }
 
-pub(crate) fn get_token_decimals(token: &str) -> u8 {
-    let lower = token.to_lowercase();
-    match lower.as_str() {
-        "usdc" | "usdt" => 6,
-        "wbtc" => 8,
-        _ => 18,
+pub(crate) fn resolve_chain_id(chain: &str) -> Result<u64, String> {
+    let raw = chain.trim();
+    if raw.is_empty() {
+        return Err("chain cannot be empty".to_string());
+    }
+    if let Ok(value) = raw.parse::<u64>() {
+        return Ok(value);
+    }
+
+    let normalized: String = raw
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .collect();
+
+    match normalized.as_str() {
+        "ethereum" | "mainnet" => Ok(1),
+        "base" => Ok(8453),
+        "polygon" | "matic" | "polygonpos" => Ok(137),
+        "arbitrum" | "arbitrumone" => Ok(42161),
+        "optimism" | "op" | "opmainnet" => Ok(10),
+        "bsc" | "binance" | "binancesmartchain" => Ok(56),
+        "avalanche" | "avax" | "avalanchecchain" => Ok(43114),
+        _ => Err(format!(
+            "Unknown chain '{chain}'. Provide a numeric chain ID or a supported alias like ethereum, base, polygon, arbitrum, optimism, bsc, or avalanche."
+        )),
     }
 }
 
-pub(crate) fn quote_amount_base_units(token: &str, amount: f64) -> Result<String, String> {
-    let decimals = get_token_decimals(token);
-    amount_to_base_units(amount, decimals)
+pub(crate) fn is_hex_address(value: &str) -> bool {
+    value.len() == 42
+        && value.starts_with("0x")
+        && value[2..].chars().all(|ch| ch.is_ascii_hexdigit())
 }
 
 // ============================================================================
@@ -467,6 +575,26 @@ pub(crate) fn build_wallet_tx_request(tx: &Value, description: String) -> Value 
         "gas_limit": tx.get("gas_limit").cloned().unwrap_or(Value::Null),
         "description": description,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolves_common_chain_aliases() {
+        assert_eq!(resolve_chain_id("ethereum").unwrap(), 1);
+        assert_eq!(resolve_chain_id("base").unwrap(), 8453);
+        assert_eq!(resolve_chain_id("polygon").unwrap(), 137);
+        assert_eq!(resolve_chain_id("42161").unwrap(), 42161);
+    }
+
+    #[test]
+    fn detects_hex_addresses() {
+        assert!(is_hex_address("0x5d907bea404e6f821d467314a9ca07663cf64c9b"));
+        assert!(!is_hex_address("ETH"));
+        assert!(!is_hex_address("0x1234"));
+    }
 }
 
 // ============================================================================
