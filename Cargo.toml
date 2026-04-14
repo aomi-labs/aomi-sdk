@@ -39,6 +39,7 @@ exclude = [
     "apps/pelagos",
     "apps/yearn",
     "apps/zerox",
+    "apps/polymarket-rewards",
 ]
 resolver = "2"
 
