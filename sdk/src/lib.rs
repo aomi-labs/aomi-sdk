@@ -151,6 +151,15 @@ pub use types::*;
 pub use schemars;
 pub use serde_json;
 
+/// Exact SDK crate version compiled into both host and plugin builds.
+///
+/// The runtime uses this as the compatibility gate for loading published
+/// plugins: host and plugin must be built against the same `aomi-sdk` version.
+pub const AOMI_SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+#[doc(hidden)]
+pub const __AOMI_SDK_VERSION_CSTR: &str = concat!(env!("CARGO_PKG_VERSION"), "\0");
+
 /// Resolve a secret from a tool argument first, then from an optional
 /// environment variable fallback, and return a consistent error when neither is
 /// available.

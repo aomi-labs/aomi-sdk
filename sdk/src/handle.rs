@@ -9,7 +9,7 @@
 //! use aomi_sdk::DynFnHandle;
 //! use std::path::Path;
 //!
-//! // Load the plugin (validates ABI version and resolves symbols)
+//! // Load the plugin (validates SDK version and resolves symbols)
 //! let handle = unsafe { DynFnHandle::load(Path::new("./libmy_plugin.so"))? };
 //!
 //! // Read the manifest to discover tools
@@ -29,11 +29,11 @@ use eyre::{Context, Result, bail};
 use serde_json::Value;
 
 use crate::{
-    AOMI_ABI_VERSION, AOMI_CREATE, AOMI_DESTROY, AOMI_DYN_EXEC_CANCEL, AOMI_DYN_EXEC_POLL,
-    AOMI_FREE_STRING, AOMI_MANIFEST, AsyncExecPool, DynAbiVersionFn, DynCreateFn, DynDestroyFn,
-    DynExecCancel, DynFreeStringFn, DynInstancePtr, DynManifest, DynManifestFn, DynToolCancelFn,
-    DynToolPollFn, DynToolResult, DynToolStart, DynToolStartFn, SYM_AOMI_ABI_VERSION,
-    SYM_AOMI_ASYNC_TOOL_START,
+    AOMI_CREATE, AOMI_DESTROY, AOMI_DYN_EXEC_CANCEL, AOMI_DYN_EXEC_POLL, AOMI_FREE_STRING,
+    AOMI_MANIFEST, AOMI_SDK_VERSION, AsyncExecPool, DynCreateFn, DynDestroyFn, DynExecCancel,
+    DynFreeStringFn, DynInstancePtr, DynManifest, DynManifestFn, DynSdkVersionFn, DynToolCancelFn,
+    DynToolPollFn, DynToolResult, DynToolStart, DynToolStartFn, SYM_AOMI_ASYNC_TOOL_START,
+    SYM_AOMI_SDK_VERSION,
 };
 
 /// Handle to a loaded dynamic plugin library.
@@ -44,8 +44,8 @@ use crate::{
 ///
 /// # Safety
 ///
-/// The loaded library must be a valid aomi-sdk plugin compiled against a
-/// compatible ABI version. The handle is `Send + Sync` because plugin
+/// The loaded library must be a valid aomi-sdk plugin compiled against the
+/// same SDK version. The handle is `Send + Sync` because plugin
 /// instances are designed to be thread-safe (the generated code uses
 /// `Mutex` for shared state).
 pub struct DynFnHandle {
@@ -73,15 +73,16 @@ impl DynFnHandle {
                 .with_context(|| format!("failed to dlopen {}", path.display()))?
         };
 
-        let fn_abi_version: DynAbiVersionFn = unsafe {
+        let fn_sdk_version: DynSdkVersionFn = unsafe {
             *library
-                .get::<DynAbiVersionFn>(SYM_AOMI_ABI_VERSION)
-                .context("symbol aomi_abi_version not found")?
+                .get::<DynSdkVersionFn>(SYM_AOMI_SDK_VERSION)
+                .context("symbol aomi_sdk_version not found")?
         };
-        let abi_version = unsafe { fn_abi_version() };
-        if abi_version != AOMI_ABI_VERSION {
+        let plugin_sdk_version =
+            Self::read_static_c_string(unsafe { fn_sdk_version() }, "aomi_sdk_version")?;
+        if plugin_sdk_version != AOMI_SDK_VERSION {
             bail!(
-                "ABI version mismatch: plugin={abi_version}, host={AOMI_ABI_VERSION} ({})",
+                "SDK version mismatch: plugin={plugin_sdk_version}, host={AOMI_SDK_VERSION} ({})",
                 path.display()
             );
         }
@@ -148,6 +149,15 @@ impl DynFnHandle {
         let bytes = unsafe { CStr::from_ptr(raw).to_bytes().to_vec() };
         unsafe { (self.fn_free_string)(raw) };
 
+        String::from_utf8(bytes).with_context(|| format!("{label} is not valid UTF-8"))
+    }
+
+    fn read_static_c_string(raw: *const c_char, label: &str) -> Result<String> {
+        if raw.is_null() {
+            bail!("{label} returned null");
+        }
+
+        let bytes = unsafe { CStr::from_ptr(raw).to_bytes().to_vec() };
         String::from_utf8(bytes).with_context(|| format!("{label} is not valid UTF-8"))
     }
 
