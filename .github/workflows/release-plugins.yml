@@ -41,9 +41,7 @@ jobs:
               VERSION="0.1.0"
             else
               BASE_VERSION="${LATEST_TAG#apps-v}"
-              IFS=. read -r MAJOR MINOR PATCH <<EOF
-$BASE_VERSION
-EOF
+              IFS=. read -r MAJOR MINOR PATCH <<< "$BASE_VERSION"
               VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
             fi
             TAG="apps-v${VERSION}"
