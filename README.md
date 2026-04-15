@@ -27,6 +27,7 @@ This repository contains public dynamic app crates, the public SDK they build ag
 - `molinar`
 - `para`
 - `para-consumer`
+- `pelagos`
 - `polymarket`
 - `prediction`
 - `social`
@@ -105,7 +106,7 @@ graph LR
     subgraph "product-mono backend"
         FETCHER[PluginFetcher<br/>polls every 5min]
         EXTRACT[Download + extract<br/>+ verify SHA256]
-        LOADER[AppLoader<br/>dlopen + ABI check]
+        LOADER[AppLoader<br/>dlopen + SDK version check]
         REGISTRY["DashMap<br/>(AppKey → Arc&lt;App&gt;)"]
         SESSIONS[Active sessions<br/>keep old Arc]
         NEW[New sessions<br/>get new Arc]
@@ -135,8 +136,8 @@ sequenceDiagram
     DEV->>GH: merge PR to publish
     GH->>CI: push event (publish branch)
 
-    CI->>CI: Read version from sdk/Cargo.toml
-    CI->>GH: Create tag apps-v0.x.y (if new)
+    CI->>CI: Resolve next app release tag
+    CI->>GH: Create or reuse tag apps-v0.x.y
 
     par Linux build
         CI->>CI: cargo xtask build-aomi --release --target x86_64-linux
@@ -164,7 +165,7 @@ sequenceDiagram
             loop Each plugin in manifest
                 BE->>RT: reload_plugin(name)
                 RT->>RT: dlopen new .so/.dylib
-                RT->>RT: Validate ABI version
+                RT->>RT: Validate SDK version
                 RT->>RT: Build DynApp
                 RT->>RT: Atomic swap in DashMap
                 Note over RT: Old sessions keep old Arc<br/>New sessions get new Arc
@@ -188,19 +189,20 @@ aomi-plugins-v0.1.0-x86_64-unknown-linux-gnu.tar.gz
     ├── molinar.so
     ├── para.so
     ├── para_consumer.so
+    ├── pelagos.so
     ├── polymarket.so
     ├── prediction.so
     ├── social.so
     └── x.so
 ```
 
-`manifest.json` contains version, ABI version, target triple, commit SHA, and per-plugin SHA256 checksums.
+`manifest.json` contains the app release version, app release tag, SDK version, target triple, commit SHA, and per-plugin SHA256 checksums.
 
 ### Environment Variables (Backend)
 
 | Variable | Default | Description |
 |---|---|---|
-| `AOMI_PLUGINS_VERSION` | `latest` | Version to fetch (`0.1.0` or `latest`) |
+| `APP_RELEASE_TAG` | `latest` | Release tag to fetch (`apps-v0.1.14` or `latest`) |
 | `AOMI_PLUGINS_REPO` | `aomi-labs/aomi-sdk` | GitHub `owner/repo` for releases |
 | `AOMI_PLUGINS_POLL_SECS` | `300` | Poll interval in seconds |
 | `GITHUB_TOKEN` | — | Optional auth for private repos |

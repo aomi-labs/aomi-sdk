@@ -48,6 +48,10 @@ jobs:
       - name: Test SDK
         run: cargo test -p aomi-sdk
 
+      - name: Dry-run SDK publish
+        if: steps.sdk-version.outputs.publish_sdk == 'true'
+        run: cargo publish -p aomi-sdk --dry-run
+
       - name: Detect changed apps
         id: changed-apps
         run: |
@@ -80,7 +84,7 @@ jobs:
     needs: check
     runs-on: ubuntu-latest
     environment: prod
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && needs.check.outputs.publish_sdk == 'true'
     steps:
       - uses: actions/checkout@v4
 
