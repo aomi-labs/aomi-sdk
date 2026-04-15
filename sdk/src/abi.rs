@@ -18,16 +18,19 @@ use std::ffi::{c_char, c_void};
 /// struct.
 pub type DynInstancePtr = *mut c_void;
 
-/// `aomi_abi_version` — returns the plugin's ABI version number.
+/// `aomi_sdk_version` — returns the plugin's exact SDK version string.
 ///
 /// Called once immediately after `dlopen`. If the returned value does not
-/// match [`AOMI_ABI_VERSION`](crate::AOMI_ABI_VERSION) the host refuses to
+/// match [`AOMI_SDK_VERSION`](crate::AOMI_SDK_VERSION) the host refuses to
 /// load the plugin.
-pub type DynAbiVersionFn = unsafe extern "C" fn() -> u32;
+///
+/// The returned pointer is a static NUL-terminated string owned by the plugin
+/// library and must not be freed by the host.
+pub type DynSdkVersionFn = unsafe extern "C" fn() -> *const c_char;
 
 /// `aomi_create` — allocates and returns a new plugin instance.
 ///
-/// Called once after the ABI version check. The returned pointer is passed
+/// Called once after the SDK version check. The returned pointer is passed
 /// to all other functions and must remain valid until [`DynDestroyFn`] is
 /// called. Returns null on failure.
 pub type DynCreateFn = unsafe extern "C" fn() -> DynInstancePtr;
@@ -99,7 +102,7 @@ pub type DynDestroyFn = unsafe extern "C" fn(DynInstancePtr);
 /// this function. Passing null is safe (no-op).
 pub type DynFreeStringFn = unsafe extern "C" fn(*mut c_char);
 
-pub const SYM_AOMI_ABI_VERSION: &[u8] = b"aomi_abi_version\0";
+pub const SYM_AOMI_SDK_VERSION: &[u8] = b"aomi_sdk_version\0";
 pub const AOMI_CREATE: &[u8] = b"aomi_create\0";
 pub const AOMI_MANIFEST: &[u8] = b"aomi_manifest\0";
 pub const SYM_AOMI_ASYNC_TOOL_START: &[u8] = b"aomi_async_tool_start\0";
