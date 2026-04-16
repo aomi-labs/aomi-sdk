@@ -3,6 +3,7 @@ members = [
     "sdk",
     "sdk/examples/hello-app",
     "sdk/examples/app-template-http",
+    "apps/polymarket-rewards",
     "xtask",
 ]
 exclude = [
