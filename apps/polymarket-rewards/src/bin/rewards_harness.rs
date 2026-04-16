@@ -5,7 +5,9 @@ mod tool;
 
 use alloy::signers::{Signer, SignerSync, local::PrivateKeySigner};
 use alloy_dyn_abi::eip712::TypedData;
-use aomi_sdk::{DynAomiApp, DynAomiTool, DynAsyncSink, DynToolCallCtx, DynToolDispatch, DynToolMetadata};
+use aomi_sdk::{
+    DynAomiApp, DynAomiTool, DynAsyncSink, DynToolCallCtx, DynToolDispatch, DynToolMetadata,
+};
 use polymarket_client_sdk::clob::types::request::BalanceAllowanceRequest;
 use polymarket_client_sdk::clob::types::{AssetType, SignatureType};
 use polymarket_client_sdk::clob::{Client as SdkClobClient, Config as SdkClobConfig};
@@ -70,10 +72,13 @@ fn run_main() -> Result<(), String> {
             let state_path = state_file(&parsed)?;
 
             let preview = build_preview_result(&condition_id, capital)?;
-            let submit_template = preview
-                .get("submit_args_template")
-                .cloned()
-                .ok_or_else(|| "build_quote_plan did not return submit_args_template".to_string())?;
+            let submit_template =
+                preview
+                    .get("submit_args_template")
+                    .cloned()
+                    .ok_or_else(|| {
+                        "build_quote_plan did not return submit_args_template".to_string()
+                    })?;
 
             let mut submit_args = submit_template;
             let submit_obj = submit_args
@@ -150,12 +155,14 @@ fn run_main() -> Result<(), String> {
                 .block_on(client.authentication_builder(&signer).authenticate())
                 .map_err(|e| format!("failed to authenticate SDK client: {e}"))?;
             let balance_allowance = client::TOKIO_RT
-                .block_on(authed.balance_allowance(
-                    BalanceAllowanceRequest::builder()
-                        .asset_type(AssetType::Collateral)
-                        .signature_type(SignatureType::Eoa)
-                        .build(),
-                ))
+                .block_on(
+                    authed.balance_allowance(
+                        BalanceAllowanceRequest::builder()
+                            .asset_type(AssetType::Collateral)
+                            .signature_type(SignatureType::Eoa)
+                            .build(),
+                    ),
+                )
                 .map_err(|e| format!("failed to fetch balance/allowance: {e}"))?;
             print_json(&json!({
                 "address": address,
@@ -270,19 +277,19 @@ fn run_main() -> Result<(), String> {
             }
 
             let preview = build_preview_result(&condition_id, capital)?;
-            let submit_template = preview
-                .get("submit_args_template")
-                .cloned()
-                .ok_or_else(|| "build_quote_plan did not return submit_args_template".to_string())?;
+            let submit_template =
+                preview
+                    .get("submit_args_template")
+                    .cloned()
+                    .ok_or_else(|| {
+                        "build_quote_plan did not return submit_args_template".to_string()
+                    })?;
 
             let mut submit_args = submit_template;
             let submit_obj = submit_args
                 .as_object_mut()
                 .ok_or_else(|| "submit_args_template was not an object".to_string())?;
-            submit_obj.insert(
-                "address".to_string(),
-                Value::String(signer_address.clone()),
-            );
+            submit_obj.insert("address".to_string(), Value::String(signer_address.clone()));
             if let Some(question) = preview.get("market_question").and_then(Value::as_str) {
                 submit_obj.insert(
                     "market_question".to_string(),
@@ -297,11 +304,13 @@ fn run_main() -> Result<(), String> {
                 .get("clob_auth")
                 .cloned()
                 .ok_or_else(|| "stage1 state missing clob_auth".to_string())?;
-            let clob_auth_signature =
-                sign_typed_data(&signer, &client::build_reward_clob_auth_typed_data(
+            let clob_auth_signature = sign_typed_data(
+                &signer,
+                &client::build_reward_clob_auth_typed_data(
                     &serde_json::from_value(clob_auth)
                         .map_err(|e| format!("invalid clob_auth state: {e}"))?,
-                ))?;
+                ),
+            )?;
 
             let mut stage2_args = stage1_args;
             let stage2_obj = stage2_args
@@ -374,7 +383,9 @@ fn run_main() -> Result<(), String> {
                         .get("submit_args_template")
                         .cloned()
                         .or_else(|| load_state(&state_path).ok())
-                        .ok_or_else(|| "unable to recover submission state for cancellation".to_string())?;
+                        .ok_or_else(|| {
+                            "unable to recover submission state for cancellation".to_string()
+                        })?;
                     let address = submit_state
                         .get("address")
                         .and_then(Value::as_str)
@@ -513,8 +524,8 @@ fn load_state(path: &PathBuf) -> Result<Value, String> {
 }
 
 fn print_json(value: &Value) -> Result<(), String> {
-    let text = serde_json::to_string_pretty(value)
-        .map_err(|e| format!("failed to render json: {e}"))?;
+    let text =
+        serde_json::to_string_pretty(value).map_err(|e| format!("failed to render json: {e}"))?;
     println!("{text}");
     Ok(())
 }
