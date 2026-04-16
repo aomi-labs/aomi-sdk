@@ -1,0 +1,23 @@
+[package]
+name = "polymarket-rewards"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+aomi-sdk = { path = "../../sdk" }
+alloy = { version = "1.8.3", default-features = false, features = ["signers"] }
+alloy-dyn-abi = { version = "1.5.7", features = ["eip712"] }
+async-trait = "0.1"
+polymarket-client-sdk = { version = "0.4.4", features = ["clob"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
+schemars = "1.0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = "0.4"
+hmac = "0.12"
+sha2 = "0.10"
+base64 = "0.22"
+tokio = { version = "1", features = ["rt-multi-thread"] }

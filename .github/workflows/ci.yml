@@ -34,7 +34,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.88"
+          toolchain: "1.91"
           components: clippy, rustfmt
 
       - uses: Swatinem/rust-cache@v2
@@ -91,7 +91,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.88"
+          toolchain: "1.91"
 
       - uses: Swatinem/rust-cache@v2
 
