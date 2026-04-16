@@ -5,7 +5,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use aomi_sdk::{DynFnHandle, DynManifest};
+use aomi_sdk::{AOMI_SDK_VERSION, DynFnHandle, DynManifest};
 
 // ── Known host-side namespace tools ──────────────────────────────────────────
 
@@ -79,7 +79,14 @@ pub fn validate_plugin(lib_path: &Path) -> Vec<String> {
         }
     };
 
-    validate_manifest(&manifest)
+    let mut errors = validate_manifest(&manifest);
+    if manifest.sdk_version != AOMI_SDK_VERSION {
+        errors.push(format!(
+            "{}: plugin sdk_version '{}' does not match repo sdk version '{}'",
+            manifest.name, manifest.sdk_version, AOMI_SDK_VERSION
+        ));
+    }
+    errors
 }
 
 fn validate_manifest(manifest: &DynManifest) -> Vec<String> {
@@ -133,12 +140,12 @@ fn validate_manifest(manifest: &DynManifest) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use aomi_sdk::{AOMI_ABI_VERSION, DynManifest, DynToolMetadata};
+    use aomi_sdk::{AOMI_SDK_VERSION, DynManifest, DynToolMetadata};
 
     #[test]
     fn validate_rejects_private_host_namespaces() {
         let manifest = DynManifest {
-            abi_version: AOMI_ABI_VERSION,
+            sdk_version: AOMI_SDK_VERSION.to_string(),
             name: "bad-app".to_string(),
             version: "0.1.0".to_string(),
             preamble: "x".to_string(),

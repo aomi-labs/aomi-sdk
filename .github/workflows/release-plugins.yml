@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   resolve:
-    name: Resolve version
+    name: Resolve app release tag
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.resolve.outputs.version }}
@@ -28,27 +28,29 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Resolve version and tag
+      - name: Resolve app release tag
         id: resolve
         run: |
-          VERSION=$(grep '^version' sdk/Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-          TAG="apps-v${VERSION}"
-
-          if git rev-parse "$TAG" >/dev/null 2>&1; then
-            MAJOR=$(echo "$VERSION" | cut -d. -f1)
-            MINOR=$(echo "$VERSION" | cut -d. -f2)
-            PATCH=$(echo "$VERSION" | cut -d. -f3)
-            while git rev-parse "apps-v${MAJOR}.${MINOR}.$((++PATCH))" >/dev/null 2>&1; do
-              true
-            done
-            VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          EXISTING_TAG=$(git tag --points-at "${GITHUB_SHA}" -l 'apps-v*' --sort=-v:refname | head -1)
+          if [ -n "$EXISTING_TAG" ]; then
+            TAG="$EXISTING_TAG"
+            VERSION="${TAG#apps-v}"
+          else
+            LATEST_TAG=$(git tag -l 'apps-v*' --sort=-v:refname | head -1)
+            if [ -z "$LATEST_TAG" ]; then
+              VERSION="0.1.0"
+            else
+              BASE_VERSION="${LATEST_TAG#apps-v}"
+              IFS=. read -r MAJOR MINOR PATCH <<< "$BASE_VERSION"
+              VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+            fi
             TAG="apps-v${VERSION}"
-          fi
 
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag "$TAG" -m "Auto-tagged from publish branch"
-          git push origin "$TAG"
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag "$TAG" -m "Auto-tagged from publish branch"
+            git push origin "$TAG"
+          fi
 
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
@@ -87,14 +89,12 @@ jobs:
           import hashlib
           import json
           import pathlib
-          import re
+          import tomllib
 
           repo = pathlib.Path.cwd()
           plugins_dir = repo / "plugins"
-          sdk_types = (repo / "sdk" / "src" / "types.rs").read_text()
-          abi_match = re.search(r"pub const AOMI_ABI_VERSION: u32 = (\d+);", sdk_types)
-          if abi_match is None:
-              raise SystemExit("failed to read AOMI_ABI_VERSION from sdk/src/types.rs")
+          sdk_toml = tomllib.loads((repo / "sdk" / "Cargo.toml").read_text())
+          sdk_version = sdk_toml["package"]["version"]
 
           plugins = {}
           for path in sorted(plugins_dir.iterdir()):
@@ -107,7 +107,8 @@ jobs:
 
           manifest = {
               "version": "${{ needs.resolve.outputs.version }}",
-              "abi_version": int(abi_match.group(1)),
+              "app_release_tag": "${{ needs.resolve.outputs.tag }}",
+              "sdk_version": sdk_version,
               "target": "${{ matrix.target }}",
               "commit": "${{ github.sha }}",
               "plugins": plugins,
@@ -153,7 +154,7 @@ jobs:
           - \`aomi-plugins-v${{ needs.resolve.outputs.version }}-aarch64-apple-darwin.tar.gz\` - macOS ARM64
 
           ## Consumption
-          product-mono downloads these release assets using \`AOMI_PLUGINS_REPO\` and \`AOMI_PLUGINS_VERSION\`.
+          product-mono downloads these release assets using \`AOMI_PLUGINS_REPO\` and \`APP_RELEASE_TAG\`.
           EOF
 
           if gh release view "${{ needs.resolve.outputs.tag }}" >/dev/null 2>&1; then

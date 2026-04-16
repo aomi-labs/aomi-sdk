@@ -1,12 +1,13 @@
 mod common;
 
 use aomi_sdk::{
-    AOMI_ABI_VERSION, AOMI_CREATE, AOMI_DESTROY, AOMI_DYN_EXEC_CANCEL, AOMI_DYN_EXEC_POLL,
-    AOMI_FREE_STRING, AOMI_MANIFEST, AsyncExecPool, DynAbiVersionFn, DynCreateFn, DynDestroyFn,
-    DynFreeStringFn, DynManifestFn, DynToolCancelFn, DynToolPollFn, DynToolStart, DynToolStartFn,
-    SYM_AOMI_ABI_VERSION, SYM_AOMI_ASYNC_TOOL_START,
+    AOMI_CREATE, AOMI_DESTROY, AOMI_DYN_EXEC_CANCEL, AOMI_DYN_EXEC_POLL, AOMI_FREE_STRING,
+    AOMI_MANIFEST, AOMI_SDK_VERSION, AsyncExecPool, DynCreateFn, DynDestroyFn, DynFreeStringFn,
+    DynManifestFn, DynSdkVersionFn, DynToolCancelFn, DynToolPollFn, DynToolStart, DynToolStartFn,
+    SYM_AOMI_ASYNC_TOOL_START, SYM_AOMI_SDK_VERSION,
 };
 use libloading::Library;
+use std::ffi::CStr;
 
 #[test]
 fn raw_ffi_symbols_match_the_documented_abi_surface() {
@@ -15,9 +16,9 @@ fn raw_ffi_symbols_match_the_documented_abi_surface() {
     let library = unsafe { Library::new(&path) }.expect("failed to open dyn-hello library");
 
     unsafe {
-        let abi_version = *library
-            .get::<DynAbiVersionFn>(SYM_AOMI_ABI_VERSION)
-            .expect("missing aomi_abi_version");
+        let sdk_version = *library
+            .get::<DynSdkVersionFn>(SYM_AOMI_SDK_VERSION)
+            .expect("missing aomi_sdk_version");
         let create = *library
             .get::<DynCreateFn>(AOMI_CREATE)
             .expect("missing aomi_create");
@@ -45,7 +46,10 @@ fn raw_ffi_symbols_match_the_documented_abi_surface() {
             !instance.is_null(),
             "create should return a non-null instance"
         );
-        assert_eq!(abi_version(), AOMI_ABI_VERSION);
+        let version_text = CStr::from_ptr(sdk_version())
+            .to_str()
+            .expect("sdk version should be valid utf-8");
+        assert_eq!(version_text, AOMI_SDK_VERSION);
 
         let manifest_raw = manifest(instance);
         assert!(!manifest_raw.is_null(), "manifest should return JSON");
