@@ -39,13 +39,14 @@ exclude = [
     "apps/pelagos",
     "apps/yearn",
     "apps/zerox",
+    "apps/polymarket-rewards",
 ]
 resolver = "2"
 
 [workspace.package]
 edition = "2024"
 license = "MIT"
-rust-version = "1.88"
+rust-version = "1.91"
 
 [workspace.dependencies]
 aomi-sdk = { path = "sdk" }
