@@ -1,6 +1,14 @@
-# aomi-apps
+# Aomi SDK
 
-Open-source app layer for the Aomi ecosystem.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Rust](https://img.shields.io/badge/Rust-000000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![CI](https://github.com/aomi-labs/aomi-sdk/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/aomi-labs/aomi-sdk/actions/workflows/ci.yml)
+
+> Build plugins for Aomi — open-source AI blockchain infrastructure for executing on-chain transactions.
+
+## What is Aomi SDK?
+
+The Aomi SDK is the open-source plugin development kit for extending Aomi — open-source AI blockchain infrastructure for executing on-chain transactions. This repository contains the public SDK, reference apps, and a build toolchain for compiling dynamic plugins that the Aomi runtime hot-loads.
 
 This repository contains public dynamic app crates, the public SDK they build against, and a small build toolchain for compiling plugins. It intentionally excludes:
 
