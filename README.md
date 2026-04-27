@@ -4,11 +4,11 @@
 [![Rust](https://img.shields.io/badge/Rust-000000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
 [![CI](https://github.com/aomi-labs/aomi-sdk/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/aomi-labs/aomi-sdk/actions/workflows/ci.yml)
 
-> Build plugins for Aomi — open-source AI infrastructure for automating crypto.
+> The best blockchain harness for agentic AI - on-chain execution with runtime, skills, and component library.
 
 ## What is Aomi SDK?
 
-The Aomi SDK is the open-source plugin development kit for extending Aomi — open-source AI infrastructure for automating crypto. This repository contains the public SDK, reference apps, and a build toolchain for compiling dynamic plugins that the Aomi runtime hot-loads.
+The Aomi SDK is the plugin development kit for extending Aomi. This repository contains the public SDK, reference apps, and a build toolchain for compiling dynamic plugins that the Aomi runtime hot-loads.
 
 This repository contains public dynamic app crates, the public SDK they build against, and a small build toolchain for compiling plugins. It intentionally excludes:
 
@@ -247,9 +247,6 @@ LOCAL_AOMI_APPS=/path/to/aomi-apps bash scripts/dev.sh --local-apps
 The SDK is vendored in `sdk`, including its tests and `examples/hello-app`, so this repository compiles without reaching back into `product-mono`.
 
 ## FAQ
-
-**Is the Aomi SDK open-source?**
-Yes. The plugin SDK, example apps, and build toolchain in this repo are all MIT licensed. The runtime/loader implementation is intentionally excluded and not open-source.
 
 **What language is the SDK in?**
 Rust. Plugins compile to dynamic libraries (`.so` on Linux, `.dylib` on macOS) that the runtime hot-loads.
