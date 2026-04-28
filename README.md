@@ -74,14 +74,6 @@ cargo run -p xtask -- build-aomi --release
 cargo run -p xtask -- build-aomi --target aarch64-apple-darwin
 ```
 
-Smoke-test the CoW signing flow through the real dynamic plugin loader with:
-
-```bash
-cargo run -p xtask -- smoke-cow
-```
-
-This builds `cow` and `defi`, loads their cdylibs with `DynFnHandle`, quotes through both plugins, signs the returned CoW typed data locally, and verifies live submission fails with `InsufficientBalance` rather than `WrongOwner`.
-
 ## Publication Pipeline
 
 Apps are developed via PR, built by CI, and delivered to the runtime as pre-built dynamic plugins.
