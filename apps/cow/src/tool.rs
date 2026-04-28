@@ -6,40 +6,96 @@ impl DynAomiTool for GetCowSwapQuote {
     type App = CowApp;
     type Args = GetCowSwapQuoteArgs;
     const NAME: &'static str = "get_cow_swap_quote";
-    const DESCRIPTION: &'static str = "Get a CoW Protocol swap quote with fee estimation.";
+    const DESCRIPTION: &'static str = "Get a CoW Protocol swap quote and return the exact EIP-712 typed data plus submission template that must be preserved for signing and order placement.";
 
     fn run(_app: &CowApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = CowClient::new()?;
-        let (chain_name, _) = get_chain_info(&args.chain)?;
+        let (chain_name, chain_id) = get_chain_info(&args.chain)?;
         let sell_addr = get_token_address(chain_name, &args.sell_token)?;
         let buy_addr = get_token_address(chain_name, &args.buy_token)?;
         let decimals = get_token_decimals(chain_name, &args.sell_token);
         let amount_base = amount_to_base_units(args.amount, decimals)?;
+        let sender_address = args.sender_address.clone();
+        let receiver = args
+            .receiver_address
+            .clone()
+            .unwrap_or_else(|| sender_address.clone());
+        let order_side = args
+            .order_side
+            .clone()
+            .unwrap_or_else(|| "sell".to_string());
+        let signing_scheme = args
+            .signing_scheme
+            .clone()
+            .unwrap_or_else(|| "eip712".to_string());
 
         let mut payload = json!({
             "sellToken": sell_addr,
             "buyToken": buy_addr,
             "sellAmountBeforeFee": amount_base,
-            "from": args.sender_address,
-            "kind": args.order_side.clone().unwrap_or_else(|| "sell".to_string()),
+            "from": sender_address.clone(),
+            "receiver": receiver,
+            "kind": order_side,
+            "signingScheme": signing_scheme.clone(),
         });
-        if let Some(receiver) = args.receiver_address.clone() {
-            payload["receiver"] = Value::String(receiver);
-        }
         if let Some(valid_to) = args.valid_to {
             payload["validTo"] = json!(valid_to);
         }
         if let Some(partially_fillable) = args.partially_fillable {
             payload["partiallyFillable"] = json!(partially_fillable);
         }
-        if let Some(signing_scheme) = args.signing_scheme.clone() {
-            payload["signingScheme"] = Value::String(signing_scheme);
-        }
         if let Some(slippage) = args.slippage {
             payload["slippageBps"] = json!((slippage * 10_000.0) as u32);
         }
 
-        client.get_quote(&args.chain, payload)
+        let mut quote = client.get_quote(&args.chain, payload)?;
+        let order_to_sign = canonicalize_quote_order(&quote)?;
+        let typed_data = build_cow_order_typed_data(chain_id, order_to_sign.clone());
+        let submit_args_template = build_cow_submit_args_template(
+            &args.chain,
+            &order_to_sign,
+            &sender_address,
+            &signing_scheme,
+        )?;
+
+        if let Value::Object(ref mut map) = quote {
+            let description = format!(
+                "Sign CoW Protocol order: swap {} {} to {} on {}.",
+                args.amount, args.sell_token, args.buy_token, args.chain
+            );
+            map.insert("order_to_sign".to_string(), order_to_sign);
+            map.insert("typed_data".to_string(), typed_data.clone());
+            map.insert("submit_args_template".to_string(), submit_args_template);
+            if signing_scheme.eq_ignore_ascii_case("eip712") {
+                map.insert(
+                    "next_step_hint".to_string(),
+                    Value::String(
+                        "Use send_eip712_to_wallet with the exact typed_data above, then call place_cow_order with submit_args_template after replacing signed_order.signature with the wallet callback signature.".to_string(),
+                    ),
+                );
+                map.insert(
+                    "SYSTEM_NEXT_ACTION".to_string(),
+                    json!([{
+                        "name": "send_eip712_to_wallet",
+                        "args": {
+                            "typed_data": typed_data,
+                            "description": description,
+                        },
+                        "reason": "CoW requires the exact EIP-712 order from this quote to be signed.",
+                        "condition": "Only after the user confirms the quoted order details."
+                    }]),
+                );
+            } else {
+                map.insert(
+                    "next_step_hint".to_string(),
+                    Value::String(
+                        "Preserve order_to_sign and submit_args_template exactly. If you use ethsign, sign the CoW order with that scheme and place the order with the returned wallet signature.".to_string(),
+                    ),
+                );
+            }
+        }
+
+        Ok(quote)
     }
 }
 
@@ -47,7 +103,7 @@ impl DynAomiTool for PlaceCowOrder {
     type App = CowApp;
     type Args = PlaceCowOrderArgs;
     const NAME: &'static str = "place_cow_order";
-    const DESCRIPTION: &'static str = "Submit a signed CoW Protocol orderbook payload to CoW /orders API on the requested chain. Use the host's wallet/signing tools for any required user approval.";
+    const DESCRIPTION: &'static str = "Submit a signed CoW Protocol orderbook payload to CoW /orders API on the requested chain. Prefer using the submit_args_template returned by get_cow_swap_quote and only fill in the wallet signature.";
 
     fn run(_app: &CowApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = CowClient::new()?;

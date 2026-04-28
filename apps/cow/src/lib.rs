@@ -30,9 +30,9 @@ CoW Protocol supports the following chains:
 
 ## Tool Flow
 1. Use `get_cow_swap_quote` for price discovery and fee estimation.
-2. The quote returns `sellToken`, `buyToken`, `sellAmount`, `buyAmount`, `feeAmount`, and order parameters.
-3. The user must sign the order using the host's wallet/signing tools (EIP-712 or ethsign).
-4. Use `place_cow_order` to submit the signed order payload to CoW's orderbook API.
+2. The quote response also returns the canonical `order_to_sign`, `typed_data`, and `submit_args_template`.
+3. Use the host's `send_eip712_to_wallet` tool with the exact `typed_data` returned by the quote tool.
+4. After the wallet callback returns a signature, copy it into `submit_args_template.signed_order.signature` and call `place_cow_order`.
 5. Use `get_cow_order` or `get_cow_order_status` to track order progress.
 6. Use `get_cow_user_orders` to list a wallet's order history.
 7. Use `cancel_cow_orders` to cancel open orders (requires owner signature).
@@ -44,6 +44,7 @@ CoW Protocol supports the following chains:
 ## Rules
 - Always get a quote before placing an order.
 - The signed order payload must include the signature from the user's wallet.
+- Never invent or recompute the EIP-712 domain manually. Preserve the `typed_data` exactly as returned.
 - Never modify order parameters between quote and submission.
 - CoW orders are off-chain (gasless for the user) -- the solver network executes on-chain.
 - When querying trades, provide exactly one of `owner` or `order_uid`, never both."#;

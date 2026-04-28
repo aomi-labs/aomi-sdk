@@ -12,6 +12,7 @@ pub(crate) struct CowApp;
 // ============================================================================
 
 pub(crate) const DEFAULT_COW_ENDPOINT: &str = "https://api.cow.fi/mainnet";
+pub(crate) const COW_SETTLEMENT_CONTRACT: &str = "0x9008D19f58AAbD9eD0D60971565AA8510560ab41";
 
 #[derive(Clone)]
 pub(crate) struct CowClient {
@@ -248,6 +249,106 @@ pub(crate) fn with_source(value: Value) -> Value {
     }
 }
 
+pub(crate) fn canonicalize_quote_order(quote_response: &Value) -> Result<Value, String> {
+    let quote = quote_response
+        .get("quote")
+        .and_then(Value::as_object)
+        .ok_or_else(|| "[cow] quote response missing quote object".to_string())?;
+
+    let mut order = serde_json::Map::new();
+    for field in [
+        "sellToken",
+        "buyToken",
+        "receiver",
+        "sellAmount",
+        "buyAmount",
+        "validTo",
+        "appData",
+        "feeAmount",
+        "kind",
+        "partiallyFillable",
+        "sellTokenBalance",
+        "buyTokenBalance",
+    ] {
+        let value = quote
+            .get(field)
+            .cloned()
+            .ok_or_else(|| format!("[cow] quote missing `{field}`"))?;
+        order.insert(field.to_string(), value);
+    }
+
+    if order
+        .get("receiver")
+        .map(|value| value.is_null())
+        .unwrap_or(true)
+    {
+        return Err(
+            "[cow] quote receiver is null; request the quote with receiver set to the wallet address"
+                .to_string(),
+        );
+    }
+
+    Ok(Value::Object(order))
+}
+
+pub(crate) fn build_cow_order_typed_data(chain_id: u64, order_to_sign: Value) -> Value {
+    json!({
+        "types": {
+            "EIP712Domain": [
+                { "name": "name", "type": "string" },
+                { "name": "version", "type": "string" },
+                { "name": "chainId", "type": "uint256" },
+                { "name": "verifyingContract", "type": "address" },
+            ],
+            "Order": [
+                { "name": "sellToken", "type": "address" },
+                { "name": "buyToken", "type": "address" },
+                { "name": "receiver", "type": "address" },
+                { "name": "sellAmount", "type": "uint256" },
+                { "name": "buyAmount", "type": "uint256" },
+                { "name": "validTo", "type": "uint32" },
+                { "name": "appData", "type": "bytes32" },
+                { "name": "feeAmount", "type": "uint256" },
+                { "name": "kind", "type": "string" },
+                { "name": "partiallyFillable", "type": "bool" },
+                { "name": "sellTokenBalance", "type": "string" },
+                { "name": "buyTokenBalance", "type": "string" },
+            ],
+        },
+        "primaryType": "Order",
+        "domain": {
+            "name": "Gnosis Protocol",
+            "version": "v2",
+            "chainId": chain_id,
+            "verifyingContract": COW_SETTLEMENT_CONTRACT,
+        },
+        "message": order_to_sign,
+    })
+}
+
+pub(crate) fn build_cow_submit_args_template(
+    chain: &str,
+    order_to_sign: &Value,
+    from: &str,
+    signing_scheme: &str,
+) -> Result<Value, String> {
+    let mut signed_order = order_to_sign
+        .as_object()
+        .cloned()
+        .ok_or_else(|| "[cow] order_to_sign must be an object".to_string())?;
+    signed_order.insert("from".to_string(), Value::String(from.to_string()));
+    signed_order.insert("signature".to_string(), Value::Null);
+    signed_order.insert(
+        "signingScheme".to_string(),
+        Value::String(signing_scheme.to_string()),
+    );
+
+    Ok(json!({
+        "chain": chain,
+        "signed_order": signed_order,
+    }))
+}
+
 pub(crate) fn amount_to_base_units(amount: f64, decimals: u8) -> Result<String, String> {
     if !amount.is_finite() || amount < 0.0 {
         return Err("amount must be a finite non-negative number".to_string());
@@ -269,6 +370,7 @@ pub(crate) fn get_chain_info(chain: &str) -> Result<(&'static str, u64), String>
         "bsc" | "binance" => Ok(("bsc", 56)),
         "avalanche" | "avax" => Ok(("avalanche", 43114)),
         "gnosis" | "xdai" => Ok(("gnosis", 100)),
+        "sepolia" => Ok(("ethereum", 11155111)),
         _ => Err(format!("[cow] unsupported chain: {chain}")),
     }
 }
@@ -481,6 +583,7 @@ pub(crate) struct DebugCowOrderArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     fn client() -> CowClient {
         CowClient::new().expect("client should build")
@@ -589,5 +692,86 @@ mod tests {
         assert_eq!(get_token_decimals("ethereum", "usdc"), 6);
         assert_eq!(get_token_decimals("ethereum", "wbtc"), 8);
         assert_eq!(get_token_decimals("ethereum", "eth"), 18);
+    }
+
+    #[test]
+    fn canonicalize_quote_order_requires_receiver() {
+        let quote = json!({
+            "quote": {
+                "sellToken": "0x1",
+                "buyToken": "0x2",
+                "receiver": null,
+                "sellAmount": "1",
+                "buyAmount": "2",
+                "validTo": 1,
+                "appData": "0x0000000000000000000000000000000000000000000000000000000000000000",
+                "feeAmount": "0",
+                "kind": "sell",
+                "partiallyFillable": false,
+                "sellTokenBalance": "erc20",
+                "buyTokenBalance": "erc20"
+            }
+        });
+
+        let err = canonicalize_quote_order(&quote).expect_err("null receiver should be rejected");
+        assert!(err.contains("receiver is null"));
+    }
+
+    #[test]
+    fn build_cow_order_typed_data_uses_canonical_domain() {
+        let typed_data = build_cow_order_typed_data(
+            137,
+            json!({
+                "sellToken": "0x1",
+                "buyToken": "0x2",
+                "receiver": "0x0000000000000000000000000000000000000003",
+                "sellAmount": "1",
+                "buyAmount": "2",
+                "validTo": 1,
+                "appData": "0x0000000000000000000000000000000000000000000000000000000000000000",
+                "feeAmount": "0",
+                "kind": "sell",
+                "partiallyFillable": false,
+                "sellTokenBalance": "erc20",
+                "buyTokenBalance": "erc20"
+            }),
+        );
+
+        assert_eq!(
+            typed_data["domain"]["verifyingContract"].as_str(),
+            Some(COW_SETTLEMENT_CONTRACT)
+        );
+        assert_eq!(typed_data["domain"]["chainId"].as_u64(), Some(137));
+    }
+
+    #[test]
+    fn build_submit_args_template_includes_signature_placeholder() {
+        let template = build_cow_submit_args_template(
+            "polygon",
+            &json!({
+                "sellToken": "0x1",
+                "buyToken": "0x2",
+                "receiver": "0x0000000000000000000000000000000000000003",
+                "sellAmount": "1",
+                "buyAmount": "2",
+                "validTo": 1,
+                "appData": "0x0000000000000000000000000000000000000000000000000000000000000000",
+                "feeAmount": "0",
+                "kind": "sell",
+                "partiallyFillable": false,
+                "sellTokenBalance": "erc20",
+                "buyTokenBalance": "erc20"
+            }),
+            "0x0000000000000000000000000000000000000004",
+            "eip712",
+        )
+        .expect("template should build");
+
+        assert_eq!(template["chain"].as_str(), Some("polygon"));
+        assert!(template["signed_order"]["signature"].is_null());
+        assert_eq!(
+            template["signed_order"]["signingScheme"].as_str(),
+            Some("eip712")
+        );
     }
 }

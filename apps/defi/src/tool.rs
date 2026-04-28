@@ -203,16 +203,18 @@ impl DynAomiTool for GetAggregatorSwapQuote {
         }
 
         if want_all || preferred == "cow" {
+            let receiver = args
+                .receiver_address
+                .clone()
+                .unwrap_or_else(|| args.sender_address.clone());
             let mut payload = json!({
                 "sellToken": client.resolve_token_address(&args.chain, &args.sell_token)?,
                 "buyToken": client.resolve_token_address(&args.chain, &args.buy_token)?,
                 "sellAmountBeforeFee": amount_base_units,
                 "from": args.sender_address,
+                "receiver": receiver,
                 "kind": args.order_side.clone().unwrap_or_else(|| "sell".to_string()),
             });
-            if let Some(receiver) = args.receiver_address.clone() {
-                payload["receiver"] = Value::String(receiver);
-            }
             if let Some(valid_to) = args.valid_to {
                 payload["validTo"] = json!(valid_to);
             }
