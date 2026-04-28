@@ -25,7 +25,7 @@ impl DynAomiTool for GetOneInchSwap {
     type App = OneInchApp;
     type Args = GetOneInchSwapArgs;
     const NAME: &'static str = "get_oneinch_swap";
-    const DESCRIPTION: &'static str = "Get a 1inch swap quote with executable transaction calldata. Returns tx object (to, data, value, gas) that the host should verify with `encode_and_simulate` and send with `send_transaction_to_wallet`.";
+    const DESCRIPTION: &'static str = "Get a 1inch swap quote with executable transaction calldata. Returns a raw tx object (to, data, value, gas) that the host should stage with `stage_tx` using `data.raw`, verify with `simulate_batch`, then finalize with `commit_tx`.";
 
     fn run(_app: &OneInchApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = OneInchClient::new(args.api_key.as_deref())?;
@@ -46,7 +46,7 @@ impl DynAomiTool for GetOneInchApproveTransaction {
     type App = OneInchApp;
     type Args = GetOneInchApproveTransactionArgs;
     const NAME: &'static str = "get_oneinch_approve_transaction";
-    const DESCRIPTION: &'static str = "Get transaction data to approve the 1inch router to spend a token. Returns tx object (to, data, value) for the approval. Omit amount for unlimited approval.";
+    const DESCRIPTION: &'static str = "Get transaction data to approve the 1inch router to spend a token. Returns a raw approval tx object (to, data, value). Omit amount for unlimited approval. Stage it directly with `stage_tx` using `data.raw`; do not re-encode calldata.";
 
     fn run(_app: &OneInchApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = OneInchClient::new(args.api_key.as_deref())?;

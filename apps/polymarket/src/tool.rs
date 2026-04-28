@@ -72,7 +72,7 @@ fn build_polymarket_follow_up_result(
         "wallet_signature_step".to_string(),
         json!({
             "wallet_tool": wallet_tool,
-            "signing_primitive": if wallet_tool == "send_eip712_to_wallet" {
+            "signing_primitive": if wallet_tool == "commit_eip712" {
                 Some("EIP712_TYPED_DATA_V4")
             } else {
                 None::<&str>
@@ -526,7 +526,7 @@ impl DynAomiTool for BuildPolymarketOrder {
 
             return build_polymarket_follow_up_result(
                 result,
-                "send_eip712_to_wallet",
+                "commit_eip712",
                 wallet_request,
                 FollowUpSpec {
                     step: "submit_polymarket_order",
@@ -621,7 +621,7 @@ impl DynAomiTool for SubmitPolymarketOrder {
             });
             return build_polymarket_follow_up_result(
                 result,
-                "send_eip712_to_wallet",
+                "commit_eip712",
                 wallet_request,
                 FollowUpSpec {
                     step: "submit_polymarket_order",
@@ -662,7 +662,7 @@ impl DynAomiTool for SubmitPolymarketOrder {
 
         build_polymarket_follow_up_result(
             result,
-            "send_eip712_to_wallet",
+            "commit_eip712",
             wallet_request,
             FollowUpSpec {
                 step: "submit_polymarket_order",

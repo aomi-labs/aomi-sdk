@@ -29,15 +29,9 @@ fn build_rewards_follow_up_result(
     follow_up_reason: &str,
     callback_field: &str,
 ) -> Result<Value, String> {
-    let callback_condition = if wallet_tool == "send_eip712_batch_to_wallet" {
-        format!(
-            "After wallet callback reports batch signature success; include {callback_field} from callback."
-        )
-    } else {
-        format!(
-            "After wallet callback reports signature success; include {callback_field} from callback."
-        )
-    };
+    let callback_condition = format!(
+        "After wallet callback reports signature success; include {callback_field} from callback."
+    );
 
     let tool_calls = vec![
         NextActionTool {
@@ -224,7 +218,7 @@ impl DynAomiTool for EnsureRewardClobCredentials {
     type App = PolymarketRewardsApp;
     type Args = EnsureRewardClobCredentialsArgs;
     const NAME: &'static str = "ensure_reward_clob_credentials";
-    const DESCRIPTION: &'static str = "Create or derive Polymarket CLOB credentials for the connected wallet. Preferred behavior: if no `clob_l1_signature` is provided, return the exact `send_eip712_to_wallet` action needed to sign ClobAuth. After the wallet callback, call this tool again with `clob_auth` and `clob_l1_signature` to receive `api_key`, `api_secret`, and `passphrase`.";
+    const DESCRIPTION: &'static str = "Create or derive Polymarket CLOB credentials for the connected wallet. Preferred behavior: if no `clob_l1_signature` is provided, return the exact `commit_eip712` action needed to sign ClobAuth. After the wallet callback, call this tool again with `clob_auth` and `clob_l1_signature` to receive `api_key`, `api_secret`, and `passphrase`.";
 
     fn run(
         _app: &PolymarketRewardsApp,
@@ -260,7 +254,7 @@ impl DynAomiTool for EnsureRewardClobCredentials {
                 "address": args.address,
                 "clob_auth": clob_auth.clone(),
             },
-            "next_step_hint": "The host should call send_eip712_to_wallet with the exact typed_data below, then call ensure_reward_clob_credentials again with clob_auth and clob_l1_signature from the wallet callback.",
+            "next_step_hint": "The host should call commit_eip712 with the exact typed_data below, then call ensure_reward_clob_credentials again with clob_auth and clob_l1_signature from the wallet callback.",
         });
         let wallet_request = json!({
             "typed_data": build_reward_clob_auth_typed_data(&clob_auth),
@@ -269,7 +263,7 @@ impl DynAomiTool for EnsureRewardClobCredentials {
 
         build_rewards_follow_up_result(
             result,
-            "send_eip712_to_wallet",
+            "commit_eip712",
             wallet_request,
             "ensure_reward_clob_credentials",
             json!({
@@ -856,9 +850,9 @@ impl DynAomiTool for BuildQuotePlan {
                 QuoteExecutionMode::FourLeg => (
                     vec!["yes_bid", "yes_ask", "no_bid", "no_ask"],
                     args.order_size_usd * 4.0,
-                    "If needed, call ensure_reward_clob_credentials first so the host can prompt for the ClobAuth signature and derive CLOB credentials automatically. If the user already confirmed this quote preview, do not stop for another approval during credential setup or order signing. Sign all four quote-leg orders via the host wallet (send_eip712_to_wallet), call execute_quote_plan with simulate=true to review the exact signed orders, and only then wait for the user's reconfirmation before any live submission.".to_string(),
+                    "If needed, call ensure_reward_clob_credentials first so the host can prompt for the ClobAuth signature and derive CLOB credentials automatically. If the user already confirmed this quote preview, do not stop for another approval during credential setup or order signing. Sign all four quote-leg orders via the host wallet (`commit_eip712`), call execute_quote_plan with simulate=true to review the exact signed orders, and only then wait for the user's reconfirmation before any live submission.".to_string(),
                     "Sign each quote-leg limit order for Polymarket reward deployment".to_string(),
-                    "send_eip712_to_wallet",
+                    "commit_eip712",
                 ),
                 QuoteExecutionMode::TwoLegBidOnly => (
                     vec!["yes_bid", "no_bid"],

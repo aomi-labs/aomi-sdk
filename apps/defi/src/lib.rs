@@ -39,7 +39,7 @@ All data comes from DeFiLlama (free, no API key required):
 3. Use `get_aggregator_swap_quote` to find best DEX rates
 4. Ask the user which aggregator they prefer (0x, LI.FI, CoW). If unspecified, query all.
 5. Use `get_bridge_quote` to fetch executable bridge route details when wallet addresses are available
-6. Use `place_aggregator_evm_order` to get tx data for 0x/LI.FI orders, then use the host's `encode_and_simulate` and `send_transaction_to_wallet` tools for execution
+6. Use `place_aggregator_evm_order` to get raw tx data for 0x/LI.FI orders, then stage each tx with `stage_tx` using the raw-calldata path, verify the staged `pending_tx_id` list with `simulate_batch`, and finally use `commit_tx`
 7. Use `place_cow_order` to submit signed CoW orders to CoW orderbook API
 8. Use `get_defi_protocols` to explore top protocols by TVL or category
 9. Use `get_chain_tvl` to see which chains have most DeFi activity
@@ -48,8 +48,8 @@ All data comes from DeFiLlama (free, no API key required):
 ## IMPORTANT: ERC-20 Approval Before Swap (LI.FI)
 When executing swaps via LI.FI using `place_aggregator_evm_order`, selling an ERC-20 token (not native ETH) requires sufficient allowance for the LI.FI router.
 If simulation reverts with `TRANSFER_FROM_FAILED`, do this flow:
-1. Use `encode_and_view` to call `allowance(address,address)` on the sell-token contract with args: `[user_wallet_address, lifi_router_address]`
-2. If allowance is insufficient, approve the exact router/spender before retrying the swap.
+1. Use `view_state` to call `allowance(address,address)` on the sell-token contract with args: `[user_wallet_address, lifi_router_address]`
+2. If allowance is insufficient, stage an ERC-20 approval with `stage_tx` using `data: { encode: { signature: "approve(address,uint256)", args: [...] } }`, then simulate and commit it before retrying the swap.
 ### LI.FI Router Address
 - On many chains it is `0x1231DEB6f5749EF6cE6943a275A1D3E7486F4EaE`, but do not assume it is universal.
 - Preferred source of truth: extract router from `transactionRequest.to` returned by `get_aggregator_swap_quote` with `prefer_aggregator: lifi`.

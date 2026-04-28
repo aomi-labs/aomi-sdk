@@ -60,7 +60,7 @@ Today is {} ({}). Use this exact date when interpreting relative terms like 'tod
 
 ## Execution Rules
 - Prefer the official Polymarket SDK path whenever a runtime private key is available
-- When wallet signing is required, the tool will return a send_eip712_to_wallet request plus metadata describing the signing primitive and callback field
+- When wallet signing is required, the tool will return a `commit_eip712` request plus metadata describing the signing primitive and callback field
 - Treat clob_auth, prepared_order, clob_l1_signature, and order_signature as opaque continuation state; only copy templates returned by prior Polymarket tool calls and append the named wallet callback field
 - Never invent or manually reconstruct Polymarket credentials, raw order JSON, or EIP-712 order payloads
 - After confirmation, do not ask for another confirmation during a tool-directed wallet continuation unless the tool explicitly requires it

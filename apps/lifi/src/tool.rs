@@ -38,7 +38,7 @@ impl DynAomiTool for PlaceLifiOrder {
     type App = LifiApp;
     type Args = PlaceLifiOrderArgs;
     const NAME: &'static str = "place_lifi_order";
-    const DESCRIPTION: &'static str = "Get executable tx data via LI.FI. Returns approval_tx (if needed) and main_tx. Use the host's encode_and_simulate and send_transaction_to_wallet tools for execution.";
+    const DESCRIPTION: &'static str = "Get executable tx data via LI.FI. Returns approval_tx (if needed) and main_tx. Stage them with `stage_tx` using the raw-calldata path, verify them with `simulate_batch`, then finalize with `commit_tx`.";
 
     fn run(_app: &LifiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = LifiClient::new()?;
@@ -70,7 +70,7 @@ impl DynAomiTool for PlaceLifiOrder {
             "payload": payload,
             "approval_tx": payload.get("approval_tx").cloned().unwrap_or(Value::Null),
             "main_tx": payload.get("main_tx").cloned().unwrap_or(Value::Null),
-            "note": "If approval_tx is present, use the host's encode_and_simulate and send_transaction_to_wallet tools for the approval first, then do the same for main_tx.",
+            "note": "If approval_tx is present, stage approval_tx with stage_tx first using data.raw, stage main_tx the same way, simulate the staged pending_tx_id list with simulate_batch, then call commit_tx once per staged tx. Do not re-encode LI.FI calldata.",
         }))
     }
 }

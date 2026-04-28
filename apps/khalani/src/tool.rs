@@ -213,8 +213,8 @@ impl DynAomiTool for BuildKhalaniOrder {
                 &route_id,
                 "APPROVAL_FLOW",
                 summary,
-                "send_transaction_to_wallet",
-                build_wallet_tx_request(&tx, description),
+                "stage_tx",
+                build_stage_tx_request(&tx, description),
                 build_transaction_preflight(&tx),
                 follow_up,
             );
@@ -230,7 +230,7 @@ impl DynAomiTool for BuildKhalaniOrder {
                 &route_id,
                 &tx_type,
                 summary,
-                "send_eip712_to_wallet",
+                "commit_eip712",
                 json!({
                     "typed_data": typed_data,
                     "description": format!(
@@ -258,8 +258,8 @@ impl DynAomiTool for BuildKhalaniOrder {
             &route_id,
             &tx_type,
             summary,
-            "send_transaction_to_wallet",
-            build_wallet_tx_request(
+            "stage_tx",
+            build_stage_tx_request(
                 &tx,
                 format!(
                     "Khalani swap {} {} to {} on {}",

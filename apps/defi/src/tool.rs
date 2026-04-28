@@ -272,7 +272,7 @@ impl DynAomiTool for PlaceAggregatorEvmOrder {
     type App = DefiApp;
     type Args = PlaceAggregatorEvmOrderArgs;
     const NAME: &'static str = "place_aggregator_evm_order";
-    const DESCRIPTION: &'static str = "Get executable order tx data via 0x or LI.FI. Returns transaction data (to, data, value) that the host should verify with `encode_and_simulate` and send with `send_transaction_to_wallet`. LI.FI may return an approval_tx that must be executed first.";
+    const DESCRIPTION: &'static str = "Get executable order tx data via 0x or LI.FI. Returns raw transaction payloads that the host should stage with `stage_tx` using `data.raw`, verify with `simulate_batch`, then finalize with `commit_tx`. LI.FI may return an approval_tx that must be executed first.";
 
     fn run(_app: &DefiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = Aggregator::new()?;
@@ -307,7 +307,7 @@ impl DynAomiTool for PlaceAggregatorEvmOrder {
                 "source": "0x",
                 "quote": quote,
                 "transaction": tx,
-                "note": "Use the host's encode_and_simulate tool to verify this transaction, then use send_transaction_to_wallet to execute it.",
+                "note": "Stage this raw 0x transaction with stage_tx using data.raw, verify the staged pending_tx_id with simulate_batch, then call commit_tx. Do not re-encode 0x calldata.",
             }));
         }
 
@@ -334,7 +334,7 @@ impl DynAomiTool for PlaceAggregatorEvmOrder {
                 "payload": payload,
                 "approval_tx": payload.get("approval_tx").cloned().unwrap_or(Value::Null),
                 "main_tx": payload.get("main_tx").cloned().unwrap_or(Value::Null),
-                "note": "If approval_tx is present, use the host's encode_and_simulate and send_transaction_to_wallet tools for the approval first, then do the same for main_tx.",
+                "note": "If approval_tx is present, stage approval_tx with stage_tx first using data.raw, stage main_tx the same way, verify the staged pending_tx_id list with simulate_batch, then call commit_tx once per staged tx. Do not re-encode LI.FI calldata.",
             }));
         }
 

@@ -25,7 +25,7 @@ impl DynAomiTool for PlaceZeroxOrder {
     type App = ZeroxApp;
     type Args = PlaceZeroxOrderArgs;
     const NAME: &'static str = "place_zerox_order";
-    const DESCRIPTION: &'static str = "Get executable tx data via 0x allowance-holder/quote. Returns transaction data (to, data, value) that the host should verify with `encode_and_simulate` and send with `send_transaction_to_wallet`.";
+    const DESCRIPTION: &'static str = "Get executable tx data via 0x allowance-holder/quote. Returns a raw transaction payload (to, data, value) that the host should stage with `stage_tx` using `data.raw`, verify with `simulate_batch`, then finalize with `commit_tx`.";
 
     fn run(_app: &ZeroxApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = ZeroxClient::new(args.api_key.as_deref())?;
@@ -47,7 +47,7 @@ impl DynAomiTool for PlaceZeroxOrder {
             "source": "0x",
             "quote": quote,
             "transaction": tx,
-            "note": "Use the host's encode_and_simulate tool to verify this transaction, then use send_transaction_to_wallet to execute it.",
+            "note": "Stage this raw 0x transaction with stage_tx using data.raw, verify the staged pending_tx_id with simulate_batch, then call commit_tx. Do not re-encode 0x calldata.",
         }))
     }
 }

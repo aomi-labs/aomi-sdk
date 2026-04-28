@@ -530,7 +530,7 @@ pub(crate) fn build_transaction_preflight(tx: &Value) -> Option<Value> {
         let amount_hex = format!("0x{amount_word}");
 
         return Some(json!({
-            "tool": "encode_and_simulate",
+            "tool": "run_tx",
             "args": {
                 "function_signature": "approve(address,uint256)",
                 "arguments": [spender, amount_hex],
@@ -567,13 +567,16 @@ pub(crate) fn extract_quote_summary(quote_entry: &Value) -> Value {
     })
 }
 
-pub(crate) fn build_wallet_tx_request(tx: &Value, description: String) -> Value {
+pub(crate) fn build_stage_tx_request(tx: &Value, description: String) -> Value {
     json!({
         "to": tx.get("to").cloned().unwrap_or(Value::Null),
         "value": tx.get("value").cloned().unwrap_or_else(|| Value::String("0".to_string())),
-        "data": tx.get("data").cloned().unwrap_or_else(|| Value::String("0x".to_string())),
         "gas_limit": tx.get("gas_limit").cloned().unwrap_or(Value::Null),
         "description": description,
+        "data": {
+            "raw": tx.get("data").cloned().unwrap_or_else(|| Value::String("0x".to_string()))
+        },
+        "kind": "contract_call",
     })
 }
 
@@ -660,14 +663,17 @@ pub(crate) fn build_khalani_result(
             "build_khalani_order" => {
                 Some("After wallet callback reports approval success.".to_string())
             }
-            "submit_khalani_order" if wallet_tool == "send_eip712_to_wallet" => Some(
+            "submit_khalani_order" if wallet_tool == "commit_eip712" => Some(
                 "After wallet callback reports signature success; \
                  include signature from callback."
                     .to_string(),
             ),
+            "submit_khalani_order" if wallet_tool == "stage_tx" => Some(
+                "After stage_tx succeeds, follow the host transaction model for that staged tx (simulate_batch, then commit_tx). After the wallet callback reports transaction success, include transaction_hash from callback."
+                    .to_string(),
+            ),
             "submit_khalani_order" => Some(
-                "After wallet callback reports transaction success; \
-                 include transaction_hash from callback."
+                "After wallet callback reports transaction success; include transaction_hash from callback."
                     .to_string(),
             ),
             _ => None,

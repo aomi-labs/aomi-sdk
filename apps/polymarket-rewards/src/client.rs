@@ -105,8 +105,8 @@ Treat `submit_reward_quote` as a staged state machine. Only do what the returned
 - After live submission succeeds in the staged `submit_reward_quote` flow, stop and report only the exact returned submission result. Only call `get_quote_plan_status` if the user explicitly asks you to verify status next.
 
 ## Wallet UX
-- Prefer host-driven wallet callbacks (`send_eip712_to_wallet` or `send_eip712_batch_to_wallet`) over asking the user to copy/paste typed data or signatures manually.
-- If multiple order signatures are needed, batch them with `send_eip712_batch_to_wallet` so the host can collect them in one deterministic flow.
+- Prefer host-driven wallet callbacks via `commit_eip712` over asking the user to copy/paste typed data or signatures manually.
+- Do not assume a batch-signature host helper exists. If multiple order signatures are needed, collect them through repeated `commit_eip712` calls using the exact typed data returned by the tool flow.
 - Do not narrate that a second signature request was sent unless the wallet-signing tool actually ran in that same turn.
 
 ## Reward Qualification
