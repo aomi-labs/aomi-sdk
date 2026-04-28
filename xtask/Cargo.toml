@@ -6,4 +6,6 @@ publish = false
 
 [dependencies]
 aomi-sdk = { path = "../sdk" }
+alloy = { version = "1.8.3", default-features = false, features = ["signers", "signer-local"] }
+alloy-dyn-abi = { version = "1.5.7", features = ["eip712"] }
 toml = "0.8"

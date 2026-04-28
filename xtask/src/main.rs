@@ -1,16 +1,25 @@
 mod validate;
 
+use alloy::signers::{SignerSync, local::PrivateKeySigner};
+use alloy_dyn_abi::eip712::TypedData;
 use aomi_sdk::DynFnHandle;
+use aomi_sdk::serde_json::{self, Value, json};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::str::FromStr;
+
+const SMOKE_TEST_PRIVATE_KEY: &str =
+    "0x0000000000000000000000000000000000000000000000000000000000000001";
+const COW_SETTLEMENT_CONTRACT: &str = "0x9008D19f58AAbD9eD0D60971565AA8510560ab41";
 
 fn main() {
     let args: Vec<String> = env::args().skip(1).collect();
 
     match args.first().map(|s| s.as_str()) {
         Some("build-aomi") => cmd_build_plugins(&args[1..]),
+        Some("smoke-cow") => cmd_smoke_cow(&args[1..]),
         Some("new-app") => cmd_new_app(&args[1..]),
         Some(other) => {
             eprintln!("unknown subcommand: {other}");
@@ -27,6 +36,7 @@ fn main() {
 fn print_usage() {
     eprintln!("usage:");
     eprintln!("  cargo xtask build-aomi [--app NAME] [--release] [--target TRIPLE]");
+    eprintln!("  cargo xtask smoke-cow [--private-key 0x...]");
     eprintln!("  cargo xtask new-app <NAME>");
 }
 
@@ -367,6 +377,263 @@ fn should_codesign(target_triple: Option<&str>) -> bool {
     cfg!(target_os = "macos") && shared_library_ext(target_triple) == "dylib"
 }
 
+fn cmd_smoke_cow(args: &[String]) {
+    let mut private_key = SMOKE_TEST_PRIVATE_KEY.to_string();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--private-key" => {
+                i += 1;
+                private_key = args
+                    .get(i)
+                    .unwrap_or_else(|| {
+                        eprintln!("--private-key requires a value");
+                        std::process::exit(1);
+                    })
+                    .clone();
+            }
+            other => {
+                eprintln!("unknown flag: {other}");
+                std::process::exit(1);
+            }
+        }
+        i += 1;
+    }
+
+    let repo_root = repo_root();
+    let cargo = env::var("CARGO").expect("CARGO must be set by cargo");
+    let target_dir = repo_root.join("target");
+    let cargo_home = repo_root.join(".cargo-home");
+    let plugins_dir = repo_root.join("plugins");
+    fs::create_dir_all(&cargo_home).expect("failed to create .cargo-home");
+    fs::create_dir_all(&plugins_dir).expect("failed to create plugins");
+
+    let cow_plugin = prepare_plugin_for_smoke(
+        &repo_root,
+        &cargo,
+        &target_dir,
+        &cargo_home,
+        &plugins_dir,
+        "cow",
+    );
+    let defi_plugin = prepare_plugin_for_smoke(
+        &repo_root,
+        &cargo,
+        &target_dir,
+        &cargo_home,
+        &plugins_dir,
+        "defi",
+    );
+
+    let cow = unsafe {
+        DynFnHandle::load(&cow_plugin)
+            .unwrap_or_else(|err| panic!("failed to load {}: {err}", cow_plugin.display()))
+    };
+    let defi = unsafe {
+        DynFnHandle::load(&defi_plugin)
+            .unwrap_or_else(|err| panic!("failed to load {}: {err}", defi_plugin.display()))
+    };
+
+    let cow_manifest = cow.call_manifest().expect("failed to read cow manifest");
+    assert!(
+        cow_manifest
+            .tools
+            .iter()
+            .any(|tool| tool.name == "get_cow_swap_quote")
+    );
+    let defi_manifest = defi.call_manifest().expect("failed to read defi manifest");
+    assert!(
+        defi_manifest
+            .tools
+            .iter()
+            .any(|tool| tool.name == "get_aggregator_swap_quote")
+    );
+
+    let signer = PrivateKeySigner::from_str(private_key.trim())
+        .unwrap_or_else(|err| panic!("invalid private key: {err}"));
+    let address = format!("{:#x}", signer.address());
+
+    let defi_quote = defi
+        .call_exec_tool(
+            "get_aggregator_swap_quote",
+            &json!({
+                "chain": "polygon",
+                "sell_token": "usdc",
+                "buy_token": "weth",
+                "amount": 1.0,
+                "sender_address": address,
+                "prefer_aggregator": "cow",
+                "signing_scheme": "eip712",
+            })
+            .to_string(),
+            &tool_ctx_json("get_aggregator_swap_quote"),
+        )
+        .expect("defi cow quote should succeed");
+    assert_eq!(
+        defi_quote.get("source").and_then(Value::as_str),
+        Some("cow")
+    );
+    let defi_receiver = defi_quote
+        .pointer("/quote/receiver")
+        .and_then(Value::as_str)
+        .expect("defi cow quote should include receiver");
+    assert!(
+        defi_receiver.eq_ignore_ascii_case(&address),
+        "defi quote receiver should default to sender; got {defi_receiver}"
+    );
+
+    let cow_quote = cow
+        .call_exec_tool(
+            "get_cow_swap_quote",
+            &json!({
+                "chain": "polygon",
+                "sell_token": "usdc",
+                "buy_token": "weth",
+                "amount": 1.0,
+                "sender_address": address,
+                "signing_scheme": "eip712",
+            })
+            .to_string(),
+            &tool_ctx_json("get_cow_swap_quote"),
+        )
+        .expect("cow quote should succeed");
+
+    let cow_receiver = cow_quote
+        .pointer("/quote/receiver")
+        .and_then(Value::as_str)
+        .expect("cow quote should include receiver");
+    assert!(
+        cow_receiver.eq_ignore_ascii_case(&address),
+        "cow quote receiver should default to sender; got {cow_receiver}"
+    );
+
+    let typed_data = cow_quote
+        .get("typed_data")
+        .cloned()
+        .expect("cow quote should include typed_data");
+    assert_eq!(
+        typed_data
+            .pointer("/domain/verifyingContract")
+            .and_then(Value::as_str),
+        Some(COW_SETTLEMENT_CONTRACT)
+    );
+
+    let signature = sign_typed_data(&signer, &typed_data).expect("typed data should sign");
+    let mut submit_args = cow_quote
+        .get("submit_args_template")
+        .cloned()
+        .expect("cow quote should include submit_args_template");
+    submit_args["signed_order"]["signature"] = Value::String(signature);
+
+    let submit_error = cow
+        .call_exec_tool(
+            "place_cow_order",
+            &submit_args.to_string(),
+            &tool_ctx_json("place_cow_order"),
+        )
+        .expect_err("fixture signer should not have Polygon USDC balance")
+        .to_string();
+
+    assert!(
+        submit_error.contains("InsufficientBalance"),
+        "expected InsufficientBalance from live submit, got: {submit_error}"
+    );
+    assert!(
+        !submit_error.contains("WrongOwner"),
+        "signer mismatch should be gone: {submit_error}"
+    );
+
+    println!(
+        "{}",
+        json!({
+            "status": "ok",
+            "cow_plugin": cow_plugin.display().to_string(),
+            "defi_plugin": defi_plugin.display().to_string(),
+            "address": address,
+            "quote_receiver": cow_receiver,
+            "defi_quote_receiver": defi_receiver,
+            "verifying_contract": COW_SETTLEMENT_CONTRACT,
+            "submit_error": submit_error,
+        })
+    );
+}
+
+fn prepare_plugin_for_smoke(
+    repo_root: &Path,
+    cargo: &str,
+    target_dir: &Path,
+    cargo_home: &Path,
+    plugins_dir: &Path,
+    app_name: &str,
+) -> PathBuf {
+    let manifest_path = repo_root.join("apps").join(app_name).join("Cargo.toml");
+    if !build_app(cargo, &manifest_path, target_dir, cargo_home, "debug", None) {
+        panic!("failed to build app {app_name}");
+    }
+
+    let built_lib = built_library_path(target_dir, "debug", None, app_name);
+    if !built_lib.is_file() {
+        panic!("expected built plugin at {}", built_lib.display());
+    }
+
+    let manifest_name = plugin_manifest_name(&built_lib);
+    let dest = plugins_dir.join(library_file_name(&manifest_name, None));
+    fs::copy(&built_lib, &dest).unwrap_or_else(|err| {
+        panic!(
+            "failed to copy {} to {}: {err}",
+            built_lib.display(),
+            dest.display()
+        )
+    });
+
+    if should_codesign(None) {
+        let status = Command::new("codesign")
+            .args(["-s", "-", "-f"])
+            .arg(&dest)
+            .status()
+            .unwrap_or_else(|err| panic!("failed to run codesign on {}: {err}", dest.display()));
+        if !status.success() {
+            panic!(
+                "codesign failed for {} with status {status}",
+                dest.display()
+            );
+        }
+    }
+
+    let validation_errors = validate::validate_plugin(&dest);
+    if !validation_errors.is_empty() {
+        panic!(
+            "plugin validation failed for {}: {}",
+            dest.display(),
+            validation_errors.join("; ")
+        );
+    }
+
+    dest
+}
+
+fn tool_ctx_json(tool_name: &str) -> String {
+    json!({
+        "session_id": "xtask-smoke-cow",
+        "tool_name": tool_name,
+        "call_id": format!("{tool_name}-xtask"),
+        "state_attributes": {},
+    })
+    .to_string()
+}
+
+fn sign_typed_data(signer: &PrivateKeySigner, typed_data: &Value) -> Result<String, String> {
+    let typed: TypedData = serde_json::from_value(typed_data.clone())
+        .map_err(|e| format!("invalid typed data payload: {e}"))?;
+    let hash = typed
+        .eip712_signing_hash()
+        .map_err(|e| format!("failed to hash typed data: {e}"))?;
+    let signature = signer
+        .sign_hash_sync(&hash)
+        .map_err(|e| format!("failed to sign typed data: {e}"))?;
+    Ok(signature.to_string())
+}
+
 // ── new-app scaffolding ─────────────────────────────────────────────────────
 
 fn cmd_new_app(args: &[String]) {
@@ -518,7 +785,7 @@ impl DynAomiTool for ExampleTool {{
         // Insert before the closing bracket of the exclude array
         let new_toml = workspace_toml.replacen(
             "]\nresolver",
-            &format!("    \"{}\",\n]\nresolver", format!("apps/{name}")),
+            &format!("    \"apps/{name}\",\n]\nresolver"),
             1,
         );
         fs::write(&workspace_toml_path, new_toml).expect("failed to update workspace Cargo.toml");
