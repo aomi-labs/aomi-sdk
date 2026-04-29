@@ -1,8 +1,10 @@
 use aomi_sdk::schemars::JsonSchema;
 use hmac::{Hmac, Mac};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use sha2::Sha256;
 use std::time::Duration;
+
+use crate::types::BybitResponse;
 
 #[derive(Clone, Default)]
 pub(crate) struct BybitApp;
@@ -42,7 +44,11 @@ impl BybitClient {
     }
 
     /// Public GET (no auth).
-    pub(crate) fn public_get(&self, path: &str, query: &str) -> Result<serde_json::Value, String> {
+    pub(crate) fn public_get<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &str,
+    ) -> Result<BybitResponse<T>, String> {
         let url = if query.is_empty() {
             format!("{BASE_URL}{path}")
         } else {
@@ -57,13 +63,13 @@ impl BybitClient {
     }
 
     /// Authenticated GET.
-    pub(crate) fn auth_get(
+    pub(crate) fn auth_get<T: DeserializeOwned>(
         &self,
         path: &str,
         query: &str,
         api_key: &str,
         secret_key: &str,
-    ) -> Result<serde_json::Value, String> {
+    ) -> Result<BybitResponse<T>, String> {
         let timestamp = Self::timestamp_ms();
         let signature = Self::sign(&timestamp, api_key, secret_key, query);
         let url = if query.is_empty() {
@@ -84,15 +90,16 @@ impl BybitClient {
     }
 
     /// Authenticated POST with JSON body.
-    pub(crate) fn auth_post(
+    pub(crate) fn auth_post<B: Serialize, T: DeserializeOwned>(
         &self,
         path: &str,
-        body: &serde_json::Value,
+        body: &B,
         api_key: &str,
         secret_key: &str,
-    ) -> Result<serde_json::Value, String> {
+    ) -> Result<BybitResponse<T>, String> {
         let timestamp = Self::timestamp_ms();
-        let body_str = body.to_string();
+        let body_str = serde_json::to_string(body)
+            .map_err(|e| format!("[bybit] failed to serialize body: {e}"))?;
         let signature = Self::sign(&timestamp, api_key, secret_key, &body_str);
         let url = format!("{BASE_URL}{path}");
         let resp = self
@@ -117,7 +124,9 @@ impl BybitClient {
             .to_string()
     }
 
-    fn handle_response(resp: reqwest::blocking::Response) -> Result<serde_json::Value, String> {
+    fn handle_response<T: DeserializeOwned>(
+        resp: reqwest::blocking::Response,
+    ) -> Result<BybitResponse<T>, String> {
         let status = resp.status();
         let text = resp
             .text()
@@ -125,17 +134,14 @@ impl BybitClient {
         if !status.is_success() {
             return Err(format!("[bybit] API HTTP error {status}: {text}"));
         }
-        let val: serde_json::Value =
+        let val: BybitResponse<T> =
             serde_json::from_str(&text).map_err(|e| format!("[bybit] JSON decode failed: {e}"))?;
         // Bybit returns retCode != 0 for logical errors even on HTTP 200
-        if let Some(ret_code) = val.get("retCode").and_then(|v| v.as_i64())
-            && ret_code != 0
-        {
-            let msg = val
-                .get("retMsg")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown error");
-            return Err(format!("[bybit] API error (retCode={ret_code}): {msg}"));
+        if val.ret_code != 0 {
+            return Err(format!(
+                "[bybit] API error (retCode={}): {}",
+                val.ret_code, val.ret_msg
+            ));
         }
         Ok(val)
     }
@@ -300,6 +306,7 @@ pub(crate) struct SetLeverage;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{BybitKlineResult, BybitOrderbookResult, BybitResponse, BybitTickerResult};
 
     fn client() -> BybitClient {
         BybitClient::new().expect("client should build")
@@ -313,15 +320,14 @@ mod tests {
 
         // 1. Get tickers for ETHUSDT linear — assert we get price data
         println!("[step 1] Fetching ETHUSDT linear ticker...");
-        let tickers = c
+        let tickers: BybitResponse<BybitTickerResult> = c
             .public_get("/market/tickers", "category=linear&symbol=ETHUSDT")
             .expect("should get ETHUSDT ticker");
-        let ticker_list = tickers["result"]["list"]
-            .as_array()
-            .expect("ticker result.list should be an array");
+        let ticker_list = tickers.result.list;
         assert!(!ticker_list.is_empty(), "should have at least one ticker");
-        let last_price = ticker_list[0]["lastPrice"]
-            .as_str()
+        let last_price = ticker_list[0]
+            .last_price
+            .as_deref()
             .expect("ticker should have lastPrice");
         println!("[step 1] ETHUSDT lastPrice (raw): {last_price}");
         let last_price: f64 = last_price.parse().expect("lastPrice should parse as f64");
@@ -330,18 +336,14 @@ mod tests {
 
         // 2. Get orderbook for ETHUSDT linear — assert bids/asks exist
         println!("[step 2] Fetching ETHUSDT linear orderbook (depth=25)...");
-        let book = c
+        let book: BybitResponse<BybitOrderbookResult> = c
             .public_get(
                 "/market/orderbook",
                 "category=linear&symbol=ETHUSDT&limit=25",
             )
             .expect("should get ETHUSDT orderbook");
-        let bids = book["result"]["b"]
-            .as_array()
-            .expect("orderbook should have bids (b)");
-        let asks = book["result"]["a"]
-            .as_array()
-            .expect("orderbook should have asks (a)");
+        let bids = book.result.b;
+        let asks = book.result.a;
         assert!(!bids.is_empty(), "bids should not be empty");
         assert!(!asks.is_empty(), "asks should not be empty");
         println!(
@@ -352,49 +354,47 @@ mod tests {
         for (i, level) in bids.iter().take(3).enumerate() {
             println!(
                 "[step 2]   bid[{i}]: price={}, qty={}",
-                level[0].as_str().unwrap_or("?"),
-                level[1].as_str().unwrap_or("?")
+                level.price().unwrap_or("?"),
+                level.qty().unwrap_or("?")
             );
         }
         for (i, level) in asks.iter().take(3).enumerate() {
             println!(
                 "[step 2]   ask[{i}]: price={}, qty={}",
-                level[0].as_str().unwrap_or("?"),
-                level[1].as_str().unwrap_or("?")
+                level.price().unwrap_or("?"),
+                level.qty().unwrap_or("?")
             );
         }
 
         // 3. Get kline for ETHUSDT linear 5min — assert we get candles
         println!("[step 3] Fetching ETHUSDT linear 5m kline...");
-        let kline = c
+        let kline: BybitResponse<BybitKlineResult> = c
             .public_get("/market/kline", "category=linear&symbol=ETHUSDT&interval=5")
             .expect("should get ETHUSDT 5m kline");
-        let candles = kline["result"]["list"]
-            .as_array()
-            .expect("kline result.list should be an array");
+        let candles = kline.result.list;
         assert!(!candles.is_empty(), "should have at least one candle");
         println!("[step 3] Received {} candles", candles.len());
         for (i, candle) in candles.iter().take(3).enumerate() {
             println!(
                 "[step 3]   candle[{i}]: ts={}, open={}, high={}, low={}, close={}, vol={}",
-                candle[0].as_str().unwrap_or("?"),
-                candle[1].as_str().unwrap_or("?"),
-                candle[2].as_str().unwrap_or("?"),
-                candle[3].as_str().unwrap_or("?"),
-                candle[4].as_str().unwrap_or("?"),
-                candle[5].as_str().unwrap_or("?")
+                candle.open_time().unwrap_or("?"),
+                candle.open().unwrap_or("?"),
+                candle.high().unwrap_or("?"),
+                candle.low().unwrap_or("?"),
+                candle.close().unwrap_or("?"),
+                candle.volume().unwrap_or("?")
             );
         }
 
         // 4. Assert we have enough data to pick entry, TP, and SL levels
         println!("[step 4] Computing entry, TP, and SL levels...");
-        let best_bid: f64 = bids[0][0]
-            .as_str()
+        let best_bid: f64 = bids[0]
+            .price()
             .expect("bid price")
             .parse()
             .expect("bid price f64");
-        let best_ask: f64 = asks[0][0]
-            .as_str()
+        let best_ask: f64 = asks[0]
+            .price()
             .expect("ask price")
             .parse()
             .expect("ask price f64");
@@ -424,46 +424,40 @@ mod tests {
 
         // 1. Get tickers for linear (no symbol filter) — assert multiple tickers
         println!("[step 1] Fetching all linear tickers...");
-        let tickers = c
+        let tickers: BybitResponse<BybitTickerResult> = c
             .public_get("/market/tickers", "category=linear")
             .expect("should get linear tickers");
-        let ticker_list = tickers["result"]["list"]
-            .as_array()
-            .expect("ticker result.list should be an array");
+        let ticker_list = tickers.result.list;
         assert!(ticker_list.len() > 1, "should have multiple linear tickers");
         println!("[step 1] Received {} linear tickers", ticker_list.len());
         for (i, t) in ticker_list.iter().take(5).enumerate() {
             println!(
                 "[step 1]   ticker[{i}]: symbol={}, lastPrice={}, volume24h={}",
-                t["symbol"].as_str().unwrap_or("?"),
-                t["lastPrice"].as_str().unwrap_or("?"),
-                t["volume24h"].as_str().unwrap_or("?")
+                t.symbol,
+                t.last_price.as_deref().unwrap_or("?"),
+                t.volume24h.as_deref().unwrap_or("?")
             );
         }
 
         // 2. Get orderbook for BTCUSDT linear — assert spread data
         println!("[step 2] Fetching BTCUSDT linear orderbook (depth=25)...");
-        let book = c
+        let book: BybitResponse<BybitOrderbookResult> = c
             .public_get(
                 "/market/orderbook",
                 "category=linear&symbol=BTCUSDT&limit=25",
             )
             .expect("should get BTCUSDT orderbook");
-        let bids = book["result"]["b"]
-            .as_array()
-            .expect("orderbook should have bids (b)");
-        let asks = book["result"]["a"]
-            .as_array()
-            .expect("orderbook should have asks (a)");
+        let bids = book.result.b;
+        let asks = book.result.a;
         assert!(!bids.is_empty(), "bids should not be empty");
         assert!(!asks.is_empty(), "asks should not be empty");
-        let best_bid: f64 = bids[0][0]
-            .as_str()
+        let best_bid: f64 = bids[0]
+            .price()
             .expect("bid price")
             .parse()
             .expect("bid price f64");
-        let best_ask: f64 = asks[0][0]
-            .as_str()
+        let best_ask: f64 = asks[0]
+            .price()
             .expect("ask price")
             .parse()
             .expect("ask price f64");
@@ -478,40 +472,38 @@ mod tests {
         for (i, level) in bids.iter().take(3).enumerate() {
             println!(
                 "[step 2]   bid[{i}]: price={}, qty={}",
-                level[0].as_str().unwrap_or("?"),
-                level[1].as_str().unwrap_or("?")
+                level.price().unwrap_or("?"),
+                level.qty().unwrap_or("?")
             );
         }
         for (i, level) in asks.iter().take(3).enumerate() {
             println!(
                 "[step 2]   ask[{i}]: price={}, qty={}",
-                level[0].as_str().unwrap_or("?"),
-                level[1].as_str().unwrap_or("?")
+                level.price().unwrap_or("?"),
+                level.qty().unwrap_or("?")
             );
         }
 
         // 3. Get kline for BTCUSDT linear 15min — assert candle data
         println!("[step 3] Fetching BTCUSDT linear 15m kline...");
-        let kline = c
+        let kline: BybitResponse<BybitKlineResult> = c
             .public_get(
                 "/market/kline",
                 "category=linear&symbol=BTCUSDT&interval=15",
             )
             .expect("should get BTCUSDT 15m kline");
-        let candles = kline["result"]["list"]
-            .as_array()
-            .expect("kline result.list should be an array");
+        let candles = kline.result.list;
         assert!(!candles.is_empty(), "should have at least one candle");
         println!("[step 3] Received {} candles", candles.len());
         for (i, candle) in candles.iter().take(3).enumerate() {
             println!(
                 "[step 3]   candle[{i}]: ts={}, open={}, high={}, low={}, close={}, vol={}",
-                candle[0].as_str().unwrap_or("?"),
-                candle[1].as_str().unwrap_or("?"),
-                candle[2].as_str().unwrap_or("?"),
-                candle[3].as_str().unwrap_or("?"),
-                candle[4].as_str().unwrap_or("?"),
-                candle[5].as_str().unwrap_or("?")
+                candle.open_time().unwrap_or("?"),
+                candle.open().unwrap_or("?"),
+                candle.high().unwrap_or("?"),
+                candle.low().unwrap_or("?"),
+                candle.close().unwrap_or("?"),
+                candle.volume().unwrap_or("?")
             );
         }
 
@@ -520,8 +512,8 @@ mod tests {
         //    is the last traded price. If profitable, breakeven = entry.
         println!("[step 4] Computing breakeven levels...");
         let latest_candle = &candles[0];
-        let open: f64 = latest_candle[1]
-            .as_str()
+        let open: f64 = latest_candle
+            .open()
             .expect("candle open")
             .parse()
             .expect("candle open f64");

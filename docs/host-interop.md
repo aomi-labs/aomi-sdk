@@ -34,24 +34,30 @@ Execution-oriented apps may assume a host runtime exposes some or all of the fol
   - Typical input: `typed_data`, human description.
   - Typical callback artifact: `signature`.
 
-## SYSTEM_NEXT_ACTION
+## Route hints (`ToolReturn` envelope)
 
-Some apps, especially execution workflows like `khalani`, return a machine-readable next-step plan. The recommended shape is:
+Apps that drive multi-step execution flows (e.g. `khalani`, `polymarket`) return a `ToolReturn` instead of a bare JSON value. `ToolReturn` carries the tool's structured payload plus an ordered `routes: Vec<RouteStep>` list. Each `RouteStep` declares a triggering event (`OnReturn`, `WalletTxComplete`, or `WalletEip712Complete`), the next tool to call, hinted args, and an optional `prompt` override.
 
-```json
-{
-  "SYSTEM_NEXT_ACTION": [
-    {
-      "name": "stage_tx",
-      "args": {},
-      "reason": "Why this step is next.",
-      "condition": "Optional human-readable gate."
-    }
-  ]
-}
+Builders are exposed in `aomi_sdk::route`:
+
+```rust
+use aomi_sdk::{RouteStep, ToolReturn, WalletEip712Complete};
+
+ToolReturn::with_routes(value, [
+    RouteStep::on_return("commit_eip712", wallet_request)
+        .prompt("Suggested next step: call commit_eip712 with these args."),
+    RouteStep::on_async_callback::<WalletEip712Complete>(
+        "submit_polymarket_order",
+        submit_template,
+    )
+        .callback_field("clob_l1_signature")
+        .prompt("Wallet signed — submit the order now."),
+])
 ```
 
-Hosts should preserve the returned `args` exactly when they forward these steps to host tools. If an app returns `stage_tx`, the host transaction model still applies: stage first, then `simulate_batch`, then `commit_tx`.
+The host treats each route as advisory: `OnReturn` steps render into the next system prompt the LLM sees, while wallet-callback steps stash on the session and fire when the matching callback arrives. The host splices the named `callback_field` (or default `signature` / `transaction_hash`) into the hinted args before injecting the prompt. The runtime never parses prose; the route's structured fields are the contract.
+
+If an app returns a `stage_tx` route, the host transaction model still applies: stage first, then `simulate_batch`, then `commit_tx`.
 
 ## Design Rules
 

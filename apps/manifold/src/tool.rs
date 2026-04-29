@@ -1,8 +1,21 @@
 use crate::client::*;
+use crate::types::{CreateMarketRequest, PlaceBetRequest};
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+fn ok<T: Serialize>(value: T) -> Result<Value, String> {
+    let value = serde_json::to_value(value)
+        .map_err(|e| format!("[manifold] failed to serialize response: {e}"))?;
+    Ok(match value {
+        Value::Object(mut map) => {
+            map.insert("source".to_string(), Value::String("manifold".to_string()));
+            Value::Object(map)
+        }
+        other => json!({ "source": "manifold", "data": other }),
+    })
+}
 
 fn resolve_manifold_api_key(api_key: Option<&str>) -> Result<String, String> {
     resolve_secret_value(
@@ -37,8 +50,6 @@ impl DynAomiTool for ListMarkets {
     const DESCRIPTION: &'static str = "List prediction markets on Manifold, optionally filtered by topic and sorted by newest or score.";
 
     fn run(_app: &ManifoldApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = ManifoldClient::new()?;
-
         let mut query_parts: Vec<String> = Vec::new();
         if let Some(limit) = args.limit {
             query_parts.push(format!("limit={limit}"));
@@ -59,10 +70,10 @@ impl DynAomiTool for ListMarkets {
             format!("/markets?{}", query_parts.join("&"))
         };
 
-        let markets = client.get(&path, "list_markets")?;
+        let markets = ManifoldClient::new()?.get(&path, "list_markets")?;
         let markets_arr = markets.as_array().cloned().unwrap_or_default();
 
-        Ok(json!({
+        ok(json!({
             "markets_count": markets_arr.len(),
             "markets": markets_arr.iter().map(|m| json!({
                 "id": m.get("id"),
@@ -98,11 +109,10 @@ impl DynAomiTool for GetMarket {
         "Get detailed information about a specific Manifold market by ID or slug.";
 
     fn run(_app: &ManifoldApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = ManifoldClient::new()?;
         let path = format!("/market/{}", args.id);
-        let market = client.get(&path, "get_market")?;
+        let market = ManifoldClient::new()?.get(&path, "get_market")?;
 
-        Ok(json!({
+        ok(json!({
             "id": market.get("id"),
             "question": market.get("question"),
             "description": market.get("textDescription"),
@@ -140,14 +150,9 @@ impl DynAomiTool for GetMarketPositions {
     const DESCRIPTION: &'static str = "Get user positions for a specific Manifold market.";
 
     fn run(_app: &ManifoldApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = ManifoldClient::new()?;
         let path = format!("/market/{}/positions", args.id);
-        let positions = client.get(&path, "get_market_positions")?;
-
-        Ok(json!({
-            "market_id": args.id,
-            "positions": positions,
-        }))
+        let positions = ManifoldClient::new()?.get(&path, "get_market_positions")?;
+        ok(json!({ "market_id": args.id, "positions": positions }))
     }
 }
 
@@ -175,10 +180,7 @@ impl DynAomiTool for SearchMarkets {
         "Search Manifold prediction markets by keyword with optional sort and filter.";
 
     fn run(_app: &ManifoldApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = ManifoldClient::new()?;
-
-        let mut query_parts: Vec<String> = Vec::new();
-        query_parts.push(format!("term={}", urlencoded(&args.term)));
+        let mut query_parts: Vec<String> = vec![format!("term={}", urlencoded(&args.term))];
         if let Some(sort) = &args.sort {
             query_parts.push(format!("sort={sort}"));
         }
@@ -187,10 +189,10 @@ impl DynAomiTool for SearchMarkets {
         }
 
         let path = format!("/search-markets?{}", query_parts.join("&"));
-        let results = client.get(&path, "search_markets")?;
+        let results = ManifoldClient::new()?.get(&path, "search_markets")?;
         let markets_arr = results.as_array().cloned().unwrap_or_default();
 
-        Ok(json!({
+        ok(json!({
             "query": args.term,
             "results_count": markets_arr.len(),
             "markets": markets_arr.iter().map(|m| json!({
@@ -240,16 +242,15 @@ impl DynAomiTool for PlaceBet {
         }
 
         let api_key = resolve_manifold_api_key(args.api_key.as_deref())?;
-        let client = ManifoldClient::new()?;
-        let body = json!({
-            "contractId": args.contract_id,
-            "amount": args.amount,
-            "outcome": outcome,
-        });
+        let body = PlaceBetRequest {
+            contract_id: &args.contract_id,
+            amount: args.amount,
+            outcome: &outcome,
+        };
 
-        let result = client.post("/bet", &api_key, &body, "place_bet")?;
+        let result = ManifoldClient::new()?.post("/bet", &api_key, &body, "place_bet")?;
 
-        Ok(json!({
+        ok(json!({
             "status": "success",
             "betId": result.get("betId").or_else(|| result.get("id")),
             "contractId": args.contract_id,
@@ -297,20 +298,16 @@ impl DynAomiTool for CreateMarket {
         }
 
         let api_key = resolve_manifold_api_key(args.api_key.as_deref())?;
-        let client = ManifoldClient::new()?;
-        let mut body = json!({
-            "outcomeType": market_type,
-            "question": args.question,
-            "initialProb": initial_prob,
-        });
+        let body = CreateMarketRequest {
+            outcome_type: market_type,
+            question: &args.question,
+            initial_prob,
+            close_time: args.close_time,
+        };
 
-        if let Some(close_time) = args.close_time {
-            body["closeTime"] = json!(close_time);
-        }
+        let result = ManifoldClient::new()?.post("/market", &api_key, &body, "create_market")?;
 
-        let result = client.post("/market", &api_key, &body, "create_market")?;
-
-        Ok(json!({
+        ok(json!({
             "status": "created",
             "id": result.get("id"),
             "question": args.question,

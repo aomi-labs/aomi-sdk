@@ -439,7 +439,7 @@ macro_rules! __dispatch_tool {
                         });
                         $crate::DynToolDispatch::AsyncQueued
                     } else {
-                        match <$tool_type as $crate::DynAomiTool>::run($self, args, ctx) {
+                        match <$tool_type as $crate::DynAomiTool>::run_with_routes($self, args, ctx) {
                             Ok(value) => $crate::DynToolDispatch::Ready($crate::DynToolResult::ok(value)),
                             Err(ref err) => {
                                 $crate::__private::log_tool_exec_error($name, err);

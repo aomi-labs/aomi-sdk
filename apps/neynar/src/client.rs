@@ -1,6 +1,6 @@
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::time::Duration;
 
@@ -36,10 +36,10 @@ impl NeynarClient {
         Ok(Self { http, api_key })
     }
 
-    pub(crate) fn get(
+    pub(crate) fn get<Q: Serialize>(
         &self,
         path: &str,
-        query: &[(&str, &str)],
+        query: &Q,
         op: &str,
     ) -> Result<Value, String> {
         let url = format!("{API_BASE}{path}");
@@ -61,7 +61,12 @@ impl NeynarClient {
             .map_err(|e| format!("[neynar] {op} decode failed: {e}"))
     }
 
-    pub(crate) fn post_json(&self, path: &str, body: &Value, op: &str) -> Result<Value, String> {
+    pub(crate) fn post_json<B: Serialize>(
+        &self,
+        path: &str,
+        body: &B,
+        op: &str,
+    ) -> Result<Value, String> {
         let url = format!("{API_BASE}{path}");
         let resp = self
             .http
@@ -230,221 +235,92 @@ pub(crate) struct GetTrendingFeedArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::UserByUsernameQuery;
+
+    #[derive(Serialize)]
+    struct BulkUsersQuery<'a> {
+        fids: &'a str,
+    }
 
     /// Helper: build a client or skip the test when NEYNAR_API_KEY is absent.
     fn client_or_skip() -> Option<NeynarClient> {
-        match std::env::var("NEYNAR_API_KEY") {
-            Ok(_) => Some(NeynarClient::new(None).expect("failed to build NeynarClient")),
-            Err(_) => {
-                println!("NEYNAR_API_KEY not set — skipping test");
-                None
-            }
-        }
+        std::env::var("NEYNAR_API_KEY")
+            .ok()
+            .map(|_| NeynarClient::new(None).expect("failed to build NeynarClient"))
     }
 
     /// Story: "Post a thread replying to a key influencer"
-    /// Look up target user → bulk-fetch their profile + related users → gather
-    /// context to compose a reply → skip publish (needs signer_uuid).
     #[test]
     fn post_thread_workflow() {
-        let client = match client_or_skip() {
-            Some(c) => c,
-            None => return,
-        };
+        let Some(client) = client_or_skip() else { return };
 
-        // Step 1: Look up the influencer we want to reply to
-        println!("post_thread_workflow step 1: looking up user 'vitalik.eth' ...");
         let user_resp = client
             .get(
                 "/farcaster/user/by_username",
-                &[("username", "vitalik.eth")],
+                &UserByUsernameQuery { username: "vitalik.eth" },
                 "get_user_by_username",
             )
             .expect("get_user_by_username should succeed");
-
         let user = &user_resp["user"];
         assert!(user.get("fid").is_some(), "user should have an fid");
-        let vitalik_fid = user["fid"].as_u64().expect("fid should be a number");
-        let display_name = user["display_name"].as_str().unwrap_or("?");
-        let follower_count = &user["follower_count"];
-        let pfp = user["pfp_url"].as_str().unwrap_or("none");
-        let bio: String = user["profile"]["bio"]["text"]
-            .as_str()
-            .unwrap_or("")
-            .chars()
-            .take(100)
-            .collect();
-        println!(
-            "  -> fid={vitalik_fid}, display_name='{display_name}', followers={follower_count}, pfp={pfp}"
-        );
-        println!("  -> bio: \"{bio}\"");
 
-        // Step 2: Bulk-fetch several influencers to find the best thread participants
-        println!("post_thread_workflow step 2: bulk-fetching users fid=3,5650,2 ...");
         let bulk_resp = client
             .get(
                 "/farcaster/user/bulk",
-                &[("fids", "3,5650,2")],
+                &BulkUsersQuery { fids: "3,5650,2" },
                 "bulk_users",
             )
             .expect("bulk_users should succeed");
-
         let users = bulk_resp["users"]
             .as_array()
             .expect("bulk response should contain users array");
-        assert!(
-            users.len() >= 2,
-            "should get at least 2 users in bulk response"
-        );
+        assert!(users.len() >= 2, "should get at least 2 users in bulk response");
 
-        println!("  -> received {} user(s) in bulk:", users.len());
-        for (i, u) in users.iter().enumerate() {
-            let ufid = &u["fid"];
-            let uname = u["username"].as_str().unwrap_or("?");
-            let dname = u["display_name"].as_str().unwrap_or("?");
-            let followers = &u["follower_count"];
-            let verified = u["verified_addresses"]["eth_addresses"]
-                .as_array()
-                .map_or(0, |a| a.len());
-            println!(
-                "  user[{i}]: fid={ufid}, username='{uname}', display_name='{dname}', followers={followers}, eth_addrs={verified}"
-            );
-        }
-
-        // Step 3: Look up a second user to mention in the thread
-        println!("post_thread_workflow step 3: looking up user 'dwr' (Farcaster co-founder) ...");
-        let dwr_resp = client
+        let _dwr_resp = client
             .get(
                 "/farcaster/user/by_username",
-                &[("username", "dwr")],
+                &UserByUsernameQuery { username: "dwr" },
                 "get_user_by_username",
             )
             .expect("get_user_by_username for dwr should succeed");
-
-        let dwr = &dwr_resp["user"];
-        let dwr_fid = dwr["fid"].as_u64().expect("dwr fid");
-        let dwr_name = dwr["display_name"].as_str().unwrap_or("?");
-        let dwr_followers = &dwr["follower_count"];
-        println!("  -> fid={dwr_fid}, display_name='{dwr_name}', followers={dwr_followers}");
-
-        // Step 4: Skip publish_cast — needs a real signer_uuid
-        println!("post_thread_workflow step 4: skipping publish_cast (requires signer_uuid)");
-        println!(
-            "post_thread_workflow (summary): target=vitalik.eth (fid={}), mention=dwr (fid={}), {} bulk users fetched — ready to compose thread",
-            vitalik_fid,
-            dwr_fid,
-            users.len()
-        );
     }
 
     /// Story: "Research Farcaster users to find collaboration targets and post"
-    /// Look up users by username → bulk-fetch multiple profiles → compare
-    /// follower counts and verified addresses → skip publish.
     #[test]
     fn research_user_and_channel_workflow() {
-        let client = match client_or_skip() {
-            Some(c) => c,
-            None => return,
-        };
+        let Some(client) = client_or_skip() else { return };
 
-        // Step 1: Look up a well-known user by username
-        println!("research_user_and_channel_workflow step 1: looking up user 'dwr' ...");
         let user_resp = client
             .get(
                 "/farcaster/user/by_username",
-                &[("username", "dwr")],
+                &UserByUsernameQuery { username: "dwr" },
                 "get_user_by_username",
             )
             .expect("get_user_by_username should succeed");
-
         let user = &user_resp["user"];
-        assert!(user.get("fid").is_some(), "user should have an fid");
-        assert!(
-            user.get("username").is_some(),
-            "user should have a username"
-        );
-        assert!(
-            user.get("display_name").is_some(),
-            "user should have a display_name"
-        );
-
         let fid = user["fid"].as_u64().expect("fid should be a number");
         assert!(fid > 0, "fid should be a positive integer");
 
-        let display_name = user["display_name"].as_str().unwrap_or("?");
-        let follower_count = &user["follower_count"];
-        let following_count = &user["following_count"];
-        println!(
-            "  -> user profile: fid={fid}, username='dwr', display_name='{display_name}', followers={follower_count}, following={following_count}"
-        );
-
-        // Step 2: Look up another well-known user
-        println!("research_user_and_channel_workflow step 2: looking up user 'vitalik.eth' ...");
         let user2_resp = client
             .get(
                 "/farcaster/user/by_username",
-                &[("username", "vitalik.eth")],
+                &UserByUsernameQuery { username: "vitalik.eth" },
                 "get_user_by_username",
             )
             .expect("get_user_by_username for vitalik.eth should succeed");
+        let user2_fid = user2_resp["user"]["fid"].as_u64().expect("fid should be a number");
 
-        let user2 = &user2_resp["user"];
-        assert!(user2.get("fid").is_some(), "user should have an fid");
-        let user2_fid = user2["fid"].as_u64().expect("fid should be a number");
-        let user2_dname = user2["display_name"].as_str().unwrap_or("?");
-        let user2_followers = &user2["follower_count"];
-        println!(
-            "  -> user profile: fid={user2_fid}, username='vitalik.eth', display_name='{user2_dname}', followers={user2_followers}"
-        );
-
-        // Step 3: Bulk-fetch both users + extras to compare profiles
-        println!(
-            "research_user_and_channel_workflow step 3: bulk-fetching fid={fid},{user2_fid} + extras ..."
-        );
         let fids_param = format!("{fid},{user2_fid},99");
         let bulk_resp = client
             .get(
                 "/farcaster/user/bulk",
-                &[("fids", &fids_param)],
+                &BulkUsersQuery { fids: fids_param.as_str() },
                 "bulk_users",
             )
             .expect("bulk_users should succeed");
-
         let bulk_users = bulk_resp["users"]
             .as_array()
             .expect("bulk should return users array");
         assert!(bulk_users.len() >= 2, "should get at least 2 users");
-
-        println!("  -> bulk-fetched {} user(s):", bulk_users.len());
-        for (i, bu) in bulk_users.iter().enumerate() {
-            let bfid = &bu["fid"];
-            let buname = bu["username"].as_str().unwrap_or("?");
-            let bdname = bu["display_name"].as_str().unwrap_or("?");
-            let bfollowers = &bu["follower_count"];
-            let eth_addrs = bu["verified_addresses"]["eth_addresses"]
-                .as_array()
-                .map_or(0, |a| a.len());
-            println!(
-                "  bulk[{i}]: fid={bfid}, username='{buname}', display_name='{bdname}', followers={bfollowers}, eth_addrs={eth_addrs}"
-            );
-        }
-
-        // Step 4: Verify we have the data to decide who to collaborate with and post
-        let has_verified = bulk_users.iter().any(|u| {
-            u["verified_addresses"]["eth_addresses"]
-                .as_array()
-                .map_or(false, |a| !a.is_empty())
-        });
-        println!("  -> at least one user has verified ETH addresses: {has_verified}");
-
-        println!(
-            "research_user_and_channel_workflow step 5: skipping publish_cast (requires signer_uuid)"
-        );
-        println!(
-            "research_user_and_channel_workflow (summary): dwr fid={}, vitalik fid={}, {} bulk profiles — ready to post collaboration cast",
-            fid,
-            user2_fid,
-            bulk_users.len()
-        );
     }
 }

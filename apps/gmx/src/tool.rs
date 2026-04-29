@@ -1,6 +1,20 @@
 use crate::client::*;
 use aomi_sdk::*;
+use serde::Serialize;
 use serde_json::{Value, json};
+
+fn ok<T: Serialize>(value: T, chain: &str) -> Result<Value, String> {
+    let value = serde_json::to_value(value)
+        .map_err(|e| format!("[gmx] failed to serialize response: {e}"))?;
+    Ok(match value {
+        Value::Object(mut map) => {
+            map.insert("source".to_string(), Value::String("gmx".to_string()));
+            map.insert("chain".to_string(), Value::String(chain.to_string()));
+            Value::Object(map)
+        }
+        other => json!({ "source": "gmx", "chain": chain, "data": other }),
+    })
+}
 
 impl DynAomiTool for GetGmxPrices {
     type App = GmxApp;
@@ -10,9 +24,10 @@ impl DynAomiTool for GetGmxPrices {
 
     fn run(_app: &GmxApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let chain = resolve_chain_label(args.chain.as_deref());
-        let client = GmxClient::new(args.chain.as_deref())?;
-        let data = client.get_prices()?;
-        Ok(GmxClient::with_source(json!({ "tickers": data }), chain))
+        ok(
+            json!({ "tickers": GmxClient::new(args.chain.as_deref())?.get_prices()? }),
+            chain,
+        )
     }
 }
 
@@ -24,9 +39,10 @@ impl DynAomiTool for GetGmxSignedPrices {
 
     fn run(_app: &GmxApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let chain = resolve_chain_label(args.chain.as_deref());
-        let client = GmxClient::new(args.chain.as_deref())?;
-        let data = client.get_signed_prices()?;
-        Ok(GmxClient::with_source(data, chain))
+        ok(
+            GmxClient::new(args.chain.as_deref())?.get_signed_prices()?,
+            chain,
+        )
     }
 }
 
@@ -38,9 +54,10 @@ impl DynAomiTool for GetGmxMarkets {
 
     fn run(_app: &GmxApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let chain = resolve_chain_label(args.chain.as_deref());
-        let client = GmxClient::new(args.chain.as_deref())?;
-        let data = client.get_markets()?;
-        Ok(GmxClient::with_source(json!({ "markets": data }), chain))
+        ok(
+            json!({ "markets": GmxClient::new(args.chain.as_deref())?.get_markets()? }),
+            chain,
+        )
     }
 }
 
@@ -52,15 +69,11 @@ impl DynAomiTool for GetGmxPositions {
 
     fn run(_app: &GmxApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let chain = resolve_chain_label(args.chain.as_deref());
-        let client = GmxClient::new(args.chain.as_deref())?;
-        let data = client.get_positions(&args.account)?;
-        Ok(GmxClient::with_source(
-            json!({
-                "account": args.account,
-                "positions": data,
-            }),
+        let positions = GmxClient::new(args.chain.as_deref())?.get_positions(&args.account)?;
+        ok(
+            json!({ "account": args.account, "positions": positions }),
             chain,
-        ))
+        )
     }
 }
 
@@ -72,14 +85,10 @@ impl DynAomiTool for GetGmxOrders {
 
     fn run(_app: &GmxApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let chain = resolve_chain_label(args.chain.as_deref());
-        let client = GmxClient::new(args.chain.as_deref())?;
-        let data = client.get_orders(&args.account)?;
-        Ok(GmxClient::with_source(
-            json!({
-                "account": args.account,
-                "orders": data,
-            }),
+        let orders = GmxClient::new(args.chain.as_deref())?.get_orders(&args.account)?;
+        ok(
+            json!({ "account": args.account, "orders": orders }),
             chain,
-        ))
+        )
     }
 }

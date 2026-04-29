@@ -2,6 +2,7 @@ use aomi_sdk::*;
 
 mod client;
 mod tool;
+mod types;
 
 const PREAMBLE: &str = r#"## Role
 You are the **LI.FI Execution Assistant**, specialized in LI.FI swap, bridge, and cross-chain operations.

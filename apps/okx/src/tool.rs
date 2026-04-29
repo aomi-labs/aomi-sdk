@@ -1,6 +1,20 @@
 use crate::client::*;
+use crate::types::{CancelOrderRequest, PlaceOrderRequest, SetLeverageRequest};
 use aomi_sdk::*;
-use serde_json::{Value, json};
+use serde::Serialize;
+use serde_json::Value;
+
+fn ok<T: Serialize>(value: T) -> Result<Value, String> {
+    let value = serde_json::to_value(value)
+        .map_err(|e| format!("[okx] failed to serialize response: {e}"))?;
+    Ok(match value {
+        Value::Object(mut map) => {
+            map.insert("source".to_string(), Value::String("okx".to_string()));
+            Value::Object(map)
+        }
+        other => serde_json::json!({ "source": "okx", "data": other }),
+    })
+}
 
 fn resolve_okx_credentials(
     api_key: Option<&str>,
@@ -38,8 +52,7 @@ impl DynAomiTool for GetTickers {
     fn run(_app: &OkxApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = OkxClient::new()?;
         let path = format!("/market/tickers?instType={}", args.inst_type);
-        let resp = client.public_get(&path)?;
-        Ok(resp)
+        ok(client.public_get(&path)?)
     }
 }
 
@@ -60,8 +73,7 @@ impl DynAomiTool for GetOrderBook {
         if let Some(ref sz) = args.sz {
             path.push_str(&format!("&sz={sz}"));
         }
-        let resp = client.public_get(&path)?;
-        Ok(resp)
+        ok(client.public_get(&path)?)
     }
 }
 
@@ -90,8 +102,7 @@ impl DynAomiTool for GetCandles {
         if let Some(ref limit) = args.limit {
             path.push_str(&format!("&limit={limit}"));
         }
-        let resp = client.public_get(&path)?;
-        Ok(resp)
+        ok(client.public_get(&path)?)
     }
 }
 
@@ -112,21 +123,16 @@ impl DynAomiTool for PlaceOrder {
             args.secret_key.as_deref(),
             args.passphrase.as_deref(),
         )?;
-        let mut body = json!({
-            "instId": args.inst_id,
-            "tdMode": args.td_mode,
-            "side": args.side,
-            "ordType": args.ord_type,
-            "sz": args.sz,
-        });
-        if let Some(ref px) = args.px {
-            body.as_object_mut()
-                .unwrap()
-                .insert("px".to_string(), json!(px));
-        }
+        let body = PlaceOrderRequest {
+            inst_id: &args.inst_id,
+            td_mode: &args.td_mode,
+            side: &args.side,
+            ord_type: &args.ord_type,
+            sz: &args.sz,
+            px: args.px.as_deref(),
+        };
         let path = "/trade/order";
-        let resp = client.auth_post(path, &body, &api_key, &secret_key, &passphrase)?;
-        Ok(resp)
+        ok(client.auth_post(path, &body, &api_key, &secret_key, &passphrase)?)
     }
 }
 
@@ -148,13 +154,12 @@ impl DynAomiTool for CancelOrder {
             args.secret_key.as_deref(),
             args.passphrase.as_deref(),
         )?;
-        let body = json!({
-            "instId": args.inst_id,
-            "ordId": args.ord_id,
-        });
+        let body = CancelOrderRequest {
+            inst_id: &args.inst_id,
+            ord_id: &args.ord_id,
+        };
         let path = "/trade/cancel-order";
-        let resp = client.auth_post(path, &body, &api_key, &secret_key, &passphrase)?;
-        Ok(resp)
+        ok(client.auth_post(path, &body, &api_key, &secret_key, &passphrase)?)
     }
 }
 
@@ -179,8 +184,7 @@ impl DynAomiTool for GetBalance {
         if let Some(ref ccy) = args.ccy {
             path.push_str(&format!("?ccy={ccy}"));
         }
-        let resp = client.auth_get(&path, &api_key, &secret_key, &passphrase)?;
-        Ok(resp)
+        ok(client.auth_get(&path, &api_key, &secret_key, &passphrase)?)
     }
 }
 
@@ -213,8 +217,7 @@ impl DynAomiTool for GetPositions {
             path.push('?');
             path.push_str(&params.join("&"));
         }
-        let resp = client.auth_get(&path, &api_key, &secret_key, &passphrase)?;
-        Ok(resp)
+        ok(client.auth_get(&path, &api_key, &secret_key, &passphrase)?)
     }
 }
 
@@ -235,13 +238,12 @@ impl DynAomiTool for SetLeverage {
             args.secret_key.as_deref(),
             args.passphrase.as_deref(),
         )?;
-        let body = json!({
-            "instId": args.inst_id,
-            "lever": args.lever,
-            "mgnMode": args.mgn_mode,
-        });
+        let body = SetLeverageRequest {
+            inst_id: &args.inst_id,
+            lever: &args.lever,
+            mgn_mode: &args.mgn_mode,
+        };
         let path = "/account/set-leverage";
-        let resp = client.auth_post(path, &body, &api_key, &secret_key, &passphrase)?;
-        Ok(resp)
+        ok(client.auth_post(path, &body, &api_key, &secret_key, &passphrase)?)
     }
 }

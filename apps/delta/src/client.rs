@@ -1,13 +1,13 @@
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::time::Duration;
 
 #[derive(Clone, Default)]
 pub(crate) struct DeltaApp;
 
 pub(crate) use crate::tool::*;
+pub(crate) use crate::types::*;
 
 // ============================================================================
 // Client
@@ -66,62 +66,6 @@ impl DeltaClient {
         }
         resp.json().map_err(|e| format!("decode failed: {e}"))
     }
-}
-
-// ============================================================================
-// Data models
-// ============================================================================
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Quote {
-    pub(crate) id: String,
-    pub(crate) text: String,
-    pub(crate) status: String,
-    pub(crate) asset: String,
-    pub(crate) direction: String,
-    pub(crate) size: f64,
-    pub(crate) price_limit: Option<f64>,
-    pub(crate) currency: String,
-    pub(crate) expires_at: i64,
-    pub(crate) created_at: i64,
-    pub(crate) maker_owner_id: String,
-    pub(crate) maker_shard: u64,
-    #[serde(default)]
-    pub(crate) local_law: Option<Value>,
-    #[serde(default)]
-    pub(crate) constraints_summary: Option<String>,
-    #[serde(default)]
-    pub(crate) message: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct FillResponse {
-    pub(crate) success: bool,
-    pub(crate) fill_id: String,
-    pub(crate) quote_id: String,
-    pub(crate) message: String,
-    #[serde(default)]
-    pub(crate) error: Option<Value>,
-    #[serde(default)]
-    pub(crate) receipt: Option<Value>,
-    #[serde(default)]
-    pub(crate) proof: Option<Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct Receipt {
-    pub(crate) id: String,
-    pub(crate) quote_id: String,
-    pub(crate) success: bool,
-    pub(crate) status: String,
-    pub(crate) taker_owner_id: String,
-    pub(crate) taker_shard: u64,
-    pub(crate) size: f64,
-    pub(crate) price: f64,
-    pub(crate) attempted_at: i64,
-    pub(crate) error_code: Option<String>,
-    pub(crate) error_message: Option<String>,
-    pub(crate) sdl_hash: Option<String>,
 }
 
 // ============================================================================

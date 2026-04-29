@@ -1,6 +1,19 @@
 use crate::client::*;
 use aomi_sdk::*;
+use serde::Serialize;
 use serde_json::{Value, json};
+
+fn ok<T: Serialize>(value: T) -> Result<Value, String> {
+    let value = serde_json::to_value(value)
+        .map_err(|e| format!("[lifi] failed to serialize response: {e}"))?;
+    Ok(match value {
+        Value::Object(mut map) => {
+            map.insert("source".to_string(), Value::String("lifi".to_string()));
+            Value::Object(map)
+        }
+        other => serde_json::json!({ "source": "lifi", "data": other }),
+    })
+}
 
 impl DynAomiTool for GetLifiSwapQuote {
     type App = LifiApp;
@@ -22,7 +35,7 @@ impl DynAomiTool for GetLifiSwapQuote {
         let (to_chain_name, _) = get_chain_info(destination_chain)?;
         let to_addr = get_token_address(to_chain_name, &args.buy_token)?;
 
-        client.get_quote(
+        ok(client.get_quote(
             &args.chain,
             destination_chain,
             &from_addr,
@@ -30,7 +43,7 @@ impl DynAomiTool for GetLifiSwapQuote {
             &amount_base_units,
             &args.sender_address,
             args.receiver_address.as_deref(),
-        )
+        )?)
     }
 }
 
@@ -65,11 +78,15 @@ impl DynAomiTool for PlaceLifiOrder {
             args.slippage,
         )?;
 
-        Ok(json!({
-            "source": "lifi",
+        let approval_tx = serde_json::to_value(&payload.approval_tx)
+            .map_err(|e| format!("[lifi] failed to serialize approval_tx: {e}"))?;
+        let main_tx = serde_json::to_value(&payload.main_tx)
+            .map_err(|e| format!("[lifi] failed to serialize main_tx: {e}"))?;
+
+        ok(json!({
             "payload": payload,
-            "approval_tx": payload.get("approval_tx").cloned().unwrap_or(Value::Null),
-            "main_tx": payload.get("main_tx").cloned().unwrap_or(Value::Null),
+            "approval_tx": approval_tx,
+            "main_tx": main_tx,
             "note": "If approval_tx is present, stage approval_tx with stage_tx first using data.raw, stage main_tx the same way, simulate the staged pending_tx_id list with simulate_batch, then call commit_tx once per staged tx. Do not re-encode LI.FI calldata.",
         }))
     }
@@ -82,8 +99,7 @@ impl DynAomiTool for GetLifiBridgeQuote {
     const DESCRIPTION: &'static str = "Get cross-chain bridge route with executable tx data via LI.FI. Returns executable bridge payload when available; otherwise planning-only estimate.";
 
     fn run(_app: &LifiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = LifiClient::new()?;
-        client.get_bridge_quote(
+        ok(LifiClient::new()?.get_bridge_quote(
             &args.from_chain,
             &args.to_chain,
             &args.from_token,
@@ -92,7 +108,7 @@ impl DynAomiTool for GetLifiBridgeQuote {
             args.from_address.as_deref(),
             args.to_address.as_deref(),
             args.slippage_bps,
-        )
+        )?)
     }
 }
 
@@ -103,13 +119,12 @@ impl DynAomiTool for GetLifiTransferStatus {
     const DESCRIPTION: &'static str = "Track the status of a cross-chain transfer by transaction hash. Returns status (NOT_FOUND, INVALID, PENDING, DONE, FAILED), substatus, and transaction details.";
 
     fn run(_app: &LifiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = LifiClient::new()?;
-        client.get_transfer_status(
+        ok(LifiClient::new()?.get_transfer_status(
             &args.tx_hash,
             args.from_chain.as_deref(),
             args.to_chain.as_deref(),
             args.bridge.as_deref(),
-        )
+        )?)
     }
 }
 
@@ -121,8 +136,7 @@ impl DynAomiTool for GetLifiChains {
         "List all chains supported by LI.FI. Optionally filter by chain type (e.g. EVM, SVM).";
 
     fn run(_app: &LifiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = LifiClient::new()?;
-        client.get_chains(args.chain_types.as_deref())
+        ok(LifiClient::new()?.get_chains(args.chain_types.as_deref())?)
     }
 }
 
@@ -133,8 +147,7 @@ impl DynAomiTool for GetLifiTokens {
     const DESCRIPTION: &'static str = "List supported tokens on LI.FI. Optionally filter by chain IDs (comma-separated) or chain type.";
 
     fn run(_app: &LifiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = LifiClient::new()?;
-        client.get_tokens(args.chains.as_deref(), args.chain_types.as_deref())
+        ok(LifiClient::new()?.get_tokens(args.chains.as_deref(), args.chain_types.as_deref())?)
     }
 }
 
@@ -146,8 +159,7 @@ impl DynAomiTool for GetLifiToken {
         "Get detailed information for a single token including decimals and price.";
 
     fn run(_app: &LifiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = LifiClient::new()?;
-        client.get_token(&args.chain, &args.token)
+        ok(LifiClient::new()?.get_token(&args.chain, &args.token)?)
     }
 }
 
@@ -158,8 +170,7 @@ impl DynAomiTool for GetLifiRoutes {
     const DESCRIPTION: &'static str = "Get multiple route alternatives for a swap or bridge via LI.FI advanced routing. Compare routes by cost, speed, or safety. Use order_preference to sort: CHEAPEST, FASTEST, SAFEST, or RECOMMENDED.";
 
     fn run(_app: &LifiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = LifiClient::new()?;
-        client.get_routes(
+        ok(LifiClient::new()?.get_routes(
             &args.from_chain,
             &args.to_chain,
             &args.from_token,
@@ -168,7 +179,7 @@ impl DynAomiTool for GetLifiRoutes {
             &args.from_address,
             args.slippage,
             args.order_preference.as_deref(),
-        )
+        )?)
     }
 }
 
@@ -179,8 +190,7 @@ impl DynAomiTool for GetLifiStepTransaction {
     const DESCRIPTION: &'static str = "Get executable transaction data for a single route step returned by get_lifi_routes. Pass the step object directly.";
 
     fn run(_app: &LifiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = LifiClient::new()?;
-        client.get_step_transaction(&args.step)
+        ok(LifiClient::new()?.get_step_transaction(&args.step)?)
     }
 }
 
@@ -192,13 +202,12 @@ impl DynAomiTool for GetLifiConnections {
         "Check available transfer pathways between chains and tokens on LI.FI.";
 
     fn run(_app: &LifiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = LifiClient::new()?;
-        client.get_connections(
+        ok(LifiClient::new()?.get_connections(
             args.from_chain.as_deref(),
             args.to_chain.as_deref(),
             args.from_token.as_deref(),
             args.to_token.as_deref(),
-        )
+        )?)
     }
 }
 
@@ -210,8 +219,7 @@ impl DynAomiTool for GetLifiTools {
         "List available bridges and DEX exchanges on LI.FI. Optionally filter by chain IDs.";
 
     fn run(_app: &LifiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = LifiClient::new()?;
-        client.get_tools(args.chains.as_deref())
+        ok(LifiClient::new()?.get_tools(args.chains.as_deref())?)
     }
 }
 
@@ -222,8 +230,7 @@ impl DynAomiTool for GetLifiReverseQuote {
     const DESCRIPTION: &'static str = "Get a quote by specifying the desired output amount (reverse quote). LI.FI calculates the required input amount.";
 
     fn run(_app: &LifiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = LifiClient::new()?;
-        client.get_reverse_quote(
+        ok(LifiClient::new()?.get_reverse_quote(
             &args.from_chain,
             args.to_chain.as_deref(),
             &args.from_token,
@@ -231,7 +238,7 @@ impl DynAomiTool for GetLifiReverseQuote {
             &args.to_amount,
             &args.from_address,
             args.to_address.as_deref(),
-        )
+        )?)
     }
 }
 
@@ -242,11 +249,10 @@ impl DynAomiTool for GetLifiGasSuggestion {
     const DESCRIPTION: &'static str = "Get suggested gas amount for a destination chain. Useful for estimating gas needs for cross-chain transfers.";
 
     fn run(_app: &LifiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = LifiClient::new()?;
-        client.get_gas_suggestion(
+        ok(LifiClient::new()?.get_gas_suggestion(
             &args.chain,
             args.from_chain.as_deref(),
             args.from_token.as_deref(),
-        )
+        )?)
     }
 }

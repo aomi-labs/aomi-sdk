@@ -2,8 +2,8 @@ use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
 use chrono::Local;
 use hmac::{Hmac, Mac};
-use serde::Deserialize;
-use serde_json::{Map, Value, json};
+use serde::{Deserialize, de::DeserializeOwned};
+use serde_json::{Value, json};
 use std::time::Duration;
 
 pub(crate) fn build_preamble() -> String {
@@ -65,6 +65,7 @@ pub(crate) fn build_account_context() -> String {
 pub(crate) struct PredictionApp;
 
 pub(crate) use crate::tool::*;
+pub(crate) use crate::types::*;
 
 // ============================================================================
 // Simmer Client (blocking)
@@ -94,10 +95,10 @@ impl SimmerClient {
         format!("Bearer {}", self.api_key)
     }
 
-    pub(crate) fn send_json(
+    pub(crate) fn send_json_typed<T: DeserializeOwned>(
         request: reqwest::blocking::RequestBuilder,
         operation: &str,
-    ) -> Result<Value, String> {
+    ) -> Result<T, String> {
         let response = request
             .send()
             .map_err(|e| format!("[simmer] {operation} request failed: {e}"))?;
@@ -106,20 +107,23 @@ impl SimmerClient {
         if !status.is_success() {
             return Err(format!("[simmer] {operation} failed: {status} {body}"));
         }
-        serde_json::from_str::<Value>(&body)
+        serde_json::from_str::<T>(&body)
             .map_err(|e| format!("[simmer] {operation} decode failed: {e}; body: {body}"))
     }
 
-    pub(crate) fn get_agent_status(&self) -> Result<Value, String> {
+    pub(crate) fn get_agent_status(&self) -> Result<SimmerAgentStatusResponse, String> {
         let url = format!("{SIMMER_API_URL}/api/sdk/agents/me");
         let req = self
             .http
             .get(&url)
             .header("Authorization", self.auth_header());
-        Self::send_json(req, "get_agent_status")
+        Self::send_json_typed(req, "get_agent_status")
     }
 
-    pub(crate) fn get_briefing(&self, since: Option<&str>) -> Result<Value, String> {
+    pub(crate) fn get_briefing(
+        &self,
+        since: Option<&str>,
+    ) -> Result<SimmerBriefingResponse, String> {
         let mut url = format!("{SIMMER_API_URL}/api/sdk/briefing");
         if let Some(since) = since {
             url.push_str(&format!("?since={since}"));
@@ -128,29 +132,35 @@ impl SimmerClient {
             .http
             .get(&url)
             .header("Authorization", self.auth_header());
-        Self::send_json(req, "get_briefing")
+        Self::send_json_typed(req, "get_briefing")
     }
 
-    pub(crate) fn get_market_context(&self, market_id: &str) -> Result<Value, String> {
+    pub(crate) fn get_market_context(
+        &self,
+        market_id: &str,
+    ) -> Result<SimmerMarketContextResponse, String> {
         let url = format!("{SIMMER_API_URL}/api/sdk/context/{market_id}");
         let req = self
             .http
             .get(&url)
             .header("Authorization", self.auth_header());
-        Self::send_json(req, "get_market_context")
+        Self::send_json_typed(req, "get_market_context")
     }
 
-    pub(crate) fn trade(&self, body: Value) -> Result<Value, String> {
+    pub(crate) fn trade(&self, body: &SimmerTradeRequest) -> Result<SimmerTradeResponse, String> {
         let url = format!("{SIMMER_API_URL}/api/sdk/trade");
         let req = self
             .http
             .post(&url)
             .header("Authorization", self.auth_header())
             .json(&body);
-        Self::send_json(req, "trade")
+        Self::send_json_typed(req, "trade")
     }
 
-    pub(crate) fn get_positions(&self, venue: Option<&str>) -> Result<Value, String> {
+    pub(crate) fn get_positions(
+        &self,
+        venue: Option<&str>,
+    ) -> Result<SimmerPositionsResponse, String> {
         let url = format!("{SIMMER_API_URL}/api/sdk/positions");
         let mut req = self
             .http
@@ -159,16 +169,16 @@ impl SimmerClient {
         if let Some(venue) = venue {
             req = req.query(&[("venue", venue)]);
         }
-        Self::send_json(req, "get_positions")
+        Self::send_json_typed(req, "get_positions")
     }
 
-    pub(crate) fn get_portfolio(&self) -> Result<Value, String> {
+    pub(crate) fn get_portfolio(&self) -> Result<SimmerPortfolioResponse, String> {
         let url = format!("{SIMMER_API_URL}/api/sdk/portfolio");
         let req = self
             .http
             .get(&url)
             .header("Authorization", self.auth_header());
-        Self::send_json(req, "get_portfolio")
+        Self::send_json_typed(req, "get_portfolio")
     }
 
     pub(crate) fn get_markets(
@@ -176,7 +186,7 @@ impl SimmerClient {
         venue: Option<&str>,
         status: Option<&str>,
         limit: Option<u32>,
-    ) -> Result<Value, String> {
+    ) -> Result<SimmerMarketsResponse, String> {
         let mut url = format!("{SIMMER_API_URL}/api/sdk/markets");
         let mut params = vec![];
         if let Some(venue) = venue {
@@ -196,28 +206,28 @@ impl SimmerClient {
             .http
             .get(&url)
             .header("Authorization", self.auth_header());
-        Self::send_json(req, "get_markets")
+        Self::send_json_typed(req, "get_markets")
     }
 }
 
 pub(crate) fn simmer_register_agent(
     name: &str,
     description: Option<&str>,
-) -> Result<Value, String> {
+) -> Result<SimmerRegisterResponse, String> {
     let http = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
         .map_err(|e| format!("failed to build HTTP client: {e}"))?;
 
-    let mut body = json!({ "name": name });
-    if let Some(desc) = description {
-        body["description"] = Value::String(desc.to_string());
-    }
+    let body = SimmerRegisterRequest {
+        name: name.to_string(),
+        description: description.map(str::to_string),
+    };
 
     let req = http
         .post(format!("{SIMMER_API_URL}/api/sdk/agents/register"))
         .json(&body);
-    SimmerClient::send_json(req, "register_agent")
+    SimmerClient::send_json_typed(req, "register_agent")
 }
 
 pub(crate) fn parse_venue(venue: &str) -> Result<String, String> {
@@ -259,7 +269,10 @@ impl PolymarketClient {
         Ok(Self { http })
     }
 
-    pub(crate) fn get_markets(&self, params: &GetMarketsParams) -> Result<Vec<Value>, String> {
+    pub(crate) fn get_markets(
+        &self,
+        params: &GetMarketsParams,
+    ) -> Result<Vec<PredictionMarket>, String> {
         let url = format!("{GAMMA_API_BASE}/markets");
         let mut query: Vec<(&str, String)> = Vec::new();
         if let Some(limit) = params.limit {
@@ -291,11 +304,11 @@ impl PolymarketClient {
             let text = resp.text().unwrap_or_default();
             return Err(format!("Gamma API error {status}: {text}"));
         }
-        resp.json::<Vec<Value>>()
+        resp.json::<Vec<PredictionMarket>>()
             .map_err(|e| format!("Gamma API decode failed: {e}"))
     }
 
-    pub(crate) fn get_market(&self, id_or_slug: &str) -> Result<Value, String> {
+    pub(crate) fn get_market(&self, id_or_slug: &str) -> Result<PredictionMarket, String> {
         let (path, query) = classify_polymarket_lookup(id_or_slug);
         let url = format!("{GAMMA_API_BASE}{path}");
         let resp = self
@@ -314,7 +327,7 @@ impl PolymarketClient {
         let text = resp.text().map_err(|e| format!("read body failed: {e}"))?;
         // If condition_id lookup, response is an array
         if id_or_slug.starts_with("0x") {
-            let markets: Vec<Value> =
+            let markets: Vec<PredictionMarket> =
                 serde_json::from_str(&text).map_err(|e| format!("decode failed: {e}"))?;
             markets
                 .into_iter()
@@ -325,7 +338,10 @@ impl PolymarketClient {
         }
     }
 
-    pub(crate) fn get_trades(&self, params: &GetTradesParams) -> Result<Vec<Value>, String> {
+    pub(crate) fn get_trades(
+        &self,
+        params: &GetTradesParams,
+    ) -> Result<Vec<PredictionTrade>, String> {
         let url = format!("{DATA_API_BASE}/trades");
         let mut query: Vec<(&str, String)> = Vec::new();
         if let Some(limit) = params.limit {
@@ -354,11 +370,14 @@ impl PolymarketClient {
             let text = resp.text().unwrap_or_default();
             return Err(format!("Data API error {status}: {text}"));
         }
-        resp.json::<Vec<Value>>()
+        resp.json::<Vec<PredictionTrade>>()
             .map_err(|e| format!("Data API decode failed: {e}"))
     }
 
-    pub(crate) fn submit_order(&self, request: SubmitOrderRequest) -> Result<Value, String> {
+    pub(crate) fn submit_order(
+        &self,
+        request: SubmitOrderRequest,
+    ) -> Result<PredictionOrderSubmissionResponse, String> {
         if !request.owner.starts_with("0x") || request.owner.len() != 42 {
             return Err("owner must be a 0x-prefixed address".to_string());
         }
@@ -374,20 +393,21 @@ impl PolymarketClient {
         }
 
         let owner = request.owner.clone();
-        let mut body = Map::new();
-        body.insert("owner".to_string(), Value::String(owner.clone()));
-        body.insert("signature".to_string(), Value::String(request.signature));
-        body.insert("order".to_string(), Value::Object(order_obj.clone()));
-        if let Some(client_id) = request.client_id {
-            body.insert("clientId".to_string(), Value::String(client_id));
+        let mut extra_fields = request
+            .extra_fields
+            .and_then(|extra| extra.as_object().cloned())
+            .unwrap_or_default();
+        for reserved_key in ["owner", "signature", "order", "clientId"] {
+            extra_fields.remove(reserved_key);
         }
-        if let Some(extra) = request.extra_fields
-            && let Some(extra_obj) = extra.as_object()
-        {
-            for (key, value) in extra_obj {
-                body.entry(key.clone()).or_insert(value.clone());
-            }
-        }
+
+        let body = SubmitOrderHttpBody {
+            owner: owner.clone(),
+            signature: request.signature,
+            order: Value::Object(order_obj.clone()),
+            client_id: request.client_id,
+            extra_fields,
+        };
 
         let url = request
             .endpoint
@@ -441,7 +461,7 @@ impl PolymarketClient {
             let text = resp.text().unwrap_or_default();
             return Err(format!("Order submission failed {status}: {text}"));
         }
-        resp.json::<Value>()
+        resp.json::<PredictionOrderSubmissionResponse>()
             .map_err(|e| format!("Failed to parse order response: {e}"))
     }
 
@@ -505,7 +525,7 @@ impl PolymarketClient {
         if !status.is_success() {
             return Err(format!("{operation} failed {status}: {body}"));
         }
-        let payload: Value =
+        let payload: PredictionCredentialApiResponse =
             serde_json::from_str(&body).map_err(|e| format!("{operation} decode: {e}"))?;
         extract_credentials(&payload)
             .ok_or_else(|| format!("{operation} response missing key/secret/passphrase"))
@@ -580,27 +600,39 @@ pub(crate) fn classify_polymarket_lookup(raw: &str) -> (String, Vec<(String, Str
     }
 }
 
-pub(crate) fn extract_credentials(payload: &Value) -> Option<ClobApiCredentials> {
-    pub(crate) fn pick<'a>(obj: &'a Value, names: &[&str]) -> Option<&'a str> {
-        names
-            .iter()
-            .find_map(|k| obj.get(*k).and_then(|v| v.as_str()))
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-    }
+pub(crate) fn extract_credentials(
+    payload: &PredictionCredentialApiResponse,
+) -> Option<ClobApiCredentials> {
+    let fields = if payload.fields.key.is_some()
+        || payload.fields.secret.is_some()
+        || payload.fields.passphrase.is_some()
+    {
+        &payload.fields
+    } else {
+        payload.data.as_ref()?
+    };
 
-    pub(crate) fn from_obj(obj: &Value) -> Option<ClobApiCredentials> {
-        let key = pick(obj, &["apiKey", "api_key", "key"])?;
-        let secret = pick(obj, &["secret", "apiSecret", "api_secret"])?;
-        let passphrase = pick(obj, &["passphrase", "apiPassphrase", "api_passphrase"])?;
-        Some(ClobApiCredentials {
-            key: key.to_string(),
-            secret: secret.to_string(),
-            passphrase: passphrase.to_string(),
-        })
-    }
+    let key = fields
+        .key
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())?;
+    let secret = fields
+        .secret
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())?;
+    let passphrase = fields
+        .passphrase
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())?;
 
-    from_obj(payload).or_else(|| payload.get("data").and_then(from_obj))
+    Some(ClobApiCredentials {
+        key: key.to_string(),
+        secret: secret.to_string(),
+        passphrase: passphrase.to_string(),
+    })
 }
 
 pub(crate) fn extract_request_path(url: &str) -> Result<String, String> {

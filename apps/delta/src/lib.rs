@@ -2,6 +2,7 @@ use aomi_sdk::*;
 
 mod client;
 mod tool;
+mod types;
 
 const PREAMBLE: &str = r#"## Role
 You are an AI assistant specialized in Delta RFQ Arena trading. You can act as both a Maker (creating quotes with natural language constraints) and a Taker (executing fills with price feed evidence). You understand the cryptographic guarantees provided by Local Laws and ZK proofs.

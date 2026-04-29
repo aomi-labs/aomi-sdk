@@ -1,6 +1,24 @@
 use crate::client::*;
+use crate::types::{
+    AmendOrderRequest, BybitActionResult, BybitKlineResult, BybitOrderbookResult,
+    BybitPositionListResult, BybitTickerResult, BybitWalletBalanceResult, CancelOrderRequest,
+    CreateOrderRequest, SetLeverageRequest,
+};
 use aomi_sdk::*;
-use serde_json::{Value, json};
+use serde::Serialize;
+use serde_json::Value;
+
+fn ok<T: Serialize>(value: T) -> Result<Value, String> {
+    let value = serde_json::to_value(value)
+        .map_err(|e| format!("[bybit] failed to serialize response: {e}"))?;
+    Ok(match value {
+        Value::Object(mut map) => {
+            map.insert("source".to_string(), Value::String("bybit".to_string()));
+            Value::Object(map)
+        }
+        other => serde_json::json!({ "source": "bybit", "data": other }),
+    })
+}
 
 fn resolve_bybit_credentials(
     api_key: Option<&str>,
@@ -37,8 +55,7 @@ impl DynAomiTool for GetTickers {
             params.push(format!("symbol={sym}"));
         }
         let query = params.join("&");
-        let resp = client.public_get("/market/tickers", &query)?;
-        Ok(resp)
+        ok(client.public_get::<BybitTickerResult>("/market/tickers", &query)?)
     }
 }
 
@@ -62,8 +79,7 @@ impl DynAomiTool for GetOrderbook {
             params.push(format!("limit={limit}"));
         }
         let query = params.join("&");
-        let resp = client.public_get("/market/orderbook", &query)?;
-        Ok(resp)
+        ok(client.public_get::<BybitOrderbookResult>("/market/orderbook", &query)?)
     }
 }
 
@@ -92,8 +108,7 @@ impl DynAomiTool for GetKline {
             params.push(format!("end={end}"));
         }
         let query = params.join("&");
-        let resp = client.public_get("/market/kline", &query)?;
-        Ok(resp)
+        ok(client.public_get::<BybitKlineResult>("/market/kline", &query)?)
     }
 }
 
@@ -112,20 +127,15 @@ impl DynAomiTool for CreateOrder {
         let client = BybitClient::new()?;
         let (api_key, secret_key) =
             resolve_bybit_credentials(args.api_key.as_deref(), args.secret_key.as_deref())?;
-        let mut body = json!({
-            "category": args.category,
-            "symbol": args.symbol,
-            "side": args.side,
-            "orderType": args.order_type,
-            "qty": args.qty,
-        });
-        if let Some(ref price) = args.price {
-            body.as_object_mut()
-                .unwrap()
-                .insert("price".to_string(), json!(price));
-        }
-        let resp = client.auth_post("/order/create", &body, &api_key, &secret_key)?;
-        Ok(resp)
+        let body = CreateOrderRequest {
+            category: &args.category,
+            symbol: &args.symbol,
+            side: &args.side,
+            order_type: &args.order_type,
+            qty: &args.qty,
+            price: args.price.as_deref(),
+        };
+        ok(client.auth_post::<_, BybitActionResult>("/order/create", &body, &api_key, &secret_key)?)
     }
 }
 
@@ -144,13 +154,12 @@ impl DynAomiTool for CancelOrder {
         let client = BybitClient::new()?;
         let (api_key, secret_key) =
             resolve_bybit_credentials(args.api_key.as_deref(), args.secret_key.as_deref())?;
-        let body = json!({
-            "category": args.category,
-            "symbol": args.symbol,
-            "orderId": args.order_id,
-        });
-        let resp = client.auth_post("/order/cancel", &body, &api_key, &secret_key)?;
-        Ok(resp)
+        let body = CancelOrderRequest {
+            category: &args.category,
+            symbol: &args.symbol,
+            order_id: &args.order_id,
+        };
+        ok(client.auth_post::<_, BybitActionResult>("/order/cancel", &body, &api_key, &secret_key)?)
     }
 }
 
@@ -168,23 +177,14 @@ impl DynAomiTool for AmendOrder {
         let client = BybitClient::new()?;
         let (api_key, secret_key) =
             resolve_bybit_credentials(args.api_key.as_deref(), args.secret_key.as_deref())?;
-        let mut body = json!({
-            "category": args.category,
-            "symbol": args.symbol,
-            "orderId": args.order_id,
-        });
-        if let Some(ref qty) = args.qty {
-            body.as_object_mut()
-                .unwrap()
-                .insert("qty".to_string(), json!(qty));
-        }
-        if let Some(ref price) = args.price {
-            body.as_object_mut()
-                .unwrap()
-                .insert("price".to_string(), json!(price));
-        }
-        let resp = client.auth_post("/order/amend", &body, &api_key, &secret_key)?;
-        Ok(resp)
+        let body = AmendOrderRequest {
+            category: &args.category,
+            symbol: &args.symbol,
+            order_id: &args.order_id,
+            qty: args.qty.as_deref(),
+            price: args.price.as_deref(),
+        };
+        ok(client.auth_post::<_, BybitActionResult>("/order/amend", &body, &api_key, &secret_key)?)
     }
 }
 
@@ -208,8 +208,12 @@ impl DynAomiTool for GetPositions {
             params.push(format!("symbol={sym}"));
         }
         let query = params.join("&");
-        let resp = client.auth_get("/position/list", &query, &api_key, &secret_key)?;
-        Ok(resp)
+        ok(client.auth_get::<BybitPositionListResult>(
+            "/position/list",
+            &query,
+            &api_key,
+            &secret_key,
+        )?)
     }
 }
 
@@ -229,8 +233,12 @@ impl DynAomiTool for GetWalletBalance {
         let (api_key, secret_key) =
             resolve_bybit_credentials(args.api_key.as_deref(), args.secret_key.as_deref())?;
         let query = format!("accountType={}", args.account_type);
-        let resp = client.auth_get("/account/wallet-balance", &query, &api_key, &secret_key)?;
-        Ok(resp)
+        ok(client.auth_get::<BybitWalletBalanceResult>(
+            "/account/wallet-balance",
+            &query,
+            &api_key,
+            &secret_key,
+        )?)
     }
 }
 
@@ -249,13 +257,17 @@ impl DynAomiTool for SetLeverage {
         let client = BybitClient::new()?;
         let (api_key, secret_key) =
             resolve_bybit_credentials(args.api_key.as_deref(), args.secret_key.as_deref())?;
-        let body = json!({
-            "category": args.category,
-            "symbol": args.symbol,
-            "buyLeverage": args.buy_leverage,
-            "sellLeverage": args.sell_leverage,
-        });
-        let resp = client.auth_post("/position/set-leverage", &body, &api_key, &secret_key)?;
-        Ok(resp)
+        let body = SetLeverageRequest {
+            category: &args.category,
+            symbol: &args.symbol,
+            buy_leverage: &args.buy_leverage,
+            sell_leverage: &args.sell_leverage,
+        };
+        ok(client.auth_post::<_, BybitActionResult>(
+            "/position/set-leverage",
+            &body,
+            &api_key,
+            &secret_key,
+        )?)
     }
 }

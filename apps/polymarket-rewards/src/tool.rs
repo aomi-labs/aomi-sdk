@@ -1,112 +1,74 @@
 use crate::client::*;
 use aomi_sdk::*;
-use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-const SYSTEM_NEXT_ACTION_KEY: &str = "SYSTEM_NEXT_ACTION";
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-enum NextAction {
-    ToolCalls(Vec<NextActionTool>),
+fn to_json_value<T: serde::Serialize>(value: &T) -> Result<Value, String> {
+    serde_json::to_value(value).map_err(|e| format!("failed to encode JSON payload: {e}"))
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct NextActionTool {
-    name: String,
-    reason: String,
-    args: Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    condition: Option<String>,
-}
-
+/// Wallet step + post-callback follow-up. The LLM walks to the wallet tool
+/// first (OnReturn); after the wallet signs, the runtime fires the
+/// follow-up with the callback field spliced into args.
 fn build_rewards_follow_up_result(
     mut result: Value,
     wallet_tool: &str,
     wallet_request: Value,
     follow_up_step: &str,
     follow_up_args_template: Value,
-    follow_up_reason: &str,
     callback_field: &str,
-) -> Result<Value, String> {
-    let callback_condition = format!(
-        "After wallet callback reports signature success; include {callback_field} from callback."
-    );
-
-    let tool_calls = vec![
-        NextActionTool {
-            name: wallet_tool.to_string(),
-            reason: "REQUIRED: Call this tool with these exact args. Do NOT skip or assume it was already sent.".to_string(),
-            args: wallet_request.clone(),
-            condition: None,
-        },
-        NextActionTool {
-            name: follow_up_step.to_string(),
-            reason: follow_up_reason.to_string(),
-            args: follow_up_args_template,
-            condition: Some(callback_condition),
-        },
-    ];
-
-    let action_value = serde_json::to_value(NextAction::ToolCalls(tool_calls))
-        .map_err(|e| format!("Failed to serialize SYSTEM_NEXT_ACTION: {e}"))?;
-
+) -> Result<ToolReturn, String> {
     let obj = result
         .as_object_mut()
         .ok_or_else(|| "result is not an object".to_string())?;
-    obj.insert("wallet_request".to_string(), wallet_request);
-    obj.insert(SYSTEM_NEXT_ACTION_KEY.to_string(), action_value);
+    obj.insert("wallet_request".to_string(), wallet_request.clone());
 
-    Ok(result)
+    Ok(ToolReturn::with_routes(
+        result,
+        [
+            // Wallet step — header handles "run with these exact args" framing.
+            RouteStep::on_return(wallet_tool.to_string(), wallet_request),
+            RouteStep::on_async_callback::<WalletEip712Complete>(
+                follow_up_step.to_string(),
+                follow_up_args_template,
+            )
+            .callback_field(callback_field)
+            .prompt(
+                "Wallet signed — continue the rewards flow. Signature is spliced into the args.",
+            ),
+        ],
+    ))
 }
 
-fn insert_tool_follow_up_result(
-    mut result: Value,
+/// Single immediate next step the LLM should walk to after this tool returns.
+fn next_step_immediate(
+    result: Value,
     follow_up_step: &str,
     follow_up_args: Value,
-    follow_up_reason: &str,
-) -> Result<Value, String> {
-    let tool_calls = vec![NextActionTool {
-        name: follow_up_step.to_string(),
-        reason: follow_up_reason.to_string(),
-        args: follow_up_args,
-        condition: None,
-    }];
-
-    let action_value = serde_json::to_value(NextAction::ToolCalls(tool_calls))
-        .map_err(|e| format!("Failed to serialize SYSTEM_NEXT_ACTION: {e}"))?;
-
-    let obj = result
-        .as_object_mut()
-        .ok_or_else(|| "result is not an object".to_string())?;
-    obj.insert(SYSTEM_NEXT_ACTION_KEY.to_string(), action_value);
-
-    Ok(result)
+    prompt: &str,
+) -> Result<ToolReturn, String> {
+    Ok(ToolReturn::with_route(
+        result,
+        RouteStep::on_return(follow_up_step.to_string(), follow_up_args).prompt(prompt),
+    ))
 }
 
-fn insert_conditional_tool_follow_up_result(
-    mut result: Value,
+/// Single deferred follow-up gated on a wallet EIP-712 callback.
+fn next_step_after_wallet_signature(
+    result: Value,
     follow_up_step: &str,
     follow_up_args: Value,
-    follow_up_reason: &str,
-    condition: &str,
-) -> Result<Value, String> {
-    let tool_calls = vec![NextActionTool {
-        name: follow_up_step.to_string(),
-        reason: follow_up_reason.to_string(),
-        args: follow_up_args,
-        condition: Some(condition.to_string()),
-    }];
-
-    let action_value = serde_json::to_value(NextAction::ToolCalls(tool_calls))
-        .map_err(|e| format!("Failed to serialize SYSTEM_NEXT_ACTION: {e}"))?;
-
-    let obj = result
-        .as_object_mut()
-        .ok_or_else(|| "result is not an object".to_string())?;
-    obj.insert(SYSTEM_NEXT_ACTION_KEY.to_string(), action_value);
-
-    Ok(result)
+    callback_field: &str,
+    prompt: &str,
+) -> Result<ToolReturn, String> {
+    Ok(ToolReturn::with_route(
+        result,
+        RouteStep::on_async_callback::<WalletEip712Complete>(
+            follow_up_step.to_string(),
+            follow_up_args,
+        )
+        .callback_field(callback_field)
+        .prompt(prompt),
+    ))
 }
 
 fn build_session_eip712_request(
@@ -127,21 +89,22 @@ fn build_session_eip712_request(
         .unwrap_or(137);
     let created_at = chrono::Utc::now().timestamp();
 
-    json!({
-        "id": id,
-        "kind": "eip712Sign",
-        "chainId": chain_id,
-        "from": address,
-        "to": "",
-        "value": "0",
-        "data": "",
-        "gas": "0",
-        "description": description,
-        "typedData": typed_data,
-        "groupId": group_id,
-        "createdAt": created_at,
-        "state": "created",
+    serde_json::to_value(SessionPendingTransaction {
+        id: id.to_string(),
+        kind: "eip712Sign",
+        chain_id,
+        from: address.to_string(),
+        to: String::new(),
+        value: "0".to_string(),
+        data: String::new(),
+        gas: "0".to_string(),
+        description,
+        typed_data,
+        group_id: group_id.to_string(),
+        created_at,
+        state: "created",
     })
+    .unwrap_or(Value::Null)
 }
 
 fn snap_down_to_tick(price: f64, tick_size: f64) -> f64 {
@@ -220,11 +183,11 @@ impl DynAomiTool for EnsureRewardClobCredentials {
     const NAME: &'static str = "ensure_reward_clob_credentials";
     const DESCRIPTION: &'static str = "Create or derive Polymarket CLOB credentials for the connected wallet. Preferred behavior: if no `clob_l1_signature` is provided, return the exact `commit_eip712` action needed to sign ClobAuth. After the wallet callback, call this tool again with `clob_auth` and `clob_l1_signature` to receive `api_key`, `api_secret`, and `passphrase`.";
 
-    fn run(
+    fn run_with_routes(
         _app: &PolymarketRewardsApp,
         args: Self::Args,
         _ctx: DynToolCallCtx,
-    ) -> Result<Value, String> {
+    ) -> Result<ToolReturn, String> {
         let clob_auth = args
             .clob_auth
             .unwrap_or_else(|| build_reward_clob_auth_context(&args.address));
@@ -238,39 +201,41 @@ impl DynAomiTool for EnsureRewardClobCredentials {
                 nonce: Some(clob_auth.nonce.clone()),
             })?;
 
-            return Ok(json!({
+            return Ok(ToolReturn::value(json!({
                 "address": clob_auth.address,
                 "status": "ready",
                 "credentials": credentials,
                 "next_step_hint": "Use these credentials as api_key, api_secret, and passphrase when calling execute_quote_plan or get_quote_plan_status.",
-            }));
+            })));
         }
 
         let result = json!({
             "address": args.address,
             "status": "awaiting_wallet_signature",
             "clob_auth": clob_auth.clone(),
-            "submit_args_template": {
-                "address": args.address,
-                "clob_auth": clob_auth.clone(),
-            },
+            "submit_args_template": to_json_value(&EnsureRewardClobCredentialsArgs {
+                address: args.address.clone(),
+                clob_auth: Some(clob_auth.clone()),
+                clob_l1_signature: None,
+            })?,
             "next_step_hint": "The host should call commit_eip712 with the exact typed_data below, then call ensure_reward_clob_credentials again with clob_auth and clob_l1_signature from the wallet callback.",
         });
-        let wallet_request = json!({
-            "typed_data": build_reward_clob_auth_typed_data(&clob_auth),
-            "description": "Polymarket CLOB auth: sign to create or derive rewards-app credentials",
-        });
+        let wallet_request = to_json_value(&WalletEip712Request {
+            typed_data: build_reward_clob_auth_typed_data(&clob_auth),
+            description: "Polymarket CLOB auth: sign to create or derive rewards-app credentials"
+                .to_string(),
+        })?;
 
         build_rewards_follow_up_result(
             result,
             "commit_eip712",
             wallet_request,
             "ensure_reward_clob_credentials",
-            json!({
-                "address": args.address,
-                "clob_auth": clob_auth,
-            }),
-            "Create or derive the Polymarket CLOB credentials after the wallet signs the ClobAuth payload.",
+            to_json_value(&EnsureRewardClobCredentialsArgs {
+                address: args.address,
+                clob_auth: Some(clob_auth),
+                clob_l1_signature: None,
+            })?,
             "clob_l1_signature",
         )
     }
@@ -845,37 +810,34 @@ impl DynAomiTool for BuildQuotePlan {
             );
         }
 
-        let (selected_order_labels, total_capital, next_step_hint, signer_description, next_action_name) =
+        let (selected_order_labels, total_capital, next_step_hint, _signer_description) =
             match execution_mode {
                 QuoteExecutionMode::FourLeg => (
                     vec!["yes_bid", "yes_ask", "no_bid", "no_ask"],
                     args.order_size_usd * 4.0,
                     "If needed, call ensure_reward_clob_credentials first so the host can prompt for the ClobAuth signature and derive CLOB credentials automatically. If the user already confirmed this quote preview, do not stop for another approval during credential setup or order signing. Sign all four quote-leg orders via the host wallet (`commit_eip712`), call execute_quote_plan with simulate=true to review the exact signed orders, and only then wait for the user's reconfirmation before any live submission.".to_string(),
                     "Sign each quote-leg limit order for Polymarket reward deployment".to_string(),
-                    "commit_eip712",
                 ),
                 QuoteExecutionMode::TwoLegBidOnly => (
                     vec!["yes_bid", "no_bid"],
                     args.order_size_usd * 2.0,
                     "If the user confirms this two-leg preview, your very next assistant action must be a submit_reward_quote tool call using the exact submit_args_template below. Do not narrate that you are starting first, and do not omit yes_bid_order or no_bid_order. That staged tool will handle ClobAuth, both wallet signatures, the signed-order simulation, and the final live submit after the user reconfirms.".to_string(),
                     "Sign the two bid-side limit orders for a lower-capital Polymarket smoke test".to_string(),
-                    "submit_reward_quote",
                 ),
             };
 
         let submit_args_template = match execution_mode {
-            QuoteExecutionMode::TwoLegBidOnly => Some(json!({
-                "confirmation": "confirm",
-                "execution_mode": execution_mode,
-                "condition_id": args.condition_id,
-                "yes_bid_order": yes_bid_order.clone(),
-                "no_bid_order": no_bid_order.clone(),
-            })),
+            QuoteExecutionMode::TwoLegBidOnly => {
+                Some(to_json_value(&BuildQuotePlanSubmitTemplate {
+                    confirmation: Some("confirm".to_string()),
+                    execution_mode,
+                    condition_id: args.condition_id.clone(),
+                    yes_bid_order: yes_bid_order.clone(),
+                    no_bid_order: no_bid_order.clone(),
+                })?)
+            }
             QuoteExecutionMode::FourLeg => None,
         };
-        let next_action_args = submit_args_template
-            .clone()
-            .unwrap_or_else(|| json!({ "description": signer_description }));
 
         Ok(json!({
             "condition_id": args.condition_id,
@@ -911,12 +873,6 @@ impl DynAomiTool for BuildQuotePlan {
             "confirmation_phrase": "confirm",
             "submit_args_template": submit_args_template,
             "next_step_hint": next_step_hint,
-            "SYSTEM_NEXT_ACTION": [{
-                "name": next_action_name,
-                "args": next_action_args,
-                "reason": "After the user confirms this preview, continue the connected-wallet execution flow with a real submit_reward_quote tool call using these exact args. Do not output prose first and do not invent submission results.",
-                "condition": "User confirms the quote plan above. The next assistant turn must be the tool call only."
-            }],
         }))
     }
 }
@@ -933,11 +889,11 @@ impl DynAomiTool for SubmitRewardQuote {
     const NAME: &'static str = "submit_reward_quote";
     const DESCRIPTION: &'static str = "Run the connected-wallet Polymarket rewards smoke-test flow inside one staged tool. Stages: 1) request ClobAuth, 2) queue the YES+NO bid signature batch, 3) return a signed-order simulation, 4) submit live only after the user reconfirms. Stay inside this tool until it returns `simulation_ready`, `submitted`, or `submit_failed`.";
 
-    fn run(
+    fn run_with_routes(
         _app: &PolymarketRewardsApp,
         args: Self::Args,
         _ctx: DynToolCallCtx,
-    ) -> Result<Value, String> {
+    ) -> Result<ToolReturn, String> {
         validate_confirmation(args.confirmation.as_deref())?;
 
         let execution_mode = args
@@ -1017,41 +973,57 @@ impl DynAomiTool for SubmitRewardQuote {
                 "address": args.address,
                 "status": "awaiting_wallet_signature",
                 "clob_auth": clob_auth.clone(),
-                "submit_args_template": {
-                    "confirmation": "confirm",
-                    "address": args.address,
-                    "condition_id": args.condition_id,
-                    "market_question": market_question,
-                    "execution_mode": execution_mode,
-                    "yes_bid_order": yes_bid_order,
-                    "no_bid_order": no_bid_order,
-                    "clob_auth": clob_auth.clone(),
-                    "signature_type": args.signature_type,
-                    "funder": args.funder,
-                },
+                "submit_args_template": to_json_value(&SubmitRewardQuoteArgs {
+                    confirmation: Some("confirm".to_string()),
+                    address: args.address.clone(),
+                    condition_id: args.condition_id.clone(),
+                    market_question: market_question.clone(),
+                    execution_mode: Some(execution_mode),
+                    yes_bid_order: Some(yes_bid_order.clone()),
+                    no_bid_order: Some(no_bid_order.clone()),
+                    clob_auth: Some(clob_auth.clone()),
+                    clob_l1_signature: None,
+                    credentials: None,
+                    signature_type: args.signature_type.clone(),
+                    funder: args.funder.clone(),
+                    prepared_yes_bid_order: None,
+                    prepared_no_bid_order: None,
+                    order_signatures: None,
+                    yes_bid_signature: None,
+                    no_bid_signature: None,
+                    simulation_confirmed: None,
+                })?,
                 "pending_sign_request_group": request_group_id,
                 "pending_sign_request_count": pending_transactions.len(),
                 "next_step_hint": "Use the frontend pending-signature menu to sign the ClobAuth request. The session now contains the exact EIP-712 payload needed to derive CLOB credentials.",
                 "SESSION_PENDING_TRANSACTIONS": pending_transactions,
             });
 
-            return insert_conditional_tool_follow_up_result(
+            return next_step_after_wallet_signature(
                 result,
                 "submit_reward_quote",
-                json!({
-                    "confirmation": "confirm",
-                    "address": args.address,
-                    "condition_id": args.condition_id,
-                    "market_question": market_question,
-                    "execution_mode": execution_mode,
-                    "yes_bid_order": yes_bid_order,
-                    "no_bid_order": no_bid_order,
-                    "clob_auth": clob_auth,
-                    "signature_type": args.signature_type,
-                    "funder": args.funder,
-                }),
-                "Create or derive the rewards-app CLOB credentials, then continue into the exact order-signing flow.",
-                "After wallet callback reports batch signature success; include order_signatures from callback.",
+                to_json_value(&SubmitRewardQuoteArgs {
+                    confirmation: Some("confirm".to_string()),
+                    address: args.address.clone(),
+                    condition_id: args.condition_id.clone(),
+                    market_question: market_question.clone(),
+                    execution_mode: Some(execution_mode),
+                    yes_bid_order: Some(yes_bid_order.clone()),
+                    no_bid_order: Some(no_bid_order.clone()),
+                    clob_auth: Some(clob_auth),
+                    clob_l1_signature: None,
+                    credentials: None,
+                    signature_type: args.signature_type.clone(),
+                    funder: args.funder.clone(),
+                    prepared_yes_bid_order: None,
+                    prepared_no_bid_order: None,
+                    order_signatures: None,
+                    yes_bid_signature: None,
+                    no_bid_signature: None,
+                    simulation_confirmed: None,
+                })?,
+                "clob_l1_signature",
+                "ClobAuth signed — derive credentials and continue the order-signing flow.",
             );
         }
 
@@ -1149,49 +1121,57 @@ impl DynAomiTool for SubmitRewardQuote {
                 "credentials_ready": true,
                 "prepared_yes_bid_order": prepared_yes_bid_order.clone(),
                 "prepared_no_bid_order": prepared_no_bid_order.clone(),
-                "submit_args_template": {
-                    "confirmation": "confirm",
-                    "address": args.address,
-                    "condition_id": args.condition_id,
-                    "market_question": market_question,
-                    "execution_mode": execution_mode,
-                    "yes_bid_order": yes_bid_order,
-                    "no_bid_order": no_bid_order,
-                    "clob_auth": clob_auth.clone(),
-                    "clob_l1_signature": clob_l1_signature.clone(),
-                    "credentials": credentials.clone(),
-                    "signature_type": args.signature_type,
-                    "funder": args.funder,
-                    "prepared_yes_bid_order": prepared_yes_bid_order.clone(),
-                    "prepared_no_bid_order": prepared_no_bid_order.clone(),
-                },
+                "submit_args_template": to_json_value(&SubmitRewardQuoteArgs {
+                    confirmation: Some("confirm".to_string()),
+                    address: args.address.clone(),
+                    condition_id: args.condition_id.clone(),
+                    market_question: market_question.clone(),
+                    execution_mode: Some(execution_mode),
+                    yes_bid_order: Some(yes_bid_order.clone()),
+                    no_bid_order: Some(no_bid_order.clone()),
+                    clob_auth: Some(clob_auth.clone()),
+                    clob_l1_signature: Some(clob_l1_signature.clone()),
+                    credentials: Some(credentials.clone()),
+                    signature_type: args.signature_type.clone(),
+                    funder: args.funder.clone(),
+                    prepared_yes_bid_order: Some(prepared_yes_bid_order.clone()),
+                    prepared_no_bid_order: Some(prepared_no_bid_order.clone()),
+                    order_signatures: None,
+                    yes_bid_signature: None,
+                    no_bid_signature: None,
+                    simulation_confirmed: None,
+                })?,
                 "pending_sign_request_group": request_group_id,
                 "pending_sign_request_count": pending_transactions.len(),
                 "next_step_hint": "Use the frontend pending-signature menu to batch-sign both bid orders. The session now contains the exact YES and NO EIP-712 requests.",
                 "SESSION_PENDING_TRANSACTIONS": pending_transactions,
             });
 
-            return insert_conditional_tool_follow_up_result(
+            return next_step_after_wallet_signature(
                 result,
                 "submit_reward_quote",
-                json!({
-                    "confirmation": "confirm",
-                    "address": args.address,
-                    "condition_id": args.condition_id,
-                    "market_question": market_question,
-                    "execution_mode": execution_mode,
-                    "yes_bid_order": yes_bid_order,
-                    "no_bid_order": no_bid_order,
-                    "clob_auth": clob_auth,
-                    "clob_l1_signature": clob_l1_signature,
-                    "credentials": credentials,
-                    "signature_type": args.signature_type,
-                    "funder": args.funder,
-                    "prepared_yes_bid_order": prepared_yes_bid_order,
-                    "prepared_no_bid_order": prepared_no_bid_order,
-                }),
-                "Continue the staged rewards submit flow after the batched YES and NO bid wallet signatures arrive.",
-                "After wallet callback reports batch signature success; include order_signatures from callback.",
+                to_json_value(&SubmitRewardQuoteArgs {
+                    confirmation: Some("confirm".to_string()),
+                    address: args.address.clone(),
+                    condition_id: args.condition_id.clone(),
+                    market_question: market_question.clone(),
+                    execution_mode: Some(execution_mode),
+                    yes_bid_order: Some(yes_bid_order.clone()),
+                    no_bid_order: Some(no_bid_order.clone()),
+                    clob_auth: Some(clob_auth),
+                    clob_l1_signature: Some(clob_l1_signature),
+                    credentials: Some(credentials),
+                    signature_type: args.signature_type.clone(),
+                    funder: args.funder.clone(),
+                    prepared_yes_bid_order: Some(prepared_yes_bid_order),
+                    prepared_no_bid_order: Some(prepared_no_bid_order),
+                    order_signatures: None,
+                    yes_bid_signature: None,
+                    no_bid_signature: None,
+                    simulation_confirmed: None,
+                })?,
+                "order_signatures",
+                "Both bid orders signed in batch — continue the rewards submit flow.",
             );
         }
 
@@ -1212,77 +1192,58 @@ impl DynAomiTool for SubmitRewardQuote {
         );
 
         if !args.simulation_confirmed.unwrap_or(false) {
-            return insert_conditional_tool_follow_up_result(
-                json!({
-                    "stage": "simulation_ready",
-                    "mode": "simulation",
-                    "execution_mode": execution_mode,
-                    "status": "simulated_ok",
-                    "note": "Signed-order simulation complete. These exact orders were NOT submitted yet.",
-                    "simulation_preview": {
-                        "market_question": market_question,
-                        "total_capital_usdc": yes_bid_order.maker_amount + no_bid_order.maker_amount,
-                        "yes_bid": {
-                            "side": "BUY",
-                            "outcome": "YES",
-                            "price": yes_bid_order.price,
-                            "shares": yes_bid_order.taker_amount,
-                            "capital_usdc": yes_bid_order.maker_amount,
-                        },
-                        "no_bid": {
-                            "side": "BUY",
-                            "outcome": "NO",
-                            "price": no_bid_order.price,
-                            "shares": no_bid_order.taker_amount,
-                            "capital_usdc": no_bid_order.maker_amount,
-                        },
-                        "reward_qualification": "qualifies",
-                    },
-                    "submit_args_template": {
-                        "confirmation": "confirm",
-                        "address": args.address,
-                        "condition_id": args.condition_id,
-                        "market_question": market_question,
-                        "execution_mode": execution_mode,
-                        "yes_bid_order": yes_bid_order,
-                        "no_bid_order": no_bid_order,
-                        "clob_auth": clob_auth,
-                        "clob_l1_signature": clob_l1_signature,
-                        "credentials": credentials.clone(),
-                        "signature_type": args.signature_type,
-                        "funder": args.funder,
-                        "prepared_yes_bid_order": prepared_yes_bid_order,
-                        "prepared_no_bid_order": prepared_no_bid_order,
-                        "yes_bid_signature": yes_bid_signature,
-                        "no_bid_signature": no_bid_signature,
-                        "simulation_confirmed": true,
-                    },
-                    "next_step_hint": "Show the compact signed-order simulation preview to the user, then stop. Only after the user reconfirms should you call submit_reward_quote again with submit_args_template to submit live.",
-                    "SESSION_PENDING_TRANSACTIONS": [],
-                }),
-                "submit_reward_quote",
-                json!({
-                    "confirmation": "confirm",
-                    "address": args.address,
-                    "condition_id": args.condition_id,
+            // No route here: the user must reconfirm the simulation preview
+            // before live submission. The LLM reads `next_step_hint` and
+            // `submit_args_template` in the body and stops to ask. Auto-firing
+            // a route would bypass the human gate.
+            return Ok(ToolReturn::value(json!({
+                "stage": "simulation_ready",
+                "mode": "simulation",
+                "execution_mode": execution_mode,
+                "status": "simulated_ok",
+                "note": "Signed-order simulation complete. These exact orders were NOT submitted yet.",
+                "simulation_preview": {
                     "market_question": market_question,
-                    "execution_mode": execution_mode,
-                    "yes_bid_order": yes_bid_order,
-                    "no_bid_order": no_bid_order,
-                    "clob_auth": clob_auth,
-                    "clob_l1_signature": clob_l1_signature,
-                    "credentials": credentials,
-                    "signature_type": args.signature_type,
-                    "funder": args.funder,
-                    "prepared_yes_bid_order": prepared_yes_bid_order,
-                    "prepared_no_bid_order": prepared_no_bid_order,
-                    "yes_bid_signature": yes_bid_signature,
-                    "no_bid_signature": no_bid_signature,
-                    "simulation_confirmed": true,
-                }),
-                "Submit the exact signed quote live after the user confirms the signed-order simulation preview.",
-                "User confirms the signed-order simulation above.",
-            );
+                    "total_capital_usdc": yes_bid_order.maker_amount + no_bid_order.maker_amount,
+                    "yes_bid": {
+                        "side": "BUY",
+                        "outcome": "YES",
+                        "price": yes_bid_order.price,
+                        "shares": yes_bid_order.taker_amount,
+                        "capital_usdc": yes_bid_order.maker_amount,
+                    },
+                    "no_bid": {
+                        "side": "BUY",
+                        "outcome": "NO",
+                        "price": no_bid_order.price,
+                        "shares": no_bid_order.taker_amount,
+                        "capital_usdc": no_bid_order.maker_amount,
+                    },
+                    "reward_qualification": "qualifies",
+                },
+                "submit_args_template": to_json_value(&SubmitRewardQuoteArgs {
+                    confirmation: Some("confirm".to_string()),
+                    address: args.address.clone(),
+                    condition_id: args.condition_id.clone(),
+                    market_question: market_question.clone(),
+                    execution_mode: Some(execution_mode),
+                    yes_bid_order: Some(yes_bid_order.clone()),
+                    no_bid_order: Some(no_bid_order.clone()),
+                    clob_auth: Some(clob_auth),
+                    clob_l1_signature: Some(clob_l1_signature),
+                    credentials: Some(credentials.clone()),
+                    signature_type: args.signature_type.clone(),
+                    funder: args.funder.clone(),
+                    prepared_yes_bid_order: Some(prepared_yes_bid_order),
+                    prepared_no_bid_order: Some(prepared_no_bid_order),
+                    order_signatures: None,
+                    yes_bid_signature: Some(yes_bid_signature),
+                    no_bid_signature: Some(no_bid_signature),
+                    simulation_confirmed: Some(true),
+                })?,
+                "next_step_hint": "Show the compact signed-order simulation preview to the user, then stop. Only after the user reconfirms should you call submit_reward_quote again with submit_args_template to submit live.",
+                "SESSION_PENDING_TRANSACTIONS": [],
+            })));
         }
 
         if client.is_geoblocked() {
@@ -1305,7 +1266,7 @@ impl DynAomiTool for SubmitRewardQuote {
         {
             Ok(results) => results,
             Err(error) => {
-                return Ok(json!({
+                return Ok(ToolReturn::value(json!({
                     "stage": "submit_failed",
                     "mode": "live",
                     "execution_mode": execution_mode,
@@ -1313,10 +1274,10 @@ impl DynAomiTool for SubmitRewardQuote {
                     "error": error,
                     "next_step_hint": "Stop here and show the exact submission error to the user. Do not re-rank markets, rebuild a fresh quote, or retry automatically.",
                     "SESSION_PENDING_TRANSACTIONS": [],
-                }));
+                })));
             }
         };
-        Ok(json!({
+        Ok(ToolReturn::value(json!({
             "stage": "submitted",
             "mode": "live",
             "execution_mode": execution_mode,
@@ -1328,7 +1289,72 @@ impl DynAomiTool for SubmitRewardQuote {
             },
             "next_step_hint": "Show this exact live submission result to the user. If they want verification next, call get_quote_plan_status explicitly.",
             "SESSION_PENDING_TRANSACTIONS": [],
-        }))
+        })))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aomi_sdk::{DynAomiTool, DynToolCallCtx, RouteTrigger};
+
+    fn sample_order(token_id: &str, outcome: QuoteOutcome) -> QuoteOrderTemplate {
+        QuoteOrderTemplate {
+            token_id: token_id.to_string(),
+            price: 0.49,
+            size: 10.0,
+            side: QuoteSide::Buy,
+            kind: QuoteOrderKind::Limit,
+            time_in_force: QuoteTimeInForce::Gtc,
+            outcome,
+            maker_amount: 4.9,
+            taker_amount: 10.0,
+        }
+    }
+
+    #[test]
+    fn clob_auth_resume_route_uses_clob_signature_arg() {
+        let result = SubmitRewardQuote::run_with_routes(
+            &PolymarketRewardsApp,
+            SubmitRewardQuoteArgs {
+                confirmation: Some("confirm".to_string()),
+                address: "0x000000000000000000000000000000000000dEaD".to_string(),
+                condition_id: None,
+                market_question: Some("Will BTC go up?".to_string()),
+                execution_mode: Some(QuoteExecutionMode::TwoLegBidOnly),
+                yes_bid_order: Some(sample_order("yes-token", QuoteOutcome::Yes)),
+                no_bid_order: Some(sample_order("no-token", QuoteOutcome::No)),
+                clob_auth: Some(build_reward_clob_auth_context(
+                    "0x000000000000000000000000000000000000dEaD",
+                )),
+                clob_l1_signature: None,
+                credentials: None,
+                signature_type: None,
+                funder: None,
+                prepared_yes_bid_order: None,
+                prepared_no_bid_order: None,
+                order_signatures: None,
+                yes_bid_signature: None,
+                no_bid_signature: None,
+                simulation_confirmed: None,
+            },
+            DynToolCallCtx {
+                session_id: "session".to_string(),
+                tool_name: "submit_reward_quote".to_string(),
+                call_id: "call".to_string(),
+                state_attributes: Default::default(),
+            },
+        )
+        .expect("submit_reward_quote should stage clob auth signing");
+
+        assert_eq!(result.routes.len(), 1);
+        match &result.routes[0].trigger {
+            RouteTrigger::OnAsyncCallback {
+                callback_field: Some(field),
+                ..
+            } => assert_eq!(field, "clob_l1_signature"),
+            other => panic!("unexpected trigger: {other:?}"),
+        }
     }
 }
 
@@ -1344,11 +1370,11 @@ impl DynAomiTool for ExecuteQuotePlan {
     const NAME: &'static str = "execute_quote_plan";
     const DESCRIPTION: &'static str = "Submit the signed quote from build_quote_plan to the Polymarket CLOB. Supports `execution_mode='four_leg'` for simulation and `execution_mode='two_leg_bid_only'` for lower-capital live smoke tests. Live submission is currently limited to the two bid legs (`yes_bid_order`, `no_bid_order`) and requires a prior signed-order simulation plus `simulation_confirmed=true`. Requires confirmation='confirm' and valid CLOB L2 credentials. Set simulate=true to do a dry run without submitting. After a successful live submission, immediately call get_quote_plan_status to verify open orders and earnings.";
 
-    fn run(
+    fn run_with_routes(
         _app: &PolymarketRewardsApp,
         args: Self::Args,
         _ctx: DynToolCallCtx,
-    ) -> Result<Value, String> {
+    ) -> Result<ToolReturn, String> {
         validate_confirmation(args.confirmation.as_deref())?;
 
         let simulate = args.simulate.unwrap_or(false);
@@ -1398,7 +1424,7 @@ impl DynAomiTool for ExecuteQuotePlan {
                 })
                 .collect::<Result<serde_json::Map<String, Value>, String>>()?;
 
-            return Ok(json!({
+            return Ok(ToolReturn::value(json!({
                 "mode": "simulation",
                 "execution_mode": execution_mode,
                 "order_count": simulated_orders.len(),
@@ -1406,7 +1432,7 @@ impl DynAomiTool for ExecuteQuotePlan {
                 "status": "simulated_ok",
                 "note": "simulate=true: orders were NOT submitted to the CLOB.",
                 "next_step_hint": "Set simulate=false and re-confirm to submit live orders.",
-            }));
+            })));
         }
 
         if !args.simulation_confirmed.unwrap_or(false) {
@@ -1421,7 +1447,7 @@ impl DynAomiTool for ExecuteQuotePlan {
                 })
                 .collect::<Result<serde_json::Map<String, Value>, String>>()?;
 
-            return Ok(json!({
+            return Ok(ToolReturn::value(json!({
                 "mode": "simulation_required",
                 "execution_mode": execution_mode,
                 "order_count": simulated_orders.len(),
@@ -1429,7 +1455,7 @@ impl DynAomiTool for ExecuteQuotePlan {
                 "status": "simulation_required",
                 "note": "Live execution is blocked until these exact signed orders are simulated and reviewed first.",
                 "next_step_hint": "Review this signed-order simulation, then call execute_quote_plan again with the same signed payloads, confirmation='confirm', simulate=false, and simulation_confirmed=true to submit live.",
-            }));
+            })));
         }
 
         if execution_mode != QuoteExecutionMode::TwoLegBidOnly {
@@ -1487,7 +1513,7 @@ impl DynAomiTool for ExecuteQuotePlan {
             "next_step_hint": "Immediately call get_quote_plan_status to verify the open orders landed and to show reward earnings context.",
         });
 
-        insert_tool_follow_up_result(
+        next_step_immediate(
             result,
             "get_quote_plan_status",
             status_follow_up_args,
@@ -1583,11 +1609,11 @@ impl DynAomiTool for WithdrawQuoteLiquidity {
     const NAME: &'static str = "withdraw_quote_liquidity";
     const DESCRIPTION: &'static str = "Cancel resting quote orders to withdraw liquidity from the Polymarket orderbook. This only removes open orders; it does not unwind already filled YES/NO positions. Provide either explicit `order_ids`, or a `condition_id`, or an `asset_id`. Set simulate=true to preview what would be canceled.";
 
-    fn run(
+    fn run_with_routes(
         _app: &PolymarketRewardsApp,
         args: Self::Args,
         _ctx: DynToolCallCtx,
-    ) -> Result<Value, String> {
+    ) -> Result<ToolReturn, String> {
         let simulate = args.simulate.unwrap_or(false);
         if !simulate {
             validate_confirmation(args.confirmation.as_deref())?;
@@ -1671,7 +1697,7 @@ impl DynAomiTool for WithdrawQuoteLiquidity {
                 .filter_map(|order| order.get("id").and_then(Value::as_str))
                 .collect::<Vec<_>>();
 
-            return Ok(json!({
+            return Ok(ToolReturn::value(json!({
                 "mode": "simulation",
                 "status": "simulated_ok",
                 "matched_order_count": filtered_orders.len(),
@@ -1679,7 +1705,7 @@ impl DynAomiTool for WithdrawQuoteLiquidity {
                 "matched_orders": filtered_orders,
                 "note": "simulate=true: no orders were canceled.",
                 "next_step_hint": "Set simulate=false and confirmation='confirm' to cancel the matched resting liquidity.",
-            }));
+            })));
         }
 
         let status_follow_up_args = json!({
@@ -1715,7 +1741,7 @@ impl DynAomiTool for WithdrawQuoteLiquidity {
             "next_step_hint": "Immediately call get_quote_plan_status to verify that the resting quote liquidity is gone. Filled positions, if any, remain in the wallet.",
         });
 
-        insert_tool_follow_up_result(
+        next_step_immediate(
             result,
             "get_quote_plan_status",
             status_follow_up_args,

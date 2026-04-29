@@ -3,6 +3,7 @@ use std::sync::LazyLock;
 
 mod client;
 mod tool;
+mod types;
 
 static PREAMBLE: LazyLock<String> = LazyLock::new(client::build_preamble);
 

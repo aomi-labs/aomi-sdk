@@ -1,9 +1,22 @@
 use crate::client::{ParaApp, para_client};
+use crate::types::{CreateWalletRequest, WalletLookupResult};
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::time::{Duration, Instant};
+
+fn ok<T: Serialize>(value: T) -> Result<Value, String> {
+    let value = serde_json::to_value(value)
+        .map_err(|e| format!("[para] failed to serialize response: {e}"))?;
+    Ok(match value {
+        Value::Object(mut map) => {
+            map.insert("source".to_string(), Value::String("para".to_string()));
+            Value::Object(map)
+        }
+        other => json!({ "source": "para", "data": other }),
+    })
+}
 
 fn validate_sign_raw_data(data: &str) -> Result<(), String> {
     if !data.starts_with("0x") {
@@ -56,22 +69,15 @@ impl DynAomiTool for CreateParaWallet {
     const DESCRIPTION: &'static str = "Create a new Para MPC wallet. Supports EVM, Solana, and Cosmos chains. The wallet is created asynchronously — status starts as 'creating' and transitions to 'ready' once MPC key generation completes. Use wait_for_para_wallet_ready to poll until ready.";
 
     fn run(_app: &Self::App, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = para_client()?;
         let api_key = resolve_para_api_key(&ctx)?;
-        let mut payload = json!({
-            "type": args.wallet_type,
-            "userIdentifier": args.user_identifier,
-            "userIdentifierType": args.user_identifier_type,
-        });
-
-        if let Some(scheme) = args.scheme {
-            payload["scheme"] = Value::String(scheme);
-        }
-        if let Some(prefix) = args.cosmos_prefix {
-            payload["cosmosPrefix"] = Value::String(prefix);
-        }
-
-        client.create_wallet(&api_key, payload)
+        let payload = CreateWalletRequest {
+            wallet_type: args.wallet_type,
+            user_identifier: args.user_identifier,
+            user_identifier_type: args.user_identifier_type,
+            scheme: args.scheme,
+            cosmos_prefix: args.cosmos_prefix,
+        };
+        ok(para_client()?.create_wallet(&api_key, &payload)?)
     }
 }
 
@@ -92,7 +98,7 @@ impl DynAomiTool for GetParaWallet {
 
     fn run(_app: &Self::App, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
         let api_key = resolve_para_api_key(&ctx)?;
-        para_client()?.get_wallet(&api_key, &args.wallet_id)
+        ok(para_client()?.get_wallet(&api_key, &args.wallet_id)?)
     }
 }
 
@@ -119,16 +125,24 @@ impl DynAomiTool for ListParaWallets {
             return Err("wallet_ids must be a non-empty array".to_string());
         }
 
-        let wallets: Vec<Value> = wallet_ids
+        let wallets: Vec<WalletLookupResult> = wallet_ids
             .iter()
             .map(|wallet_id| match client.get_wallet(&api_key, wallet_id) {
-                Ok(data) => json!({ "wallet_id": wallet_id, "data": data }),
-                Err(error) => json!({ "wallet_id": wallet_id, "error": error }),
+                Ok(data) => WalletLookupResult {
+                    wallet_id: wallet_id.clone(),
+                    data: Some(data),
+                    error: None,
+                },
+                Err(error) => WalletLookupResult {
+                    wallet_id: wallet_id.clone(),
+                    data: None,
+                    error: Some(error),
+                },
             })
             .collect();
 
         let count = wallets.len();
-        Ok(json!({ "wallets": wallets, "count": count }))
+        ok(json!({ "wallets": wallets, "count": count }))
     }
 }
 
@@ -152,7 +166,7 @@ impl DynAomiTool for SignRawWithParaWallet {
     fn run(_app: &Self::App, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
         let api_key = resolve_para_api_key(&ctx)?;
         validate_sign_raw_data(&args.data)?;
-        para_client()?.sign_raw(&api_key, &args.wallet_id, &args.data)
+        ok(para_client()?.sign_raw(&api_key, &args.wallet_id, &args.data)?)
     }
 }
 
@@ -186,7 +200,7 @@ impl DynAomiTool for WaitForParaWalletReady {
                 .unwrap_or("unknown");
 
             match status {
-                "ready" => return Ok(wallet),
+                "ready" => return ok(wallet),
                 "error" => {
                     return Err(format!(
                         "Para wallet '{}' creation failed with status 'error'. Try creating a new wallet.",
@@ -216,6 +230,7 @@ mod tests {
         CreateParaWalletArgs, GetParaWalletArgs, ListParaWalletsArgs, SignRawWithParaWalletArgs,
         WaitForParaWalletReadyArgs, resolve_para_api_key, validate_sign_raw_data,
     };
+    use crate::types::CreateWalletRequest;
     use aomi_sdk::testing::TestCtxBuilder;
     use serde_json::json;
 
@@ -301,6 +316,16 @@ mod tests {
 
     use crate::client::ParaClient;
 
+    fn create_wallet_request(user_identifier: String) -> CreateWalletRequest {
+        CreateWalletRequest {
+            wallet_type: "EVM".to_string(),
+            user_identifier,
+            user_identifier_type: "EMAIL".to_string(),
+            scheme: None,
+            cosmos_prefix: None,
+        }
+    }
+
     fn api_key() -> String {
         std::env::var("PARA_API_KEY").expect("PARA_API_KEY must be set for integration tests")
     }
@@ -316,42 +341,19 @@ mod tests {
         let key = api_key();
 
         let uid = format!("test-{}@aomi.test", uuid::Uuid::new_v4());
-        let body = json!({
-            "type": "EVM",
-            "userIdentifier": uid,
-            "userIdentifierType": "EMAIL",
-        });
-        println!("\n>>> POST /v1/wallets");
-        println!(
-            "    request body: {}",
-            serde_json::to_string_pretty(&body).unwrap()
-        );
-
+        let body = create_wallet_request(uid);
         let created = client
-            .create_wallet(&key, body)
+            .create_wallet(&key, &body)
             .expect("create_wallet failed");
-        println!(
-            "    response: {}",
-            serde_json::to_string_pretty(&created).unwrap()
-        );
 
         let wallet_id = created["id"].as_str().expect("response missing 'id'");
         assert!(!wallet_id.is_empty(), "wallet id should not be empty");
 
-        println!("\n>>> GET /v1/wallets/{wallet_id}");
         let fetched = client
             .get_wallet(&key, wallet_id)
             .expect("get_wallet failed");
-        println!(
-            "    response: {}",
-            serde_json::to_string_pretty(&fetched).unwrap()
-        );
-
         assert_eq!(fetched["id"].as_str(), Some(wallet_id));
-        assert!(
-            fetched.get("status").is_some(),
-            "wallet response should include 'status'"
-        );
+        assert!(fetched.get("status").is_some());
     }
 
     #[test]
@@ -359,9 +361,7 @@ mod tests {
     fn get_wallet_not_found() {
         let client = client();
         let fake_id = "00000000-0000-0000-0000-000000000000";
-        println!("\n>>> GET /v1/wallets/{fake_id}");
         let err = client.get_wallet(&api_key(), fake_id).unwrap_err();
-        println!("    error: {err}");
         assert!(err.contains("404"), "expected 404 error, got: {err}");
     }
 
@@ -369,19 +369,8 @@ mod tests {
     #[ignore]
     fn create_wallet_bad_api_key() {
         let client = client();
-        let body = json!({
-            "type": "EVM",
-            "userIdentifier": "bad-key-test@aomi.test",
-            "userIdentifierType": "EMAIL",
-        });
-        println!("\n>>> POST /v1/wallets (bad api key)");
-        println!(
-            "    request body: {}",
-            serde_json::to_string_pretty(&body).unwrap()
-        );
-
-        let err = client.create_wallet("invalid-key", body).unwrap_err();
-        println!("    error: {err}");
+        let body = create_wallet_request("bad-key-test@aomi.test".to_string());
+        let err = client.create_wallet("invalid-key", &body).unwrap_err();
         assert!(
             err.contains("401") || err.contains("403"),
             "expected 401/403 error, got: {err}"
@@ -395,44 +384,22 @@ mod tests {
         let key = api_key();
 
         let uid = format!("test-sign-{}@aomi.test", uuid::Uuid::new_v4());
-        let body = json!({
-            "type": "EVM",
-            "userIdentifier": uid,
-            "userIdentifierType": "EMAIL",
-        });
-        println!("\n>>> POST /v1/wallets (create for signing)");
-        println!(
-            "    request body: {}",
-            serde_json::to_string_pretty(&body).unwrap()
-        );
-
+        let body = create_wallet_request(uid);
         let created = client
-            .create_wallet(&key, body)
+            .create_wallet(&key, &body)
             .expect("create_wallet failed");
-        println!(
-            "    response: {}",
-            serde_json::to_string_pretty(&created).unwrap()
-        );
-
         let wallet_id = created["id"]
             .as_str()
             .expect("response missing 'id'")
             .to_string();
 
         // Poll until ready (max 30s).
-        println!("\n>>> polling GET /v1/wallets/{wallet_id} until ready...");
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         loop {
             let wallet = client
                 .get_wallet(&key, &wallet_id)
                 .expect("get_wallet failed");
-            let status = wallet["status"].as_str().unwrap_or("unknown");
-            println!("    status: {status}");
-            if status == "ready" {
-                println!(
-                    "    wallet ready: {}",
-                    serde_json::to_string_pretty(&wallet).unwrap()
-                );
+            if wallet["status"].as_str().unwrap_or("unknown") == "ready" {
                 break;
             }
             if std::time::Instant::now() >= deadline {
@@ -441,18 +408,9 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_secs(2));
         }
 
-        let sign_data = "0x48656c6c6f";
-        println!("\n>>> POST /v1/wallets/{wallet_id}/sign-raw");
-        println!("    request body: {{\"data\": \"{sign_data}\"}}");
-
         let result = client
-            .sign_raw(&key, &wallet_id, sign_data)
+            .sign_raw(&key, &wallet_id, "0x48656c6c6f")
             .expect("sign_raw failed");
-        println!(
-            "    response: {}",
-            serde_json::to_string_pretty(&result).unwrap()
-        );
-
         assert!(
             result.get("signature").is_some() || result.get("sig").is_some(),
             "sign response should include a signature field: {result}"
@@ -465,48 +423,22 @@ mod tests {
         let client = client();
         let key = api_key();
 
-        println!("\n>>> creating 2 wallets...");
         let ids: Vec<String> = (0..2)
             .map(|i| {
                 let uid = format!("test-list-{i}-{}@aomi.test", uuid::Uuid::new_v4());
-                let body = json!({
-                    "type": "EVM",
-                    "userIdentifier": uid,
-                    "userIdentifierType": "EMAIL",
-                });
-                println!(
-                    "    POST /v1/wallets body: {}",
-                    serde_json::to_string_pretty(&body).unwrap()
-                );
+                let body = create_wallet_request(uid);
                 let created = client
-                    .create_wallet(&key, body)
+                    .create_wallet(&key, &body)
                     .expect("create_wallet failed");
-                println!(
-                    "    response: {}",
-                    serde_json::to_string_pretty(&created).unwrap()
-                );
                 created["id"].as_str().unwrap().to_string()
             })
             .collect();
 
-        println!("\n>>> fetching {} wallets sequentially...", ids.len());
         let wallets: Vec<serde_json::Value> = ids
             .iter()
-            .map(|wallet_id| {
-                println!("    GET /v1/wallets/{wallet_id}");
-                match client.get_wallet(&key, wallet_id) {
-                    Ok(data) => {
-                        println!(
-                            "    response: {}",
-                            serde_json::to_string_pretty(&data).unwrap()
-                        );
-                        json!({ "wallet_id": wallet_id, "data": data })
-                    }
-                    Err(error) => {
-                        println!("    error: {error}");
-                        json!({ "wallet_id": wallet_id, "error": error })
-                    }
-                }
+            .map(|wallet_id| match client.get_wallet(&key, wallet_id) {
+                Ok(data) => json!({ "wallet_id": wallet_id, "data": data }),
+                Err(error) => json!({ "wallet_id": wallet_id, "error": error }),
             })
             .collect();
 

@@ -1,8 +1,24 @@
 use crate::client::*;
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+fn ok<T: Serialize>(value: T) -> Result<Value, String> {
+    let value = serde_json::to_value(value)
+        .map_err(|e| format!("[khalani] failed to serialize response: {e}"))?;
+    Ok(match value {
+        Value::Object(mut map) => {
+            map.insert("source".to_string(), Value::String("khalani".to_string()));
+            Value::Object(map)
+        }
+        other => serde_json::json!({ "source": "khalani", "data": other }),
+    })
+}
+
+fn to_json_value<T: Serialize>(value: &T) -> Result<Value, String> {
+    serde_json::to_value(value).map_err(|e| format!("failed to encode JSON payload: {e}"))
+}
 
 impl DynAomiTool for GetKhalaniQuote {
     type App = KhalaniApp;
@@ -25,7 +41,7 @@ impl DynAomiTool for GetKhalaniQuote {
         let buy_token = client.resolve_token(&args.buy_token, to_chain_id)?;
         let amount_base_units = amount_to_base_units(args.amount, sell_token.decimals)?;
 
-        client.get_quote(
+        ok(client.get_quote(
             from_chain_id,
             to_chain_id,
             &sell_token.address,
@@ -34,7 +50,7 @@ impl DynAomiTool for GetKhalaniQuote {
             &sender_address,
             args.receiver_address.as_deref(),
             slippage_to_bps(args.slippage),
-        )
+        )?)
     }
 }
 
@@ -42,7 +58,7 @@ impl DynAomiTool for GetKhalaniQuote {
 // Tool 2: build_khalani_order
 // ============================================================================
 
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct BuildKhalaniOrderArgs {
     /// Source chain: ethereum, arbitrum, polygon, base, etc.
     chain: String,
@@ -71,7 +87,11 @@ impl DynAomiTool for BuildKhalaniOrder {
     const NAME: &'static str = "build_khalani_order";
     const DESCRIPTION: &'static str = "Build a Khalani execution step and return the next explicit wallet action. This tool never sends the wallet request itself.";
 
-    fn run(_app: &Self::App, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
+    fn run_with_routes(
+        _app: &Self::App,
+        args: Self::Args,
+        ctx: DynToolCallCtx,
+    ) -> Result<ToolReturn, String> {
         let client = KhalaniClient::new()?;
         let sender_address = resolve_sender_address(&ctx, args.sender_address.as_deref())?;
         let destination_chain = args
@@ -109,41 +129,38 @@ impl DynAomiTool for BuildKhalaniOrder {
         let mut build_payloads: Vec<Value> = Vec::new();
 
         if let Some(ref rid) = route_id {
-            build_payloads.push(json!({
-                "from": &sender_address,
-                "quoteId": &quote_id,
-                "routeId": rid,
-            }));
-            for addr_key in ["from", "fromAddress", "userAddress"] {
-                let mut payload = json!({
-                    addr_key: &sender_address,
-                    "quoteId": &quote_id,
-                    "routeId": rid,
-                    "depositMethod": "CONTRACT_CALL",
-                });
-                if let Some(bps) = slippage_bps {
-                    payload["slippageInBps"] = json!(bps);
-                }
-                build_payloads.push(payload);
-            }
+            build_payloads.push(to_json_value(&KhalaniDepositBuildCanonicalRequest {
+                from: sender_address.clone(),
+                quote_id: quote_id.clone(),
+                route_id: rid.clone(),
+            })?);
+            build_payloads.push(to_json_value(&KhalaniDepositBuildFromAddressRequest {
+                from_address: sender_address.clone(),
+                quote_id: quote_id.clone(),
+                route_id: rid.clone(),
+                deposit_method: "CONTRACT_CALL",
+                slippage_in_bps: slippage_bps,
+            })?);
+            build_payloads.push(to_json_value(&KhalaniDepositBuildUserAddressRequest {
+                user_address: sender_address.clone(),
+                quote_id: quote_id.clone(),
+                route_id: rid.clone(),
+                deposit_method: "CONTRACT_CALL",
+                slippage_in_bps: slippage_bps,
+            })?);
         }
 
-        let mut legacy_payload = json!({
-            "quoteId": &quote_id,
-            "user": &sender_address,
-        });
-        if let Some(target) = extract_khalani_allowance_target(&quote_entry) {
-            legacy_payload["allowanceTarget"] = Value::String(target);
-        }
-        if let Some(bps) = slippage_bps {
-            legacy_payload["slippageInBps"] = json!(bps);
-        }
-        build_payloads.push(legacy_payload);
+        build_payloads.push(to_json_value(&KhalaniDepositBuildLegacyRequest {
+            quote_id: quote_id.clone(),
+            user: sender_address.clone(),
+            allowance_target: extract_khalani_allowance_target(&quote_entry),
+            slippage_in_bps: slippage_bps,
+        })?);
 
         let mut build: Option<Value> = None;
         let mut last_build_error: Option<String> = None;
         for payload in build_payloads {
-            match client.build_deposit(payload) {
+            match client.build_deposit(&payload) {
                 Ok(value) => {
                     build = Some(value);
                     break;
@@ -178,11 +195,13 @@ impl DynAomiTool for BuildKhalaniOrder {
                     ),
                     json!({
                         "step": "submit_khalani_order",
-                        "args_template": {
-                            "quote_id": quote_id,
-                            "route_id": route_id,
-                            "submit_type": "SIGNED_TRANSACTION"
-                        }
+                        "args_template": to_json_value(&SubmitKhalaniOrderArgs {
+                            quote_id: quote_id.clone(),
+                            route_id: route_id.clone(),
+                            submit_type: "SIGNED_TRANSACTION".to_string(),
+                            transaction_hash: None,
+                            signature: None,
+                        })?,
                     }),
                 )
             } else {
@@ -193,17 +212,16 @@ impl DynAomiTool for BuildKhalaniOrder {
                     ),
                     json!({
                         "step": "build_khalani_order",
-                        "args_template": {
-                            "chain": args.chain,
-                            "destination_chain": args.destination_chain,
-                            "sell_token": args.sell_token,
-                            "buy_token": args.buy_token,
-                            "amount": args.amount,
-                            "sender_address": sender_address,
-                            "receiver_address": args.receiver_address,
-                            "slippage": args.slippage,
-                        },
-                        "reason": "Approval required before deposit."
+                        "args_template": to_json_value(&BuildKhalaniOrderArgs {
+                            chain: args.chain.clone(),
+                            destination_chain: args.destination_chain.clone(),
+                            sell_token: args.sell_token.clone(),
+                            buy_token: args.buy_token.clone(),
+                            amount: args.amount,
+                            sender_address: Some(sender_address.clone()),
+                            receiver_address: args.receiver_address.clone(),
+                            slippage: args.slippage,
+                        })?,
                     }),
                 )
             };
@@ -231,21 +249,23 @@ impl DynAomiTool for BuildKhalaniOrder {
                 &tx_type,
                 summary,
                 "commit_eip712",
-                json!({
-                    "typed_data": typed_data,
-                    "description": format!(
+                to_json_value(&WalletEip712Request {
+                    typed_data,
+                    description: format!(
                         "Khalani Permit2 signature for {} {} -> {}",
                         args.amount, args.sell_token, args.buy_token
-                    )
-                }),
+                    ),
+                })?,
                 None,
                 json!({
                     "step": "submit_khalani_order",
-                    "args_template": {
-                        "quote_id": quote_id,
-                        "route_id": route_id,
-                        "submit_type": "SIGNED_EIP712"
-                    }
+                    "args_template": to_json_value(&SubmitKhalaniOrderArgs {
+                        quote_id: quote_id.clone(),
+                        route_id: route_id.clone(),
+                        submit_type: "SIGNED_EIP712".to_string(),
+                        transaction_hash: None,
+                        signature: None,
+                    })?,
                 }),
             );
         }
@@ -269,11 +289,13 @@ impl DynAomiTool for BuildKhalaniOrder {
             build_transaction_preflight(&tx),
             json!({
                 "step": "submit_khalani_order",
-                "args_template": {
-                    "quote_id": quote_id,
-                    "route_id": route_id,
-                    "submit_type": "SIGNED_TRANSACTION"
-                }
+                "args_template": to_json_value(&SubmitKhalaniOrderArgs {
+                    quote_id: quote_id.clone(),
+                    route_id: route_id.clone(),
+                    submit_type: "SIGNED_TRANSACTION".to_string(),
+                    transaction_hash: None,
+                    signature: None,
+                })?,
             }),
         )
     }
@@ -283,7 +305,7 @@ impl DynAomiTool for BuildKhalaniOrder {
 // Tool 3: submit_khalani_order
 // ============================================================================
 
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct SubmitKhalaniOrderArgs {
     /// Khalani quote ID to submit.
     quote_id: String,
@@ -310,25 +332,25 @@ impl DynAomiTool for SubmitKhalaniOrder {
     fn run(_app: &Self::App, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = KhalaniClient::new()?;
         let submit_type = args.submit_type.to_uppercase();
-        let payload = match submit_type.as_str() {
+        let value = match submit_type.as_str() {
             "SIGNED_EIP712" => {
                 let signature = args.signature.clone().ok_or_else(|| {
                     "submit_khalani_order requires signature for SIGNED_EIP712".to_string()
                 })?;
                 if let Some(route_id) = args.route_id.clone() {
-                    json!({
-                        "quoteId": args.quote_id,
-                        "routeId": route_id,
-                        "signature": signature,
-                    })
+                    client.submit_deposit(&KhalaniSignedEip712SubmitRequest {
+                        quote_id: args.quote_id,
+                        route_id,
+                        signature,
+                    })?
                 } else {
-                    json!({
-                        "quoteId": args.quote_id,
-                        "submittedData": {
-                            "type": "SIGNED_EIP712",
-                            "signature": signature,
-                        }
-                    })
+                    client.submit_deposit(&KhalaniLegacySubmitRequest {
+                        quote_id: args.quote_id,
+                        submitted_data: KhalaniSignedEip712SubmittedData {
+                            submit_type: "SIGNED_EIP712",
+                            signature,
+                        },
+                    })?
                 }
             }
             "SIGNED_TRANSACTION" => {
@@ -337,20 +359,20 @@ impl DynAomiTool for SubmitKhalaniOrder {
                         .to_string()
                 })?;
                 if let Some(route_id) = args.route_id.clone() {
-                    json!({
-                        "quoteId": args.quote_id,
-                        "routeId": route_id,
-                        "txHash": tx_hash,
-                        "transactionHash": tx_hash,
-                    })
+                    client.submit_deposit(&KhalaniSignedTransactionSubmitRequest {
+                        quote_id: args.quote_id,
+                        route_id,
+                        tx_hash: tx_hash.clone(),
+                        transaction_hash: tx_hash,
+                    })?
                 } else {
-                    json!({
-                        "quoteId": args.quote_id,
-                        "submittedData": {
-                            "type": "SIGNED_TRANSACTION",
-                            "transactionHash": tx_hash,
-                        }
-                    })
+                    client.submit_deposit(&KhalaniLegacySubmitRequest {
+                        quote_id: args.quote_id,
+                        submitted_data: KhalaniSignedTransactionSubmittedData {
+                            submit_type: "SIGNED_TRANSACTION",
+                            transaction_hash: tx_hash,
+                        },
+                    })?
                 }
             }
             other => {
@@ -359,8 +381,7 @@ impl DynAomiTool for SubmitKhalaniOrder {
                 ));
             }
         };
-
-        client.submit_deposit(payload)
+        ok(value)
     }
 }
 
@@ -430,14 +451,13 @@ impl DynAomiTool for GetKhalaniOrdersByAddress {
     const DESCRIPTION: &'static str = "Fetch Khalani orders for a wallet address.";
 
     fn run(_app: &Self::App, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = KhalaniClient::new()?;
-        client.get_orders_by_address(
+        ok(KhalaniClient::new()?.get_orders_by_address(
             &args.address,
             args.status.as_deref(),
             args.limit,
             args.offset,
             None,
-        )
+        )?)
     }
 }
 
@@ -467,13 +487,12 @@ impl DynAomiTool for GetKhalaniTokens {
     const DESCRIPTION: &'static str = "Fetch Khalani tokens with optional chain/query filters.";
 
     fn run(_app: &Self::App, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = KhalaniClient::new()?;
-        client.get_tokens(
+        ok(KhalaniClient::new()?.get_tokens(
             args.chain_id,
             args.limit,
             args.offset,
             args.query.as_deref(),
-        )
+        )?)
     }
 }
 
@@ -503,8 +522,8 @@ impl DynAomiTool for SearchKhalaniTokens {
     const DESCRIPTION: &'static str = "Search Khalani token metadata.";
 
     fn run(_app: &Self::App, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = KhalaniClient::new()?;
-        client.search_tokens(&args.query, args.chain_id, args.limit, args.offset)
+        ok(KhalaniClient::new()?
+            .search_tokens(&args.query, args.chain_id, args.limit, args.offset)?)
     }
 }
 
@@ -525,7 +544,6 @@ impl DynAomiTool for GetKhalaniChains {
     const DESCRIPTION: &'static str = "Fetch Khalani supported chains.";
 
     fn run(_app: &Self::App, _args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = KhalaniClient::new()?;
-        client.get_chains()
+        ok(KhalaniClient::new()?.get_chains()?)
     }
 }

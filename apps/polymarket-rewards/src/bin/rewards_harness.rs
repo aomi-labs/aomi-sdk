@@ -2,6 +2,8 @@
 mod client;
 #[path = "../tool.rs"]
 mod tool;
+#[path = "../types.rs"]
+mod types;
 
 use alloy::signers::{Signer, SignerSync, local::PrivateKeySigner};
 use alloy_dyn_abi::eip712::TypedData;

@@ -1,7 +1,6 @@
 use aomi_sdk::schemars::JsonSchema;
 use hmac::{Hmac, Mac};
-use serde::Deserialize;
-use serde_json::Value;
+use serde::{Deserialize, de::DeserializeOwned};
 use sha2::Sha256;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -59,12 +58,12 @@ impl BinanceClient {
     }
 
     /// Public GET request (no auth required).
-    pub(crate) fn public_get(
+    pub(crate) fn public_get<T: DeserializeOwned>(
         &self,
         base_url: &str,
         path: &str,
         query: &str,
-    ) -> Result<Value, String> {
+    ) -> Result<T, String> {
         let url = if query.is_empty() {
             format!("{base_url}{path}")
         } else {
@@ -79,14 +78,14 @@ impl BinanceClient {
     }
 
     /// Signed GET request (HMAC-SHA256 auth).
-    pub(crate) fn signed_get(
+    pub(crate) fn signed_get<T: DeserializeOwned>(
         &self,
         base_url: &str,
         path: &str,
         api_key: &str,
         secret_key: &str,
         query: &str,
-    ) -> Result<Value, String> {
+    ) -> Result<T, String> {
         let full_query = Self::build_signed_query(secret_key, query)?;
         let url = format!("{base_url}{path}?{full_query}");
         let resp = self
@@ -99,14 +98,14 @@ impl BinanceClient {
     }
 
     /// Signed POST request (HMAC-SHA256 auth).
-    pub(crate) fn signed_post(
+    pub(crate) fn signed_post<T: DeserializeOwned>(
         &self,
         base_url: &str,
         path: &str,
         api_key: &str,
         secret_key: &str,
         query: &str,
-    ) -> Result<Value, String> {
+    ) -> Result<T, String> {
         let full_query = Self::build_signed_query(secret_key, query)?;
         let url = format!("{base_url}{path}?{full_query}");
         let resp = self
@@ -119,14 +118,14 @@ impl BinanceClient {
     }
 
     /// Signed DELETE request (HMAC-SHA256 auth).
-    pub(crate) fn signed_delete(
+    pub(crate) fn signed_delete<T: DeserializeOwned>(
         &self,
         base_url: &str,
         path: &str,
         api_key: &str,
         secret_key: &str,
         query: &str,
-    ) -> Result<Value, String> {
+    ) -> Result<T, String> {
         let full_query = Self::build_signed_query(secret_key, query)?;
         let url = format!("{base_url}{path}?{full_query}");
         let resp = self
@@ -152,7 +151,10 @@ impl BinanceClient {
         Ok(format!("{query_with_ts}&signature={signature}"))
     }
 
-    fn parse_response(resp: reqwest::blocking::Response, op: &str) -> Result<Value, String> {
+    fn parse_response<T: DeserializeOwned>(
+        resp: reqwest::blocking::Response,
+        op: &str,
+    ) -> Result<T, String> {
         let status = resp.status();
         let text = resp.text().unwrap_or_default();
         if !status.is_success() {
@@ -288,6 +290,9 @@ pub(crate) struct GetTradesArgs {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{
+        Binance24hrStatsResponse, BinanceDepthResponse, BinanceKlineResponse, BinancePriceResponse,
+    };
 
     /// Story: "Buy 2 ETH on Binance with a limit order below market"
     ///
@@ -301,11 +306,12 @@ mod tests {
         println!("[Step 1] Fetching current ETHUSDT price...");
 
         // Step 1 — Get current ETH price
-        let price_resp = client
+        let price_resp: BinancePriceResponse = client
             .public_get(SPOT_BASE_URL, "/ticker/price", "symbol=ETHUSDT")
             .expect("GET /ticker/price for ETHUSDT failed");
-        let price_str = price_resp["price"]
-            .as_str()
+        let price_str = price_resp
+            .first()
+            .map(|ticker| ticker.price.as_str())
             .expect("price field missing or not a string");
         let price: f64 = price_str.parse().expect("could not parse price as f64");
         println!("[Step 1] ETHUSDT price: {price} (raw: \"{price_str}\")");
@@ -313,37 +319,41 @@ mod tests {
 
         // Step 2 — Get order-book depth
         println!("[Step 2] Fetching order-book depth (limit=5)...");
-        let depth = client
+        let depth: BinanceDepthResponse = client
             .public_get(SPOT_BASE_URL, "/depth", "symbol=ETHUSDT&limit=5")
             .expect("GET /depth for ETHUSDT failed");
-        let bids = depth["bids"]
-            .as_array()
-            .expect("bids field missing or not an array");
-        let asks = depth["asks"]
-            .as_array()
-            .expect("asks field missing or not an array");
+        let bids = depth.bids;
+        let asks = depth.asks;
         println!(
             "[Step 2] Order book: {} bid levels, {} ask levels",
             bids.len(),
             asks.len()
         );
         for (i, bid) in bids.iter().enumerate() {
-            println!("[Step 2]   bid[{i}]: price={}, qty={}", bid[0], bid[1]);
+            println!(
+                "[Step 2]   bid[{i}]: price={}, qty={}",
+                bid.price().unwrap_or("?"),
+                bid.qty().unwrap_or("?")
+            );
         }
         for (i, ask) in asks.iter().enumerate() {
-            println!("[Step 2]   ask[{i}]: price={}, qty={}", ask[0], ask[1]);
+            println!(
+                "[Step 2]   ask[{i}]: price={}, qty={}",
+                ask.price().unwrap_or("?"),
+                ask.qty().unwrap_or("?")
+            );
         }
         assert!(!bids.is_empty(), "bids array must not be empty");
         assert!(!asks.is_empty(), "asks array must not be empty");
 
         // Step 3 — Compute limit price 1 % below the mid price
-        let best_bid: f64 = bids[0][0]
-            .as_str()
+        let best_bid: f64 = bids[0]
+            .price()
             .expect("best bid price not a string")
             .parse()
             .expect("could not parse best bid as f64");
-        let best_ask: f64 = asks[0][0]
-            .as_str()
+        let best_ask: f64 = asks[0]
+            .price()
             .expect("best ask price not a string")
             .parse()
             .expect("could not parse best ask as f64");
@@ -406,11 +416,12 @@ mod tests {
 
         // Step 1 — Get current BTC price
         println!("[Step 1] Fetching current BTCUSDT price...");
-        let price_resp = client
+        let price_resp: BinancePriceResponse = client
             .public_get(SPOT_BASE_URL, "/ticker/price", "symbol=BTCUSDT")
             .expect("GET /ticker/price for BTCUSDT failed");
-        let price_str = price_resp["price"]
-            .as_str()
+        let price_str = price_resp
+            .first()
+            .map(|ticker| ticker.price.as_str())
             .expect("price field missing or not a string");
         let btc_price: f64 = price_str.parse().expect("could not parse BTC price as f64");
         println!("[Step 1] BTCUSDT price: {btc_price} (raw: \"{price_str}\")");
@@ -421,21 +432,20 @@ mod tests {
 
         // Step 2 — Get 24 hourly klines
         println!("[Step 2] Fetching 24 hourly klines for BTCUSDT...");
-        let klines = client
+        let klines: BinanceKlineResponse = client
             .public_get(
                 SPOT_BASE_URL,
                 "/klines",
                 "symbol=BTCUSDT&interval=1h&limit=24",
             )
             .expect("GET /klines for BTCUSDT failed");
-        let candles = klines.as_array().expect("klines response must be an array");
+        let candles = klines;
         println!("[Step 2] Received {} candles", candles.len());
         assert!(
             !candles.is_empty(),
             "klines must return at least one candle"
         );
-        // Each candle is an array: [open_time, open, high, low, close, volume, ...]
-        let first_candle = candles[0].as_array().expect("each candle must be an array");
+        let first_candle = &candles[0];
         assert!(
             first_candle.len() >= 6,
             "candle must have at least 6 elements, got {}",
@@ -443,21 +453,31 @@ mod tests {
         );
         println!(
             "[Step 2] First candle: open={}, high={}, low={}, close={}, volume={}",
-            first_candle[1], first_candle[2], first_candle[3], first_candle[4], first_candle[5]
+            first_candle.open().unwrap_or("?"),
+            first_candle.high().unwrap_or("?"),
+            first_candle.low().unwrap_or("?"),
+            first_candle.close().unwrap_or("?"),
+            first_candle.volume().unwrap_or("?")
         );
-        let last_candle = candles.last().unwrap().as_array().unwrap();
+        let last_candle = candles.last().expect("last candle missing");
         println!(
             "[Step 2] Last candle:  open={}, high={}, low={}, close={}, volume={}",
-            last_candle[1], last_candle[2], last_candle[3], last_candle[4], last_candle[5]
+            last_candle.open().unwrap_or("?"),
+            last_candle.high().unwrap_or("?"),
+            last_candle.low().unwrap_or("?"),
+            last_candle.close().unwrap_or("?"),
+            last_candle.volume().unwrap_or("?")
         );
 
         // Step 3 — Get 24hr ticker stats
         println!("[Step 3] Fetching 24hr ticker stats for BTCUSDT...");
-        let stats = client
+        let stats: Binance24hrStatsResponse = client
             .public_get(SPOT_BASE_URL, "/ticker/24hr", "symbol=BTCUSDT")
             .expect("GET /ticker/24hr for BTCUSDT failed");
-        let volume = stats["volume"]
-            .as_str()
+        let stats = stats.first().expect("ticker stats missing");
+        let volume = stats
+            .volume
+            .as_deref()
             .expect("volume field missing or not a string");
         let volume_f: f64 = volume.parse().expect("could not parse volume as f64");
         assert!(
@@ -465,8 +485,9 @@ mod tests {
             "24hr volume must be positive, got {volume_f}"
         );
 
-        let price_change_pct = stats["priceChangePercent"]
-            .as_str()
+        let price_change_pct = stats
+            .price_change_percent
+            .as_deref()
             .expect("priceChangePercent field missing or not a string");
         let _pct: f64 = price_change_pct
             .parse()
@@ -475,7 +496,8 @@ mod tests {
         println!("[Step 3] 24hr price change: {price_change_pct}%");
         println!(
             "[Step 3] 24hr high: {}, low: {}",
-            stats["highPrice"], stats["lowPrice"]
+            stats.high_price.as_deref().unwrap_or("?"),
+            stats.low_price.as_deref().unwrap_or("?")
         );
 
         // Step 4 — (Skip actual futures order — needs real API keys)

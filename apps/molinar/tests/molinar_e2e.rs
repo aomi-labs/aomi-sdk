@@ -7,7 +7,8 @@
 //! POST /api/bot/connect. If that also fails, tests are skipped.
 
 use dyn_molinar::MolinarClient;
-use serde_json::{Value, json};
+use dyn_molinar::types::{CustomizeRequest, ExploreRequest, MoveRequest, PingRequest};
+use serde_json::Value;
 use std::sync::OnceLock;
 
 static BOT_ID: OnceLock<Option<String>> = OnceLock::new();
@@ -64,8 +65,9 @@ fn resolve_bot_id() -> Option<String> {
 }
 
 /// Assert a response has the WorldSnapshot shape.
+/// Note: `source` is injected by the tool layer, not the client, so we don't
+/// require it here — these tests call the client directly.
 fn assert_world_snapshot(v: &Value, label: &str) {
-    assert!(v.get("source").is_some(), "{label}: missing source tag");
     assert!(v.get("me").is_some(), "{label}: missing `me`");
     assert!(v.get("world").is_some(), "{label}: missing `world`");
     assert!(v.get("nearby").is_some(), "{label}: missing `nearby`");
@@ -129,7 +131,13 @@ fn test_move_direction() {
     let client = MolinarClient::new().unwrap();
 
     let res = client
-        .move_bot(&bot_id, json!({ "direction": "north" }))
+        .move_bot(
+            &bot_id,
+            &MoveRequest {
+                direction: Some("north".to_string()),
+                ..MoveRequest::default()
+            },
+        )
         .expect("move north failed");
     assert_world_snapshot(&res, "move");
     println!("[move north] action = {:?}", res["action"]);
@@ -143,7 +151,13 @@ fn test_move_stop() {
     let client = MolinarClient::new().unwrap();
 
     let res = client
-        .move_bot(&bot_id, json!({ "stop": true }))
+        .move_bot(
+            &bot_id,
+            &MoveRequest {
+                stop: Some(true),
+                ..MoveRequest::default()
+            },
+        )
         .expect("move stop failed");
     assert_world_snapshot(&res, "move stop");
     println!("[move stop] action = {:?}", res["action"]);
@@ -157,7 +171,14 @@ fn test_move_coordinates() {
     let client = MolinarClient::new().unwrap();
 
     let res = client
-        .move_bot(&bot_id, json!({ "targetX": 5.0, "targetZ": -3.0 }))
+        .move_bot(
+            &bot_id,
+            &MoveRequest {
+                target_x: Some(5.0),
+                target_z: Some(-3.0),
+                ..MoveRequest::default()
+            },
+        )
         .expect("move coords failed");
     assert_world_snapshot(&res, "move coords");
     println!("[move coords] action = {:?}", res["action"]);
@@ -171,7 +192,14 @@ fn test_move_raw_input() {
     let client = MolinarClient::new().unwrap();
 
     let res = client
-        .move_bot(&bot_id, json!({ "dx": 0.5, "dz": -0.5 }))
+        .move_bot(
+            &bot_id,
+            &MoveRequest {
+                dx: Some(0.5),
+                dz: Some(-0.5),
+                ..MoveRequest::default()
+            },
+        )
         .expect("move dx/dz failed");
     assert_world_snapshot(&res, "move dx/dz");
     println!("[move dx/dz] action = {:?}", res["action"]);
@@ -265,7 +293,9 @@ fn test_explore() {
     };
     let client = MolinarClient::new().unwrap();
 
-    let res = client.explore(&bot_id, json!({})).expect("explore failed");
+    let res = client
+        .explore(&bot_id, &ExploreRequest::default())
+        .expect("explore failed");
     assert_world_snapshot(&res, "explore");
     print_snapshot_summary(&res, "explore");
 }
@@ -278,7 +308,13 @@ fn test_explore_target() {
     let client = MolinarClient::new().unwrap();
 
     let res = client
-        .explore(&bot_id, json!({ "targetX": 10.0, "targetZ": 10.0 }))
+        .explore(
+            &bot_id,
+            &ExploreRequest {
+                target_x: Some(10.0),
+                target_z: Some(10.0),
+            },
+        )
         .expect("explore target failed");
     assert_world_snapshot(&res, "explore target");
     print_snapshot_summary(&res, "explore target");
@@ -292,7 +328,13 @@ fn test_customize() {
     let client = MolinarClient::new().unwrap();
 
     let res = client
-        .customize(&bot_id, json!({ "name": "AomiE2E", "color": "#3498db" }))
+        .customize(
+            &bot_id,
+            &CustomizeRequest {
+                name: Some("AomiE2E".to_string()),
+                color: Some("#3498db".to_string()),
+            },
+        )
         .expect("customize failed");
     assert_world_snapshot(&res, "customize");
     println!(
@@ -308,7 +350,9 @@ fn test_ping() {
     };
     let client = MolinarClient::new().unwrap();
 
-    let res = client.ping(&bot_id, json!({})).expect("ping failed");
+    let res = client
+        .ping(&bot_id, &PingRequest::default())
+        .expect("ping failed");
     assert_world_snapshot(&res, "ping");
     println!("[ping] action = {:?}", res["action"]);
 }

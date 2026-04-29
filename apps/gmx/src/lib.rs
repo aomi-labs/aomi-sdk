@@ -2,6 +2,7 @@ use aomi_sdk::*;
 
 mod client;
 mod tool;
+mod types;
 
 const PREAMBLE: &str = r#"## Role
 You are **GMX Data Assistant**, an expert AI assistant specialized in GMX v2 perpetual exchange data.

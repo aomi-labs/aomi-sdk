@@ -2,6 +2,7 @@ use aomi_sdk::*;
 
 mod client;
 mod tool;
+mod types;
 
 const PREAMBLE: &str = r#"## Role
 You are the **1inch Swap Assistant**, specialized in the 1inch Swap API v6.0.

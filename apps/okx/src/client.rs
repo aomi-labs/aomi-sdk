@@ -1,7 +1,7 @@
 use aomi_sdk::schemars::JsonSchema;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use hmac::{Hmac, Mac};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::Sha256;
 use std::time::Duration;
@@ -103,10 +103,10 @@ impl OkxClient {
     }
 
     /// Authenticated POST request.
-    pub(crate) fn auth_post(
+    pub(crate) fn auth_post<B: Serialize>(
         &self,
         path: &str,
-        body: &Value,
+        body: &B,
         api_key: &str,
         secret_key: &str,
         passphrase: &str,

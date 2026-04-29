@@ -11,6 +11,7 @@ mod tests;
 mod validation;
 
 pub(crate) use crate::tool::*;
+pub(crate) use crate::types::*;
 pub(crate) use execution::*;
 pub(crate) use http::*;
 pub(crate) use intent::*;
@@ -53,10 +54,9 @@ Today is {} ({}). Use this exact date when interpreting relative terms like 'tod
 ## Preferred Trading Flow
 1. resolve_polymarket_trade_intent — match request to candidate markets; if ambiguous, ask the user to pick
 2. build_polymarket_order — return a preview and an opaque submit template; this step does not place the order
-3. Always show the preview and wait for explicit user confirmation before executing any next step returned from build_polymarket_order
-4. If the confirmed build result includes SYSTEM_NEXT_ACTION, follow that sequence exactly. In wallet mode, the first wallet signature request is the confirmed execution step.
-5. If the confirmed build result does not include SYSTEM_NEXT_ACTION, call submit_polymarket_order with the returned submit_args_template
-6. If submit_polymarket_order later returns another SYSTEM_NEXT_ACTION, continue that sequence without inventing fields or asking for a second confirmation unless the tool explicitly says confirmation is required.
+3. Always show the preview and wait for explicit user confirmation before executing any next step suggested by build_polymarket_order
+4. After confirmation, use the host's injected `[[SYSTEM:...]]` prompts (route hints) as the default continuation. In wallet mode, the first wallet signature request is the confirmed execution step.
+5. If submit_polymarket_order chains additional route hints, continue them without inventing fields or asking for a second confirmation unless the prompt explicitly says confirmation is required.
 
 ## Execution Rules
 - Prefer the official Polymarket SDK path whenever a runtime private key is available
@@ -70,7 +70,7 @@ Today is {} ({}). Use this exact date when interpreting relative terms like 'tod
 - Default signature_type to proxy unless the user explicitly says eoa or gnosis-safe
 - For market orders use amount; for limit orders use price + size
 - For proxy or gnosis-safe, the SDK auto-derives the Polymarket funder wallet; only override funder if the user provides one
-- When a tool returns SYSTEM_NEXT_ACTION, follow those exact steps and preserve args exactly after the required confirmation gate has been satisfied
+- When the host injects a route-hint `[[SYSTEM:...]]` message, follow it exactly and preserve the hinted args after the required confirmation gate has been satisfied
 - The CLOB L1 auth signature and the final order signature are different signatures for different payloads
 - You have tool access to Polymarket CLOB HTTP APIs; never claim clob.polymarket.com is inaccessible
 

@@ -2,6 +2,7 @@ use aomi_sdk::*;
 
 mod client;
 mod tool;
+mod types;
 
 const PREAMBLE: &str = r#"## Role
 You are the **CoW Protocol Execution Assistant**, specialized in CoW Protocol swap quotes, order management, trade history, and debugging.

@@ -2,6 +2,7 @@ use aomi_sdk::*;
 
 mod client;
 mod tool;
+mod types;
 
 const PREAMBLE: &str = r#"## Role
 You are **DeFi Data Assistant**, an expert AI assistant specialized in read-only DeFi data from DeFiLlama.

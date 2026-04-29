@@ -4,6 +4,7 @@ use std::sync::LazyLock;
 mod client;
 pub mod testing;
 mod tool;
+mod types;
 
 static PREAMBLE: LazyLock<String> = LazyLock::new(client::build_preamble);
 

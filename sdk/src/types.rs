@@ -3,6 +3,7 @@
 //! These types define the contract between a dynamically loaded plugin (`.so`/`.dylib`)
 //! and the host backend. All types are serializable to JSON for crossing the FFI boundary.
 
+use crate::route::{TOOL_RETURN_MARKER, ToolReturn};
 use std::collections::VecDeque;
 use std::sync::{
     Arc, Mutex,
@@ -272,12 +273,18 @@ impl DynAsyncSink {
     }
 
     /// Emit a non-terminal update.
+    ///
+    /// Intermediate emissions must be bare values — routed [`ToolReturn`]
+    /// envelopes are rejected here. Routes are an "I'm done, here's the
+    /// recommended next step" signal; mid-stream updates have no terminal
+    /// anchor for them. Use [`complete`](Self::complete) for routed returns.
     pub fn emit(&self, value: impl Serialize) -> Result<(), String> {
         if self.queue.is_canceled() {
             return Err("execution canceled".to_string());
         }
         let value = serde_json::to_value(value)
             .map_err(|e| format!("failed to serialize async update: {e}"))?;
+        reject_routed_async_value(&value)?;
         self.queue.push(AsyncExecPool::Update {
             value,
             has_more: true,
@@ -286,6 +293,10 @@ impl DynAsyncSink {
     }
 
     /// Emit a terminal success update.
+    ///
+    /// Accepts either a bare value or a routed [`ToolReturn`] (built via
+    /// `ToolReturn::with_routes(...)`). The terminal moment is the natural
+    /// anchor for route emission — same semantics as a sync tool's return.
     pub fn complete(&self, value: impl Serialize) -> Result<(), String> {
         if self.queue.is_canceled() {
             return Err("execution canceled".to_string());
@@ -310,6 +321,28 @@ impl DynAsyncSink {
     pub fn is_canceled(&self) -> bool {
         self.queue.is_canceled()
     }
+}
+
+/// Reject routed [`ToolReturn`] envelopes on intermediate (`emit`) updates.
+/// Routes only have a meaningful firing point at the terminal moment, so the
+/// SDK constrains them to [`DynAsyncSink::complete`].
+fn reject_routed_async_value(value: &Value) -> Result<(), String> {
+    let is_routed_tool_return = value
+        .as_object()
+        .and_then(|obj| obj.get(TOOL_RETURN_MARKER))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    if is_routed_tool_return {
+        return Err(
+            "intermediate async updates do not support routed ToolReturn envelopes; \
+             emit bare values via sink.emit() and put any routes on the terminal \
+             sink.complete() call"
+                .to_string(),
+        );
+    }
+
+    Ok(())
 }
 
 // ============================================================================
@@ -381,6 +414,11 @@ pub trait DynAomiApp: Clone + Default + Send + Sync + 'static {
 /// `IS_ASYNC` as `false`. For streaming/long-running tools set `IS_ASYNC = true`
 /// and override [`run_async`](Self::run_async) instead.
 ///
+/// Tools that need host-managed follow-up routing can override
+/// [`run_with_routes`](Self::run_with_routes) and return a routed
+/// [`ToolReturn`]. Legacy tools can keep implementing [`run`](Self::run); the
+/// default `run_with_routes` wrapper preserves that behavior.
+///
 /// # Example
 ///
 /// ```ignore
@@ -416,6 +454,18 @@ pub trait DynAomiTool: Send + Sync + 'static {
             "tool '{}' does not support sync execution",
             Self::NAME
         ))
+    }
+
+    /// Synchronous tool execution with optional route metadata.
+    ///
+    /// Override this for tools that need host-managed follow-up steps. The
+    /// default implementation preserves the legacy `run -> Value` contract.
+    fn run_with_routes(
+        app: &Self::App,
+        args: Self::Args,
+        ctx: DynToolCallCtx,
+    ) -> Result<ToolReturn, String> {
+        Self::run(app, args, ctx).map(ToolReturn::from)
     }
 
     /// Asynchronous tool execution. Override this when `IS_ASYNC = true`.
@@ -471,6 +521,7 @@ pub fn parse_dyn_ctx(ctx_json: &str) -> Result<DynToolCallCtx, String> {
 mod tests {
     use super::*;
     use serde::Deserialize;
+    use serde_json::json;
 
     #[derive(Debug, Clone, Deserialize, JsonSchema)]
     struct Args {
@@ -562,6 +613,26 @@ mod tests {
     }
 
     #[test]
+    fn test_run_with_routes_wraps_legacy_run() {
+        let result = Tool::run_with_routes(
+            &App,
+            Args {
+                name: "cecilia".to_string(),
+            },
+            DynToolCallCtx {
+                session_id: "session".to_string(),
+                tool_name: "echo".to_string(),
+                call_id: "call".to_string(),
+                state_attributes: Default::default(),
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result.value, json!({"name": "cecilia"}));
+        assert!(result.routes.is_empty());
+    }
+
+    #[test]
     fn test_async_sink_pushes_updates() {
         let queue = Arc::new(AsyncExecQueue::default());
         let sink = DynAsyncSink::__from_queue(queue.clone());
@@ -580,6 +651,62 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn test_async_sink_complete_accepts_routed_tool_returns() {
+        let queue = Arc::new(AsyncExecQueue::default());
+        let sink = DynAsyncSink::__from_queue(queue.clone());
+
+        // Terminal complete() accepts a routed envelope — the wire shape is
+        // the SDK's serialized envelope, identical to what a sync tool's
+        // run_with_routes would produce.
+        sink.complete(crate::route::ToolReturn::with_route(
+            json!({"status": "awaiting_wallet"}),
+            crate::route::RouteStep::on_async_callback::<crate::route::WalletEip712Complete>(
+                "submit_polymarket_order",
+                json!({"market": "btc"}),
+            ),
+        ))
+        .expect("terminal complete should accept routed ToolReturn");
+
+        match queue.poll() {
+            AsyncExecPool::Update { value, has_more } => {
+                assert!(!has_more, "complete pushes terminal update");
+                let envelope = value.as_object().expect("envelope is a JSON object");
+                assert_eq!(
+                    envelope
+                        .get(crate::route::TOOL_RETURN_MARKER)
+                        .and_then(Value::as_bool),
+                    Some(true),
+                    "envelope marker present in queued value"
+                );
+                assert!(envelope.get(crate::route::TOOL_RETURN_ROUTES_KEY).is_some());
+            }
+            other => panic!("expected Update, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_async_sink_emit_rejects_routed_tool_returns() {
+        let queue = Arc::new(AsyncExecQueue::default());
+        let sink = DynAsyncSink::__from_queue(queue);
+
+        // Intermediate emit() still rejects routed envelopes — there's no
+        // terminal anchor for routes mid-stream.
+        let err = sink
+            .emit(crate::route::ToolReturn::with_route(
+                json!({"progress": 0.5}),
+                crate::route::RouteStep::on_async_callback::<crate::route::WalletEip712Complete>(
+                    "submit_polymarket_order",
+                    json!({"market": "btc"}),
+                ),
+            ))
+            .expect_err("intermediate emits should reject routed envelopes");
+        assert!(
+            err.contains("intermediate async updates do not support routed ToolReturn"),
+            "error message should explain the emit-vs-complete distinction; got: {err}"
+        );
     }
 
     #[test]

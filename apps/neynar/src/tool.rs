@@ -1,6 +1,23 @@
 use crate::client::*;
+use crate::types::{
+    CastLookupQuery, ChannelQuery, FeedQuery, PublishCastRequest, SearchCastsQuery,
+    SearchUsersQuery, TrendingFeedQuery, UrlEmbed, UserByUsernameQuery,
+};
 use aomi_sdk::*;
-use serde_json::{Value, json};
+use serde::Serialize;
+use serde_json::Value;
+
+fn ok<T: Serialize>(value: T) -> Result<Value, String> {
+    let value = serde_json::to_value(value)
+        .map_err(|e| format!("[neynar] failed to serialize response: {e}"))?;
+    Ok(match value {
+        Value::Object(mut map) => {
+            map.insert("source".to_string(), Value::String("neynar".to_string()));
+            Value::Object(map)
+        }
+        other => serde_json::json!({ "source": "neynar", "data": other }),
+    })
+}
 
 // ============================================================================
 // Tool 1: GetUserByUsername
@@ -15,11 +32,11 @@ impl DynAomiTool for GetUserByUsername {
     fn run(_app: &NeynarApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = NeynarClient::new(args.api_key.as_deref())?;
         let username = args.username.trim_start_matches('@');
-        client.get(
+        ok(client.get(
             "/farcaster/user/by_username",
-            &[("username", username)],
+            &UserByUsernameQuery { username },
             "get_user_by_username",
-        )
+        )?)
     }
 }
 
@@ -36,11 +53,11 @@ impl DynAomiTool for SearchUsers {
 
     fn run(_app: &NeynarApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = NeynarClient::new(args.api_key.as_deref())?;
-        client.get(
+        ok(client.get(
             "/farcaster/user/search",
-            &[("q", args.q.as_str())],
+            &SearchUsersQuery { q: args.q.as_str() },
             "search_users",
-        )
+        )?)
     }
 }
 
@@ -57,16 +74,15 @@ impl DynAomiTool for GetFeed {
 
     fn run(_app: &NeynarApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = NeynarClient::new(args.api_key.as_deref())?;
-        let fid_str = args.fid.map(|f| f.to_string());
-        let limit_str = args.limit.unwrap_or(25).to_string();
-        let mut params: Vec<(&str, &str)> = vec![
-            ("feed_type", args.feed_type.as_str()),
-            ("limit", limit_str.as_str()),
-        ];
-        if let Some(ref fid) = fid_str {
-            params.push(("fid", fid.as_str()));
-        }
-        client.get("/farcaster/feed", &params, "get_feed")
+        ok(client.get(
+            "/farcaster/feed",
+            &FeedQuery {
+                feed_type: args.feed_type.as_str(),
+                fid: args.fid,
+                limit: args.limit.unwrap_or(25),
+            },
+            "get_feed",
+        )?)
     }
 }
 
@@ -82,14 +98,14 @@ impl DynAomiTool for GetCast {
 
     fn run(_app: &NeynarApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = NeynarClient::new(args.api_key.as_deref())?;
-        client.get(
+        ok(client.get(
             "/farcaster/cast",
-            &[
-                ("identifier", args.identifier.as_str()),
-                ("type", args.id_type.as_str()),
-            ],
+            &CastLookupQuery {
+                identifier: args.identifier.as_str(),
+                id_type: args.id_type.as_str(),
+            },
             "get_cast",
-        )
+        )?)
     }
 }
 
@@ -105,12 +121,14 @@ impl DynAomiTool for SearchCasts {
 
     fn run(_app: &NeynarApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = NeynarClient::new(args.api_key.as_deref())?;
-        let limit_str = args.limit.unwrap_or(25).to_string();
-        client.get(
+        ok(client.get(
             "/farcaster/cast/search",
-            &[("q", args.q.as_str()), ("limit", limit_str.as_str())],
+            &SearchCastsQuery {
+                q: args.q.as_str(),
+                limit: args.limit.unwrap_or(25),
+            },
             "search_casts",
-        )
+        )?)
     }
 }
 
@@ -126,20 +144,17 @@ impl DynAomiTool for PublishCast {
 
     fn run(_app: &NeynarApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = NeynarClient::new(args.api_key.as_deref())?;
-        let mut body = json!({
-            "signer_uuid": args.signer_uuid,
-            "text": args.text,
-        });
-        if let Some(embeds) = args.embeds {
-            let embed_vals: Vec<Value> = embeds
-                .into_iter()
-                .map(|e| json!({ "url": e.url }))
-                .collect();
-            body.as_object_mut()
-                .unwrap()
-                .insert("embeds".to_string(), Value::Array(embed_vals));
-        }
-        client.post_json("/farcaster/cast", &body, "publish_cast")
+        let body = PublishCastRequest {
+            signer_uuid: args.signer_uuid,
+            text: args.text,
+            embeds: args.embeds.map(|embeds| {
+                embeds
+                    .into_iter()
+                    .map(|embed| UrlEmbed { url: embed.url })
+                    .collect()
+            }),
+        };
+        ok(client.post_json("/farcaster/cast", &body, "publish_cast")?)
     }
 }
 
@@ -155,11 +170,13 @@ impl DynAomiTool for GetChannel {
 
     fn run(_app: &NeynarApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = NeynarClient::new(args.api_key.as_deref())?;
-        client.get(
+        ok(client.get(
             "/farcaster/channel",
-            &[("id", args.id.as_str())],
+            &ChannelQuery {
+                id: args.id.as_str(),
+            },
             "get_channel",
-        )
+        )?)
     }
 }
 
@@ -176,15 +193,14 @@ impl DynAomiTool for GetTrendingFeed {
 
     fn run(_app: &NeynarApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = NeynarClient::new(args.api_key.as_deref())?;
-        let limit_str = args.limit.unwrap_or(10).to_string();
         let time_window = args.time_window.unwrap_or_else(|| "24h".to_string());
-        client.get(
+        ok(client.get(
             "/farcaster/trending/feed",
-            &[
-                ("limit", limit_str.as_str()),
-                ("time_window", time_window.as_str()),
-            ],
+            &TrendingFeedQuery {
+                limit: args.limit.unwrap_or(10),
+                time_window: time_window.as_str(),
+            },
             "get_trending_feed",
-        )
+        )?)
     }
 }

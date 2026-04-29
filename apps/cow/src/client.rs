@@ -1,8 +1,10 @@
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::Value;
 use std::time::Duration;
+
+pub(crate) use crate::types::*;
 
 #[derive(Clone, Default)]
 pub(crate) struct CowApp;
@@ -34,10 +36,10 @@ impl CowClient {
         })
     }
 
-    pub(crate) fn send_json(
+    fn send_json<T: DeserializeOwned>(
         request: reqwest::blocking::RequestBuilder,
         operation: &str,
-    ) -> Result<Value, String> {
+    ) -> Result<T, String> {
         let response = request
             .send()
             .map_err(|e| format!("[cow] {operation} request failed: {e}"))?;
@@ -48,8 +50,15 @@ impl CowClient {
             return Err(format!("[cow] {operation} request failed: {status} {body}"));
         }
 
-        serde_json::from_str::<Value>(&body)
+        serde_json::from_str::<T>(&body)
             .map_err(|e| format!("[cow] {operation} decode failed: {e}; body: {body}"))
+    }
+
+    fn authed(&self, mut request: reqwest::blocking::RequestBuilder) -> reqwest::blocking::RequestBuilder {
+        if let Some(api_key) = self.cow_api_key.as_ref() {
+            request = request.header("Authorization", format!("Bearer {api_key}"));
+        }
+        request
     }
 
     pub(crate) fn cow_api_base_for_chain(&self, chain: &str) -> Result<String, String> {
@@ -72,46 +81,36 @@ impl CowClient {
         Ok(format!("{endpoint}/{path}/api/v1"))
     }
 
-    pub(crate) fn get_quote(&self, chain: &str, payload: Value) -> Result<Value, String> {
+    pub(crate) fn get_quote<B: Serialize>(
+        &self,
+        chain: &str,
+        payload: &B,
+    ) -> Result<CowQuote, String> {
         let base = self.cow_api_base_for_chain(chain)?;
-        let mut request = self.http.post(format!("{base}/quote")).json(&payload);
-        if let Some(api_key) = self.cow_api_key.as_ref() {
-            request = request.header("Authorization", format!("Bearer {api_key}"));
-        }
-
-        let value = Self::send_json(request, "quote")?;
-        Ok(with_source(value))
+        let request = self.authed(self.http.post(format!("{base}/quote")).json(&payload));
+        Self::send_json(request, "quote")
     }
 
     pub(crate) fn place_order(&self, chain: &str, payload: Value) -> Result<Value, String> {
         let base = self.cow_api_base_for_chain(chain)?;
-        let mut request = self.http.post(format!("{base}/orders")).json(&payload);
-        if let Some(api_key) = self.cow_api_key.as_ref() {
-            request = request.header("Authorization", format!("Bearer {api_key}"));
-        }
-
-        let value = Self::send_json(request, "post order")?;
-        Ok(with_source(value))
+        let request = self.authed(self.http.post(format!("{base}/orders")).json(&payload));
+        Self::send_json(request, "post order")
     }
 
-    pub(crate) fn get_order(&self, chain: &str, uid: &str) -> Result<Value, String> {
+    pub(crate) fn get_order(&self, chain: &str, uid: &str) -> Result<CowOrder, String> {
         let base = self.cow_api_base_for_chain(chain)?;
-        let mut request = self.http.get(format!("{base}/orders/{uid}"));
-        if let Some(api_key) = self.cow_api_key.as_ref() {
-            request = request.header("Authorization", format!("Bearer {api_key}"));
-        }
-        let value = Self::send_json(request, "get order")?;
-        Ok(with_source(value))
+        let request = self.authed(self.http.get(format!("{base}/orders/{uid}")));
+        Self::send_json(request, "get order")
     }
 
-    pub(crate) fn get_order_status(&self, chain: &str, uid: &str) -> Result<Value, String> {
+    pub(crate) fn get_order_status(
+        &self,
+        chain: &str,
+        uid: &str,
+    ) -> Result<CowOrderStatus, String> {
         let base = self.cow_api_base_for_chain(chain)?;
-        let mut request = self.http.get(format!("{base}/orders/{uid}/status"));
-        if let Some(api_key) = self.cow_api_key.as_ref() {
-            request = request.header("Authorization", format!("Bearer {api_key}"));
-        }
-        let value = Self::send_json(request, "get order status")?;
-        Ok(with_source(value))
+        let request = self.authed(self.http.get(format!("{base}/orders/{uid}/status")));
+        Self::send_json(request, "get order status")
     }
 
     pub(crate) fn get_user_orders(
@@ -120,35 +119,26 @@ impl CowClient {
         owner: &str,
         offset: Option<u32>,
         limit: Option<u32>,
-    ) -> Result<Value, String> {
+    ) -> Result<Vec<CowOrder>, String> {
         let base = self.cow_api_base_for_chain(chain)?;
-        let mut url = format!("{base}/account/{owner}/orders");
-        let mut params = Vec::new();
+        let mut request = self.http.get(format!("{base}/account/{owner}/orders"));
         if let Some(offset) = offset {
-            params.push(format!("offset={offset}"));
+            request = request.query(&[("offset", offset)]);
         }
         if let Some(limit) = limit {
-            params.push(format!("limit={limit}"));
+            request = request.query(&[("limit", limit)]);
         }
-        if !params.is_empty() {
-            url = format!("{url}?{}", params.join("&"));
-        }
-        let mut request = self.http.get(url);
-        if let Some(api_key) = self.cow_api_key.as_ref() {
-            request = request.header("Authorization", format!("Bearer {api_key}"));
-        }
-        let value = Self::send_json(request, "get user orders")?;
-        Ok(with_source(value))
+        Self::send_json(self.authed(request), "get user orders")
     }
 
-    pub(crate) fn cancel_orders(&self, chain: &str, payload: Value) -> Result<Value, String> {
+    pub(crate) fn cancel_orders<B: Serialize>(
+        &self,
+        chain: &str,
+        payload: &B,
+    ) -> Result<Value, String> {
         let base = self.cow_api_base_for_chain(chain)?;
-        let mut request = self.http.delete(format!("{base}/orders")).json(&payload);
-        if let Some(api_key) = self.cow_api_key.as_ref() {
-            request = request.header("Authorization", format!("Bearer {api_key}"));
-        }
-        let value = Self::send_json(request, "cancel orders")?;
-        Ok(with_source(value))
+        let request = self.authed(self.http.delete(format!("{base}/orders")).json(&payload));
+        Self::send_json(request, "cancel orders")
     }
 
     pub(crate) fn get_trades(
@@ -158,95 +148,60 @@ impl CowClient {
         order_uid: Option<&str>,
         offset: Option<u32>,
         limit: Option<u32>,
-    ) -> Result<Value, String> {
+    ) -> Result<Vec<CowTrade>, String> {
         let base = self.cow_api_base_for_chain(chain)?;
         // Trades endpoint is v2 — replace /v1 suffix with /v2
-        let base_v2 = if let Some(prefix) = base.strip_suffix("/v1") {
-            format!("{prefix}/v2")
-        } else {
-            base
-        };
-        let mut params = Vec::new();
+        let base_v2 = base
+            .strip_suffix("/v1")
+            .map(|p| format!("{p}/v2"))
+            .unwrap_or(base);
+        let mut request = self.http.get(format!("{base_v2}/trades"));
         if let Some(owner) = owner {
-            params.push(format!("owner={owner}"));
+            request = request.query(&[("owner", owner)]);
         }
         if let Some(order_uid) = order_uid {
-            params.push(format!("orderUid={order_uid}"));
+            request = request.query(&[("orderUid", order_uid)]);
         }
         if let Some(offset) = offset {
-            params.push(format!("offset={offset}"));
+            request = request.query(&[("offset", offset)]);
         }
         if let Some(limit) = limit {
-            params.push(format!("limit={limit}"));
+            request = request.query(&[("limit", limit)]);
         }
-        let url = if params.is_empty() {
-            format!("{base_v2}/trades")
-        } else {
-            format!("{base_v2}/trades?{}", params.join("&"))
-        };
-        let mut request = self.http.get(url);
-        if let Some(api_key) = self.cow_api_key.as_ref() {
-            request = request.header("Authorization", format!("Bearer {api_key}"));
-        }
-        let value = Self::send_json(request, "get trades")?;
-        Ok(with_source(value))
+        Self::send_json(self.authed(request), "get trades")
     }
 
     pub(crate) fn get_native_price(
         &self,
         chain: &str,
         token_address: &str,
-    ) -> Result<Value, String> {
+    ) -> Result<CowNativePrice, String> {
         let base = self.cow_api_base_for_chain(chain)?;
-        let mut request = self
-            .http
-            .get(format!("{base}/token/{token_address}/native_price"));
-        if let Some(api_key) = self.cow_api_key.as_ref() {
-            request = request.header("Authorization", format!("Bearer {api_key}"));
-        }
-        let value = Self::send_json(request, "get native price")?;
-        Ok(with_source(value))
+        let request =
+            self.authed(self.http.get(format!("{base}/token/{token_address}/native_price")));
+        Self::send_json(request, "get native price")
     }
 
-    pub(crate) fn get_orders_by_tx(&self, chain: &str, tx_hash: &str) -> Result<Value, String> {
+    pub(crate) fn get_orders_by_tx(
+        &self,
+        chain: &str,
+        tx_hash: &str,
+    ) -> Result<Vec<CowOrder>, String> {
         let base = self.cow_api_base_for_chain(chain)?;
-        let mut request = self
-            .http
-            .get(format!("{base}/transactions/{tx_hash}/orders"));
-        if let Some(api_key) = self.cow_api_key.as_ref() {
-            request = request.header("Authorization", format!("Bearer {api_key}"));
-        }
-        let value = Self::send_json(request, "get orders by tx")?;
-        Ok(with_source(value))
+        let request = self.authed(self.http.get(format!("{base}/transactions/{tx_hash}/orders")));
+        Self::send_json(request, "get orders by tx")
     }
 
-    pub(crate) fn debug_order(&self, chain: &str, uid: &str) -> Result<Value, String> {
+    pub(crate) fn debug_order(&self, chain: &str, uid: &str) -> Result<CowOrder, String> {
         let base = self.cow_api_base_for_chain(chain)?;
-        let mut request = self.http.get(format!("{base}/debug/order/{uid}"));
-        if let Some(api_key) = self.cow_api_key.as_ref() {
-            request = request.header("Authorization", format!("Bearer {api_key}"));
-        }
-        let value = Self::send_json(request, "debug order")?;
-        Ok(with_source(value))
+        let request = self.authed(self.http.get(format!("{base}/debug/order/{uid}")));
+        Self::send_json(request, "debug order")
     }
 }
 
 // ============================================================================
 // Shared helpers
 // ============================================================================
-
-pub(crate) fn with_source(value: Value) -> Value {
-    match value {
-        Value::Object(mut map) => {
-            map.insert("source".to_string(), Value::String("cow".to_string()));
-            Value::Object(map)
-        }
-        other => json!({
-            "source": "cow",
-            "data": other,
-        }),
-    }
-}
 
 pub(crate) fn amount_to_base_units(amount: f64, decimals: u8) -> Result<String, String> {
     if !amount.is_finite() || amount < 0.0 {
@@ -514,8 +469,7 @@ mod tests {
         let res = client()
             .get_native_price("ethereum", "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")
             .expect("should get WETH native price");
-        assert_eq!(res.get("source").and_then(Value::as_str), Some("cow"));
-        assert!(res.get("price").is_some(), "should have price key");
+        assert!(res.price.is_some(), "should have price key");
     }
 
     #[test]
@@ -523,35 +477,24 @@ mod tests {
         let res = client()
             .get_native_price("ethereum", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
             .expect("should get USDC native price");
-        assert_eq!(res.get("source").and_then(Value::as_str), Some("cow"));
-        let price = res.get("price").and_then(Value::as_f64);
-        assert!(price.is_some(), "should have numeric price");
+        assert!(res.price.is_some(), "should have numeric price");
     }
 
     #[test]
     fn user_orders_no_orders_smoke() {
-        // Using a random address that likely has no orders — should return empty array
-        let res = client().get_user_orders(
+        // Random address that likely has no orders — empty array or error are both acceptable
+        let _ = client().get_user_orders(
             "ethereum",
             "0x0000000000000000000000000000000000000001",
             None,
             Some(1),
         );
-        // Either empty array or an error is acceptable
-        if let Ok(val) = res {
-            assert_eq!(val.get("source").and_then(Value::as_str), Some("cow"));
-        }
     }
 
     #[test]
     fn get_trades_v2_requires_filter() {
-        // Calling without owner or order_uid should fail at the tool layer (not here),
-        // but the API itself might return an error or empty result
-        let res = client().get_trades("ethereum", None, None, None, Some(1));
-        // v2 trades endpoint might require a filter — either works or returns error
-        if let Ok(val) = res {
-            assert_eq!(val.get("source").and_then(Value::as_str), Some("cow"));
-        }
+        // v2 trades may require a filter — either works or errors out
+        let _ = client().get_trades("ethereum", None, None, None, Some(1));
     }
 
     #[test]
