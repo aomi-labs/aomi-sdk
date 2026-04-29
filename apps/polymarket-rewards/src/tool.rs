@@ -57,7 +57,7 @@ fn next_step_after_wallet_signature(
 ) -> Result<ToolReturn, String> {
     Ok(ToolReturn::with_route(
         result,
-        RouteStep::on_bound_artifact(follow_up_step.to_string(), follow_up_args, callback_field)
+        RouteStep::on_bound_event(follow_up_step.to_string(), follow_up_args, callback_field)
             .prompt(prompt),
     ))
 }
@@ -1340,7 +1340,7 @@ mod tests {
 
         assert_eq!(result.routes.len(), 1);
         match &result.routes[0].trigger {
-            RouteTrigger::OnBoundArtifact { alias } => assert_eq!(alias, "clob_l1_signature"),
+            RouteTrigger::OnBoundEvent { alias } => assert_eq!(alias, "clob_l1_signature"),
             other => panic!("unexpected trigger: {other:?}"),
         }
     }

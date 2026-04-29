@@ -769,7 +769,7 @@ mod tests {
         ));
         assert!(matches!(
             &result.routes[1].trigger,
-            RouteTrigger::OnBoundArtifact { alias } if alias == "clob_l1_signature"
+            RouteTrigger::OnBoundEvent { alias } if alias == "clob_l1_signature"
         ));
     }
 }

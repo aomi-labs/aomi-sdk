@@ -616,7 +616,7 @@ mod tests {
         ));
         assert!(matches!(
             &result.routes[1].trigger,
-            RouteTrigger::OnBoundArtifact { alias } if alias == "signature"
+            RouteTrigger::OnBoundEvent { alias } if alias == "signature"
         ));
     }
 
@@ -660,7 +660,7 @@ mod tests {
         ));
         assert!(matches!(
             &result.routes[2].trigger,
-            RouteTrigger::OnBoundArtifact { alias } if alias == "transaction_hash"
+            RouteTrigger::OnBoundEvent { alias } if alias == "transaction_hash"
         ));
     }
 }

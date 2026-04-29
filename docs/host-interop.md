@@ -36,7 +36,7 @@ Execution-oriented apps may assume a host runtime exposes some or all of the fol
 
 ## Route hints (`ToolReturn` envelope)
 
-Apps that drive multi-step execution flows (e.g. `khalani`, `polymarket`) return a `ToolReturn` instead of a bare JSON value. `ToolReturn` carries the tool's structured payload plus an ordered `routes: Vec<RouteStep>` list. Each `RouteStep` declares a triggering event (`OnReturn` or `OnBoundArtifact`), the next tool to call, hinted args, and an optional `prompt` override.
+Apps that drive multi-step execution flows (e.g. `khalani`, `polymarket`) return a `ToolReturn` instead of a bare JSON value. `ToolReturn` carries the tool's structured payload plus an ordered `routes: Vec<RouteStep>` list. Each `RouteStep` declares a triggering event (`OnSyncReturn` or `OnBoundEvent`), the next tool to call, hinted args, and an optional `prompt` override.
 
 Builders are exposed in `aomi_sdk::route`:
 
@@ -47,7 +47,7 @@ ToolReturn::with_routes(value, [
     RouteStep::on_return("commit_eip712", wallet_request)
         .bind_as("clob_l1_signature")
         .prompt("Suggested next step: call commit_eip712 with these args."),
-    RouteStep::on_bound_artifact(
+    RouteStep::on_bound_event(
         "submit_polymarket_order",
         submit_template,
         "clob_l1_signature",
@@ -56,7 +56,7 @@ ToolReturn::with_routes(value, [
 ])
 ```
 
-The host treats each route as advisory: `OnReturn` steps render into the next system prompt the LLM sees, while `OnBoundArtifact` steps wait for the named artifact alias to resolve. Wallet callbacks, staged transaction completions, and other out-of-band events all flow through the runtime's artifact bridge and splice fields like `signature` or `transaction_hash` into the hinted args before the continuation prompt is injected. The runtime never parses prose; the route's structured fields are the contract.
+The host treats each route as advisory: `OnSyncReturn` steps render into the next system prompt the LLM sees, while `OnBoundEvent` steps wait for the named alias to resolve. Wallet callbacks, staged transaction completions, and other out-of-band events all flow through the runtime's `RoutedEventBridge` and splice fields like `signature` or `transaction_hash` into the hinted args before the continuation prompt is injected. The runtime never parses prose; the route's structured fields are the contract.
 
 If an app returns a `stage_tx` route, the host transaction model still applies: stage first, then `simulate_batch`, then `commit_tx`.
 

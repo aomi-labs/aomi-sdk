@@ -20,12 +20,12 @@ pub enum RouteTrigger {
     /// Fires when an earlier immediate step in the same route plan binds a
     /// named artifact under `alias`. Out-of-band events (wallet callbacks,
     /// game state updates, exec completions) feed into the same artifact
-    /// store via the runtime's `PendingEventBridge` — domains register a
+    /// store via the runtime's `RoutedEventBridge` — domains register a
     /// pending tool call when emitting their placeholder, and the runtime
     /// synthesizes a terminal `ToolCompletion` when the matching event
     /// arrives. There's no separate "on async callback" trigger from the
     /// router's perspective; everything resolves through aliases.
-    OnBoundArtifact { alias: String },
+    OnBoundEvent { alias: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -35,7 +35,7 @@ pub struct RouteStep {
     pub trigger: RouteTrigger,
     /// Alias under which this step's terminal result Value gets stored in the
     /// session's artifact store. Continuations declared with
-    /// [`RouteTrigger::OnBoundArtifact`] fire when their awaited alias is
+    /// [`RouteTrigger::OnBoundEvent`] fire when their awaited alias is
     /// bound. The router is purely alias-keyed — no per-domain typing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bind_as: Option<String>,
@@ -58,15 +58,11 @@ impl RouteStep {
         }
     }
 
-    pub fn on_bound_artifact(
-        tool: impl Into<String>,
-        args: Value,
-        alias: impl Into<String>,
-    ) -> Self {
+    pub fn on_bound_event(tool: impl Into<String>, args: Value, alias: impl Into<String>) -> Self {
         Self {
             tool: tool.into(),
             args,
-            trigger: RouteTrigger::OnBoundArtifact {
+            trigger: RouteTrigger::OnBoundEvent {
                 alias: alias.into(),
             },
             bind_as: None,
@@ -81,7 +77,7 @@ impl RouteStep {
 
     /// Publish this step's terminal result Value under the given alias in
     /// the session's artifact store. Continuations bound via
-    /// [`RouteTrigger::OnBoundArtifact`] consume the same alias.
+    /// [`RouteTrigger::OnBoundEvent`] consume the same alias.
     pub fn bind_as(mut self, alias: impl Into<String>) -> Self {
         self.bind_as = Some(alias.into());
         self
@@ -255,7 +251,7 @@ impl RouteBuilder {
                 step: RouteStep {
                     tool: tool.into(),
                     args: serde_json::to_value(args).unwrap_or(Value::Null),
-                    trigger: RouteTrigger::OnBoundArtifact {
+                    trigger: RouteTrigger::OnBoundEvent {
                         alias: String::new(),
                     },
                     bind_as: None,
@@ -330,7 +326,7 @@ impl RouteBuilder {
                     "deferred route awaits unknown alias `{alias}`; bind it in `next(...)` first"
                 ));
             }
-            after.step.trigger = RouteTrigger::OnBoundArtifact { alias };
+            after.step.trigger = RouteTrigger::OnBoundEvent { alias };
         }
 
         if !self.errors.is_empty() {
@@ -524,7 +520,7 @@ mod tests {
 
     #[test]
     fn routed_tool_return_serializes_to_an_envelope() {
-        // OnBoundArtifact-based plan: a producer step binds an alias and
+        // OnBoundEvent-based plan: a producer step binds an alias and
         // a deferred consumer awaits it. This is the canonical wire shape
         // after the wallet-callback machinery was removed.
         let tool_return = ToolReturn::with_routes(
@@ -532,7 +528,7 @@ mod tests {
             [
                 RouteStep::on_return("commit_eip712", json!({"typed_data": {}}))
                     .bind_as("clob_l1_signature"),
-                RouteStep::on_bound_artifact(
+                RouteStep::on_bound_event(
                     "submit_polymarket_order",
                     json!({"market": "btc"}),
                     "clob_l1_signature",
@@ -557,7 +553,7 @@ mod tests {
                         "tool": "submit_polymarket_order",
                         "args": {"market": "btc"},
                         "trigger": {
-                            "type": "on_bound_artifact",
+                            "type": "on_bound_event",
                             "alias": "clob_l1_signature",
                         },
                     }
@@ -603,7 +599,7 @@ mod tests {
                         "tool": "submit_order",
                         "args": {"market": "btc"},
                         "trigger": {
-                            "type": "on_bound_artifact",
+                            "type": "on_bound_event",
                             "alias": "clob_l1_signature",
                         },
                         "prompt": "continue submit",
