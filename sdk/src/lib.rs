@@ -138,6 +138,7 @@
 //! without loading the full FFI plugin.
 
 mod abi;
+mod builder;
 mod ffi;
 mod handle;
 pub mod route;

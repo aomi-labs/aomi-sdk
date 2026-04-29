@@ -187,54 +187,60 @@ impl DynAomiTool for BuildKhalaniOrder {
                     "Khalani approvals present but no executable transaction found".to_string()
                 })?;
 
-            let (description, follow_up) = if is_deposit {
-                (
+            let wallet_request = build_stage_tx_request(
+                &tx,
+                if is_deposit {
                     format!(
                         "Khalani deposit tx for {} {} -> {}",
                         args.amount, args.sell_token, args.buy_token
-                    ),
-                    json!({
-                        "step": "submit_khalani_order",
-                        "args_template": to_json_value(&SubmitKhalaniOrderArgs {
-                            quote_id: quote_id.clone(),
-                            route_id: route_id.clone(),
-                            submit_type: "SIGNED_TRANSACTION".to_string(),
-                            transaction_hash: None,
-                            signature: None,
-                        })?,
-                    }),
-                )
-            } else {
-                (
+                    )
+                } else {
                     format!(
                         "Khalani approval tx for {} on {}",
                         args.sell_token, args.chain
-                    ),
-                    json!({
-                        "step": "build_khalani_order",
-                        "args_template": to_json_value(&BuildKhalaniOrderArgs {
-                            chain: args.chain.clone(),
-                            destination_chain: args.destination_chain.clone(),
-                            sell_token: args.sell_token.clone(),
-                            buy_token: args.buy_token.clone(),
-                            amount: args.amount,
-                            sender_address: Some(sender_address.clone()),
-                            receiver_address: args.receiver_address.clone(),
-                            slippage: args.slippage,
-                        })?,
-                    }),
-                )
-            };
+                    )
+                },
+            );
 
-            return build_khalani_result(
+            if is_deposit {
+                return build_khalani_follow_up_result::<host::StageTx, SubmitKhalaniOrder>(
+                    &quote_id,
+                    &route_id,
+                    "APPROVAL_FLOW",
+                    summary,
+                    wallet_request,
+                    build_transaction_preflight(&tx),
+                    to_json_value(&SubmitKhalaniOrderArgs {
+                        quote_id: quote_id.clone(),
+                        route_id: route_id.clone(),
+                        submit_type: "SIGNED_TRANSACTION".to_string(),
+                        transaction_hash: None,
+                        signature: None,
+                    })?,
+                    "transaction_hash",
+                    "Transaction confirmed — submit the Khalani order.",
+                );
+            }
+
+            return build_khalani_follow_up_result::<host::StageTx, BuildKhalaniOrder>(
                 &quote_id,
                 &route_id,
                 "APPROVAL_FLOW",
                 summary,
-                "stage_tx",
-                build_stage_tx_request(&tx, description),
+                wallet_request,
                 build_transaction_preflight(&tx),
-                follow_up,
+                to_json_value(&BuildKhalaniOrderArgs {
+                    chain: args.chain.clone(),
+                    destination_chain: args.destination_chain.clone(),
+                    sell_token: args.sell_token.clone(),
+                    buy_token: args.buy_token.clone(),
+                    amount: args.amount,
+                    sender_address: Some(sender_address.clone()),
+                    receiver_address: args.receiver_address.clone(),
+                    slippage: args.slippage,
+                })?,
+                "transaction_hash",
+                "Approval confirmed — re-run build_khalani_order to produce the deposit plan.",
             );
         }
 
@@ -243,12 +249,11 @@ impl DynAomiTool for BuildKhalaniOrder {
         if tx_type.eq_ignore_ascii_case("PERMIT2") {
             let typed_data = extract_khalani_typed_data(&build)
                 .ok_or_else(|| "Khalani build missing typed data".to_string())?;
-            return build_khalani_result(
+            return build_khalani_follow_up_result::<host::CommitEip712, SubmitKhalaniOrder>(
                 &quote_id,
                 &route_id,
                 &tx_type,
                 summary,
-                "commit_eip712",
                 to_json_value(&WalletEip712Request {
                     typed_data,
                     description: format!(
@@ -257,28 +262,26 @@ impl DynAomiTool for BuildKhalaniOrder {
                     ),
                 })?,
                 None,
-                json!({
-                    "step": "submit_khalani_order",
-                    "args_template": to_json_value(&SubmitKhalaniOrderArgs {
-                        quote_id: quote_id.clone(),
-                        route_id: route_id.clone(),
-                        submit_type: "SIGNED_EIP712".to_string(),
-                        transaction_hash: None,
-                        signature: None,
-                    })?,
-                }),
+                to_json_value(&SubmitKhalaniOrderArgs {
+                    quote_id: quote_id.clone(),
+                    route_id: route_id.clone(),
+                    submit_type: "SIGNED_EIP712".to_string(),
+                    transaction_hash: None,
+                    signature: None,
+                })?,
+                "signature",
+                "Permit2 signed — submit the Khalani order.",
             );
         }
 
         // Contract call execution flow.
         let tx = extract_khalani_contract_call_tx(&build)
             .ok_or_else(|| "Khalani build missing executable transaction".to_string())?;
-        build_khalani_result(
+        build_khalani_follow_up_result::<host::StageTx, SubmitKhalaniOrder>(
             &quote_id,
             &route_id,
             &tx_type,
             summary,
-            "stage_tx",
             build_stage_tx_request(
                 &tx,
                 format!(
@@ -287,16 +290,15 @@ impl DynAomiTool for BuildKhalaniOrder {
                 ),
             ),
             build_transaction_preflight(&tx),
-            json!({
-                "step": "submit_khalani_order",
-                "args_template": to_json_value(&SubmitKhalaniOrderArgs {
-                    quote_id: quote_id.clone(),
-                    route_id: route_id.clone(),
-                    submit_type: "SIGNED_TRANSACTION".to_string(),
-                    transaction_hash: None,
-                    signature: None,
-                })?,
-            }),
+            to_json_value(&SubmitKhalaniOrderArgs {
+                quote_id: quote_id.clone(),
+                route_id: route_id.clone(),
+                submit_type: "SIGNED_TRANSACTION".to_string(),
+                transaction_hash: None,
+                signature: None,
+            })?,
+            "transaction_hash",
+            "Transaction confirmed — submit the Khalani order.",
         )
     }
 }

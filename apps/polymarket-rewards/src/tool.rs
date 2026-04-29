@@ -9,14 +9,15 @@ fn to_json_value<T: serde::Serialize>(value: &T) -> Result<Value, String> {
 /// Wallet step + deferred follow-up. The wallet tool binds its completion
 /// artifact under `callback_field`, and the runtime fires the continuation
 /// once that alias resolves.
-fn build_rewards_follow_up_result(
+fn build_rewards_follow_up_result<T>(
     mut result: Value,
-    wallet_tool: &str,
     wallet_request: Value,
-    follow_up_step: &str,
     follow_up_args_template: Value,
     callback_field: &str,
-) -> Result<ToolReturn, String> {
+) -> Result<ToolReturn, String>
+where
+    T: RouteTarget,
+{
     let obj = result
         .as_object_mut()
         .ok_or_else(|| "result is not an object".to_string())?;
@@ -24,41 +25,44 @@ fn build_rewards_follow_up_result(
 
     Ok(ToolReturn::route(result)
         .next(|next| {
-            next.add_named(wallet_tool.to_string(), wallet_request)
+            next.add::<host::CommitEip712>(wallet_request)
                 .bind_as(callback_field);
         })
-        .after_named(follow_up_step, follow_up_args_template)
+        .after::<T>(follow_up_args_template)
         .awaits(callback_field)
         .note("Wallet signed — continue the rewards flow.")
         .build())
 }
 
 /// Single immediate next step the LLM should walk to after this tool returns.
-fn next_step_immediate(
+fn next_step_immediate<T>(
     result: Value,
-    follow_up_step: &str,
     follow_up_args: Value,
     prompt: &str,
-) -> Result<ToolReturn, String> {
+) -> Result<ToolReturn, String>
+where
+    T: RouteTarget,
+{
     Ok(ToolReturn::with_route(
         result,
-        RouteStep::on_return(follow_up_step.to_string(), follow_up_args).prompt(prompt),
+        RouteStep::on_return_to::<T>(follow_up_args).prompt(prompt),
     ))
 }
 
 /// Single deferred follow-up gated on an artifact produced by an out-of-band
 /// wallet signature flow that the host is already staging for the user.
-fn next_step_after_wallet_signature(
+fn next_step_after_wallet_signature<T>(
     result: Value,
-    follow_up_step: &str,
     follow_up_args: Value,
     callback_field: &str,
     prompt: &str,
-) -> Result<ToolReturn, String> {
+) -> Result<ToolReturn, String>
+where
+    T: RouteTarget,
+{
     Ok(ToolReturn::with_route(
         result,
-        RouteStep::on_bound_event(follow_up_step.to_string(), follow_up_args, callback_field)
-            .prompt(prompt),
+        RouteStep::on_bound_to::<T>(follow_up_args, callback_field).prompt(prompt),
     ))
 }
 
@@ -217,11 +221,9 @@ impl DynAomiTool for EnsureRewardClobCredentials {
                 .to_string(),
         })?;
 
-        build_rewards_follow_up_result(
+        build_rewards_follow_up_result::<EnsureRewardClobCredentials>(
             result,
-            "commit_eip712",
             wallet_request,
-            "ensure_reward_clob_credentials",
             to_json_value(&EnsureRewardClobCredentialsArgs {
                 address: args.address,
                 clob_auth: Some(clob_auth),
@@ -990,9 +992,8 @@ impl DynAomiTool for SubmitRewardQuote {
                 "SESSION_PENDING_TRANSACTIONS": pending_transactions,
             });
 
-            return next_step_after_wallet_signature(
+            return next_step_after_wallet_signature::<SubmitRewardQuote>(
                 result,
-                "submit_reward_quote",
                 to_json_value(&SubmitRewardQuoteArgs {
                     confirmation: Some("confirm".to_string()),
                     address: args.address.clone(),
@@ -1138,9 +1139,8 @@ impl DynAomiTool for SubmitRewardQuote {
                 "SESSION_PENDING_TRANSACTIONS": pending_transactions,
             });
 
-            return next_step_after_wallet_signature(
+            return next_step_after_wallet_signature::<SubmitRewardQuote>(
                 result,
-                "submit_reward_quote",
                 to_json_value(&SubmitRewardQuoteArgs {
                     confirmation: Some("confirm".to_string()),
                     address: args.address.clone(),
@@ -1501,9 +1501,8 @@ impl DynAomiTool for ExecuteQuotePlan {
             "next_step_hint": "Immediately call get_quote_plan_status to verify the open orders landed and to show reward earnings context.",
         });
 
-        next_step_immediate(
+        next_step_immediate::<GetQuotePlanStatus>(
             result,
-            "get_quote_plan_status",
             status_follow_up_args,
             "Immediately verify the live submission by fetching open orders and reward earnings so the user can see the deployed liquidity status.",
         )
@@ -1729,9 +1728,8 @@ impl DynAomiTool for WithdrawQuoteLiquidity {
             "next_step_hint": "Immediately call get_quote_plan_status to verify that the resting quote liquidity is gone. Filled positions, if any, remain in the wallet.",
         });
 
-        next_step_immediate(
+        next_step_immediate::<GetQuotePlanStatus>(
             result,
-            "get_quote_plan_status",
             status_follow_up_args,
             "Immediately verify the cancellation by fetching open orders and reward earnings so the user can see whether the resting liquidity is gone.",
         )

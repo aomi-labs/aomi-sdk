@@ -17,12 +17,14 @@ fn to_json_value<T: Serialize>(value: &T) -> Result<Value, String> {
     serde_json::to_value(value).map_err(|e| format!("failed to encode JSON payload: {e}"))
 }
 
-fn build_polymarket_immediate_follow_up_result(
+fn build_polymarket_immediate_follow_up_result<T>(
     result: Value,
-    follow_up_step: &str,
     follow_up_args: Value,
     requires_user_confirmation: bool,
-) -> ToolReturn {
+) -> ToolReturn
+where
+    T: RouteTarget,
+{
     let prompt = if requires_user_confirmation {
         "wait for explicit user confirmation first; submitting the order is the execution step"
     } else {
@@ -31,16 +33,16 @@ fn build_polymarket_immediate_follow_up_result(
 
     ToolReturn::with_route(
         result,
-        RouteStep::on_return(follow_up_step.to_string(), follow_up_args).prompt(prompt),
+        RouteStep::on_return_to::<T>(follow_up_args).prompt(prompt),
     )
 }
 
 fn build_polymarket_follow_up_result(
     mut result: Value,
-    wallet_tool: &str,
     wallet_request: Value,
     follow_up: WalletFollowUp<'_>,
 ) -> Result<ToolReturn, String> {
+    let wallet_tool = host::CommitEip712::tool_name();
     let obj = result
         .as_object_mut()
         .ok_or_else(|| "result is not an object".to_string())?;
@@ -49,11 +51,7 @@ fn build_polymarket_follow_up_result(
         "wallet_signature_step".to_string(),
         to_json_value(&WalletSignatureStepMetadata {
             wallet_tool: wallet_tool.to_string(),
-            signing_primitive: if wallet_tool == "commit_eip712" {
-                Some("EIP712_TYPED_DATA_V4".to_string())
-            } else {
-                None
-            },
+            signing_primitive: Some("EIP712_TYPED_DATA_V4".to_string()),
             callback_field: follow_up.callback_field.to_string(),
             requires_user_confirmation_before_call: follow_up.requires_user_confirmation,
         })?,
@@ -67,7 +65,7 @@ fn build_polymarket_follow_up_result(
 
     Ok(ToolReturn::route(result)
         .next(|next| {
-            next.add_named(wallet_tool.to_string(), wallet_request)
+            next.add::<host::CommitEip712>(wallet_request)
                 .bind_as(follow_up.callback_field)
                 .note(wallet_step_prompt);
         })
@@ -502,9 +500,8 @@ impl DynAomiTool for BuildPolymarketOrder {
         });
 
         if plan.execution_mode == "DIRECT_SDK" {
-            return Ok(build_polymarket_immediate_follow_up_result(
+            return Ok(build_polymarket_immediate_follow_up_result::<SubmitPolymarketOrder>(
                 result,
-                "submit_polymarket_order",
                 to_json_value(&SubmitPolymarketOrderArgs {
                     confirmation: Some("confirm".to_string()),
                     order_plan: plan,
@@ -546,7 +543,6 @@ impl DynAomiTool for BuildPolymarketOrder {
 
             return build_polymarket_follow_up_result(
                 result,
-                "commit_eip712",
                 wallet_request,
                 WalletFollowUp {
                     submit_template: to_json_value(&SubmitPolymarketOrderArgs {
@@ -651,7 +647,6 @@ impl DynAomiTool for SubmitPolymarketOrder {
             })?;
             return build_polymarket_follow_up_result(
                 result,
-                "commit_eip712",
                 wallet_request,
                 WalletFollowUp {
                     submit_template: to_json_value(&SubmitPolymarketOrderArgs {
@@ -694,7 +689,6 @@ impl DynAomiTool for SubmitPolymarketOrder {
 
         build_polymarket_follow_up_result(
             result,
-            "commit_eip712",
             wallet_request,
             WalletFollowUp {
                 submit_template: to_json_value(&SubmitPolymarketOrderArgs {
@@ -720,9 +714,8 @@ mod tests {
 
     #[test]
     fn direct_sdk_build_flow_uses_on_return_route() {
-        let result = build_polymarket_immediate_follow_up_result(
+        let result = build_polymarket_immediate_follow_up_result::<SubmitPolymarketOrder>(
             json!({"source": "polymarket"}),
-            "submit_polymarket_order",
             json!({
                 "confirmation": "confirm",
                 "order_plan": {"execution_mode": "DIRECT_SDK"},
@@ -748,7 +741,6 @@ mod tests {
     fn wallet_signature_flow_uses_bound_artifact_route_plan() {
         let result = build_polymarket_follow_up_result(
             json!({"source": "polymarket"}),
-            "commit_eip712",
             json!({"typed_data": {"domain": {"chainId": 137}}}),
             WalletFollowUp {
                 submit_template: json!({"market": "btc", "clob_l1_signature": null}),

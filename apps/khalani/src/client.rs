@@ -588,23 +588,21 @@ mod tests {
 
     #[test]
     fn permit2_follow_up_uses_signature_artifact_plan() {
-        let result = build_khalani_result(
+        let result = build_khalani_follow_up_result::<host::CommitEip712, SubmitKhalaniOrder>(
             "quote-1",
             &Some("route-1".to_string()),
             "PERMIT2",
             json!({"summary": "ok"}),
-            "commit_eip712",
             json!({"typed_data": {"domain": {"chainId": 1}}}),
             None,
             json!({
-                "step": "submit_khalani_order",
-                "args_template": {
-                    "quote_id": "quote-1",
-                    "route_id": "route-1",
-                    "submit_type": "SIGNED_EIP712",
-                    "signature": null
-                }
+                "quote_id": "quote-1",
+                "route_id": "route-1",
+                "submit_type": "SIGNED_EIP712",
+                "signature": null
             }),
+            "signature",
+            "Permit2 signed — submit the Khalani order.",
         )
         .expect("route plan should build");
 
@@ -622,26 +620,24 @@ mod tests {
 
     #[test]
     fn staged_tx_follow_up_uses_transaction_hash_artifact_plan() {
-        let result = build_khalani_result(
+        let result = build_khalani_follow_up_result::<host::StageTx, SubmitKhalaniOrder>(
             "quote-1",
             &Some("route-1".to_string()),
             "CALL",
             json!({"summary": "ok"}),
-            "stage_tx",
             json!({"to": "0x1", "data": {"raw": "0x"}}),
             Some(json!({
                 "tool": "view_state",
                 "args": {"to": "0x1", "function_signature": "allowance(address,address)", "arguments": ["0x1", "0x2"]}
             })),
             json!({
-                "step": "submit_khalani_order",
-                "args_template": {
-                    "quote_id": "quote-1",
-                    "route_id": "route-1",
-                    "submit_type": "SIGNED_TRANSACTION",
-                    "transaction_hash": null
-                }
+                "quote_id": "quote-1",
+                "route_id": "route-1",
+                "submit_type": "SIGNED_TRANSACTION",
+                "transaction_hash": null
             }),
+            "transaction_hash",
+            "Transaction confirmed — submit the Khalani order.",
         )
         .expect("route plan should build");
 
@@ -669,17 +665,42 @@ mod tests {
 // Typed RouteStep emission
 // ============================================================================
 
+fn add_khalani_preflight_step(
+    next: &mut NextRoutesBuilder<'_>,
+    preflight_step: Option<&(String, Value)>,
+) {
+    if let Some((name, args)) = preflight_step {
+        match name.as_str() {
+            "view_state" => {
+                next.add::<host::ViewState>(args.clone()).note(
+                    "preflight allowance check; surface failures to the user before continuing",
+                );
+            }
+            _ => {
+                next.add_named(name.clone(), args.clone()).note(
+                    "preflight allowance check; surface failures to the user before continuing",
+                );
+            }
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn build_khalani_result(
+pub(crate) fn build_khalani_follow_up_result<WalletTool, FollowUpTool>(
     quote_id: &str,
     route_id: &Option<String>,
     transaction_type: &str,
     summary: Value,
-    wallet_tool: &str,
     wallet_request: Value,
     preflight: Option<Value>,
-    follow_up: Value,
-) -> Result<ToolReturn, String> {
+    follow_up_args: Value,
+    callback_field: &'static str,
+    note: &'static str,
+) -> Result<ToolReturn, String>
+where
+    WalletTool: RouteTarget,
+    FollowUpTool: RouteTarget,
+{
     let preflight_step = preflight.as_ref().and_then(|pf| {
         pf.get("tool").and_then(Value::as_str).map(|name| {
             (
@@ -698,60 +719,16 @@ pub(crate) fn build_khalani_result(
         "wallet_request": wallet_request.clone(),
     });
 
-    if let Some(step) = follow_up.get("step").and_then(Value::as_str) {
-        let template = follow_up.get("args_template").cloned().unwrap_or_default();
-        let follow_up_plan = match (step, wallet_tool) {
-            ("build_khalani_order", _) => Some((
-                "transaction_hash",
-                "Approval confirmed — re-run build_khalani_order to produce the deposit plan.",
-            )),
-            ("submit_khalani_order", "commit_eip712") => {
-                Some(("signature", "Permit2 signed — submit the Khalani order."))
-            }
-            ("submit_khalani_order", _) => Some((
-                "transaction_hash",
-                "Transaction confirmed — submit the Khalani order.",
-            )),
-            _ => None,
-        };
-
-        if let Some((alias, note)) = follow_up_plan {
-            return Ok(ToolReturn::route(result)
-                .next(|next| {
-                    if let Some((name, args)) = preflight_step.as_ref() {
-                        next.add_named(name.clone(), args.clone()).note(
-                            "preflight allowance check; surface failures to the user before continuing",
-                        );
-                    }
-                    next.add_named(wallet_tool.to_string(), wallet_request.clone())
-                        .bind_as(alias);
-                })
-                .after_named(step, template)
-                .awaits(alias)
-                .note(note)
-                .build());
-        }
-    }
-
-    let mut routes: Vec<RouteStep> = Vec::new();
-
-    // Preflight (OnReturn) — LLM walks here first when present.
-    if let Some((name, args)) = preflight_step {
-        routes.push(
-            RouteStep::on_return(name, args).prompt(
-                "preflight allowance check; surface failures to the user before continuing",
-            ),
-        );
-    }
-
-    // Wallet step (OnReturn) — LLM walks here next. The numbered-list framing
-    // makes ordering structural, so no per-step note is needed.
-    routes.push(RouteStep::on_return(
-        wallet_tool.to_string(),
-        wallet_request.clone(),
-    ));
-
-    Ok(ToolReturn::with_routes(result, routes))
+    Ok(ToolReturn::route(result)
+        .next(|next| {
+            add_khalani_preflight_step(next, preflight_step.as_ref());
+            next.add::<WalletTool>(wallet_request)
+                .bind_as(callback_field);
+        })
+        .after::<FollowUpTool>(follow_up_args)
+        .awaits(callback_field)
+        .note(note)
+        .build())
 }
 
 // ============================================================================
