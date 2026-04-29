@@ -22,21 +22,31 @@ fn build_rewards_follow_up_result(
         .ok_or_else(|| "result is not an object".to_string())?;
     obj.insert("wallet_request".to_string(), wallet_request.clone());
 
-    Ok(ToolReturn::with_routes(
-        result,
-        [
-            // Wallet step — header handles "run with these exact args" framing.
-            RouteStep::on_return(wallet_tool.to_string(), wallet_request),
-            RouteStep::on_async_callback::<WalletEip712Complete>(
-                follow_up_step.to_string(),
-                follow_up_args_template,
-            )
-            .callback_field(callback_field)
-            .prompt(
-                "Wallet signed — continue the rewards flow. Signature is spliced into the args.",
-            ),
-        ],
-    ))
+    match wallet_tool {
+        "commit_eip712" => Ok(ToolReturn::route(result)
+            .next(|next| {
+                next.add_named("commit_eip712", wallet_request)
+                    .bind_as(callback_field);
+            })
+            .after_named(follow_up_step, follow_up_args_template)
+            .awaits(callback_field)
+            .note("Wallet signed — continue the rewards flow.")
+            .build()),
+        _ => Ok(ToolReturn::with_routes(
+            result,
+            [
+                RouteStep::on_return(wallet_tool.to_string(), wallet_request),
+                RouteStep::on_async_callback::<WalletEip712Complete>(
+                    follow_up_step.to_string(),
+                    follow_up_args_template,
+                )
+                .callback_field(callback_field)
+                .prompt(
+                    "Wallet signed — continue the rewards flow. Signature is spliced into the args.",
+                ),
+            ],
+        )),
+    }
 }
 
 /// Single immediate next step the LLM should walk to after this tool returns.

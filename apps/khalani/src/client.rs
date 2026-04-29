@@ -568,6 +568,8 @@ pub(crate) fn build_stage_tx_request(tx: &Value, description: String) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aomi_sdk::RouteTrigger;
+    use serde_json::json;
 
     #[test]
     fn resolves_common_chain_aliases() {
@@ -582,6 +584,72 @@ mod tests {
         assert!(is_hex_address("0x5d907bea404e6f821d467314a9ca07663cf64c9b"));
         assert!(!is_hex_address("ETH"));
         assert!(!is_hex_address("0x1234"));
+    }
+
+    #[test]
+    fn permit2_follow_up_uses_signature_artifact_plan() {
+        let result = build_khalani_result(
+            "quote-1",
+            &Some("route-1".to_string()),
+            "PERMIT2",
+            json!({"summary": "ok"}),
+            "commit_eip712",
+            json!({"typed_data": {"domain": {"chainId": 1}}}),
+            None,
+            json!({
+                "step": "submit_khalani_order",
+                "args_template": {
+                    "quote_id": "quote-1",
+                    "route_id": "route-1",
+                    "submit_type": "SIGNED_EIP712",
+                    "signature": null
+                }
+            }),
+        )
+        .expect("route plan should build");
+
+        assert_eq!(result.routes.len(), 2);
+        assert_eq!(result.routes[0].bind_as.as_deref(), Some("signature"));
+        assert!(matches!(result.routes[0].trigger, RouteTrigger::OnSyncReturn));
+        assert!(matches!(
+            &result.routes[1].trigger,
+            RouteTrigger::OnBoundArtifact { alias } if alias == "signature"
+        ));
+    }
+
+    #[test]
+    fn staged_tx_follow_up_uses_transaction_hash_artifact_plan() {
+        let result = build_khalani_result(
+            "quote-1",
+            &Some("route-1".to_string()),
+            "CALL",
+            json!({"summary": "ok"}),
+            "stage_tx",
+            json!({"to": "0x1", "data": {"raw": "0x"}}),
+            Some(json!({
+                "tool": "view_state",
+                "args": {"to": "0x1", "function_signature": "allowance(address,address)", "arguments": ["0x1", "0x2"]}
+            })),
+            json!({
+                "step": "submit_khalani_order",
+                "args_template": {
+                    "quote_id": "quote-1",
+                    "route_id": "route-1",
+                    "submit_type": "SIGNED_TRANSACTION",
+                    "transaction_hash": null
+                }
+            }),
+        )
+        .expect("route plan should build");
+
+        assert_eq!(result.routes.len(), 3);
+        assert!(matches!(result.routes[0].trigger, RouteTrigger::OnSyncReturn));
+        assert_eq!(result.routes[1].bind_as.as_deref(), Some("transaction_hash"));
+        assert!(matches!(result.routes[1].trigger, RouteTrigger::OnSyncReturn));
+        assert!(matches!(
+            &result.routes[2].trigger,
+            RouteTrigger::OnBoundArtifact { alias } if alias == "transaction_hash"
+        ));
     }
 }
 
@@ -600,17 +668,69 @@ pub(crate) fn build_khalani_result(
     preflight: Option<Value>,
     follow_up: Value,
 ) -> Result<ToolReturn, String> {
-    let mut routes: Vec<RouteStep> = Vec::new();
-
-    // Preflight (OnReturn) — LLM walks here first when present.
-    if let Some(ref pf) = preflight
-        && let Some(name) = pf.get("tool").and_then(Value::as_str)
-    {
-        routes.push(
-            RouteStep::on_return(
+    let preflight_step = preflight.as_ref().and_then(|pf| {
+        pf.get("tool").and_then(Value::as_str).map(|name| {
+            (
                 name.to_string(),
                 pf.get("args").cloned().unwrap_or_default(),
             )
+        })
+    });
+
+    let result = json!({
+        "source": "khalani",
+        "quote_id": quote_id,
+        "route_id": route_id,
+        "transaction_type": transaction_type,
+        "summary": summary,
+        "wallet_request": wallet_request.clone(),
+    });
+
+    if let Some(step) = follow_up.get("step").and_then(Value::as_str) {
+        let template = follow_up.get("args_template").cloned().unwrap_or_default();
+        match (step, wallet_tool) {
+            ("submit_khalani_order", "commit_eip712") => {
+                return Ok(ToolReturn::route(result)
+                    .next(|next| {
+                        if let Some((name, args)) = preflight_step.as_ref() {
+                            next.add_named(name.clone(), args.clone()).note(
+                                "preflight allowance check; surface failures to the user before continuing",
+                            );
+                        }
+                        next.add_named("commit_eip712", wallet_request.clone())
+                            .bind_as("signature");
+                    })
+                    .after_named(step, template)
+                    .awaits("signature")
+                    .note("Permit2 signed — submit the Khalani order.")
+                    .build());
+            }
+            ("submit_khalani_order", "stage_tx") => {
+                return Ok(ToolReturn::route(result)
+                    .next(|next| {
+                        if let Some((name, args)) = preflight_step.as_ref() {
+                            next.add_named(name.clone(), args.clone()).note(
+                                "preflight allowance check; surface failures to the user before continuing",
+                            );
+                        }
+                        next.add_named("stage_tx", wallet_request.clone())
+                            .bind_as("transaction_hash");
+                    })
+                    .after_named(step, template)
+                    .awaits("transaction_hash")
+                    .note("Transaction confirmed — submit the Khalani order.")
+                    .build());
+            }
+            _ => {}
+        }
+    }
+
+    let mut routes: Vec<RouteStep> = Vec::new();
+
+    // Preflight (OnReturn) — LLM walks here first when present.
+    if let Some((name, args)) = preflight_step {
+        routes.push(
+            RouteStep::on_return(name, args)
             .prompt("preflight allowance check; surface failures to the user before continuing"),
         );
     }
@@ -665,18 +785,6 @@ pub(crate) fn build_khalani_result(
             _ => {}
         }
     }
-
-    let mut result = json!({
-        "source": "khalani",
-        "quote_id": quote_id,
-        "route_id": route_id,
-        "transaction_type": transaction_type,
-        "summary": summary,
-        "wallet_request": wallet_request,
-    });
-    let _ = result
-        .as_object_mut()
-        .ok_or_else(|| "result is not an object".to_string())?;
 
     Ok(ToolReturn::with_routes(result, routes))
 }

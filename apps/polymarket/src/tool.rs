@@ -65,22 +65,34 @@ fn build_polymarket_follow_up_result(
         "user already confirmed upstream — proceed without re-asking"
     };
 
-    Ok(ToolReturn::with_routes(
-        result,
-        [
-            RouteStep::on_return(wallet_tool.to_string(), wallet_request)
-                .prompt(wallet_step_prompt),
-            RouteStep::on_async_callback::<WalletEip712Complete>(
-                "submit_polymarket_order".to_string(),
-                follow_up.submit_template,
-            )
-            .callback_field(follow_up.callback_field)
-            .prompt(
-                "Wallet signed — submit the Polymarket order. Signature is spliced \
-                 into the args.",
-            ),
-        ],
-    ))
+    match wallet_tool {
+        "commit_eip712" => Ok(ToolReturn::route(result)
+            .next(|next| {
+                next.add_named("commit_eip712", wallet_request)
+                    .bind_as(follow_up.callback_field)
+                    .note(wallet_step_prompt);
+            })
+            .after::<SubmitPolymarketOrder>(follow_up.submit_template)
+            .awaits(follow_up.callback_field)
+            .note("Wallet signed — submit the Polymarket order.")
+            .build()),
+        _ => Ok(ToolReturn::with_routes(
+            result,
+            [
+                RouteStep::on_return(wallet_tool.to_string(), wallet_request)
+                    .prompt(wallet_step_prompt),
+                RouteStep::on_async_callback::<WalletEip712Complete>(
+                    "submit_polymarket_order".to_string(),
+                    follow_up.submit_template,
+                )
+                .callback_field(follow_up.callback_field)
+                .prompt(
+                    "Wallet signed — submit the Polymarket order. Signature is spliced \
+                     into the args.",
+                ),
+            ],
+        )),
+    }
 }
 
 // ============================================================================
@@ -748,5 +760,28 @@ mod tests {
                 "wait for explicit user confirmation first; submitting the order is the execution step"
             )
         );
+    }
+
+    #[test]
+    fn wallet_signature_flow_uses_bound_artifact_route_plan() {
+        let result = build_polymarket_follow_up_result(
+            json!({"source": "polymarket"}),
+            "commit_eip712",
+            json!({"typed_data": {"domain": {"chainId": 137}}}),
+            WalletFollowUp {
+                submit_template: json!({"market": "btc", "clob_l1_signature": null}),
+                callback_field: "clob_l1_signature",
+                requires_user_confirmation: true,
+            },
+        )
+        .expect("wallet follow-up should build");
+
+        assert_eq!(result.routes.len(), 2);
+        assert_eq!(result.routes[0].bind_as.as_deref(), Some("clob_l1_signature"));
+        assert!(matches!(result.routes[0].trigger, RouteTrigger::OnSyncReturn));
+        assert!(matches!(
+            &result.routes[1].trigger,
+            RouteTrigger::OnBoundArtifact { alias } if alias == "clob_l1_signature"
+        ));
     }
 }
