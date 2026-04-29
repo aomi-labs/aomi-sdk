@@ -64,20 +64,22 @@ fn sign_typed_data(signer: &PrivateKeySigner, typed_data: &Value) -> Result<Stri
     Ok(signature.to_string())
 }
 
-#[test]
-#[ignore = "live integration against CoW orderbook"]
-fn live_quote_sign_submit_avoids_wrong_owner() {
-    let signer =
-        PrivateKeySigner::from_str(TEST_PRIVATE_KEY).expect("fixture private key should parse");
+fn quote_sign_submit(
+    chain: &str,
+    sell_token: &str,
+    buy_token: &str,
+    amount: f64,
+) -> Result<(), String> {
+    let signer = PrivateKeySigner::from_str(TEST_PRIVATE_KEY).map_err(|e| e.to_string())?;
     let address = format!("{:#x}", signer.address());
 
     let quote = <client::GetCowSwapQuote as DynAomiTool>::run(
         &client::CowApp,
         client::GetCowSwapQuoteArgs {
-            chain: "polygon".to_string(),
-            sell_token: "usdc".to_string(),
-            buy_token: "weth".to_string(),
-            amount: 1.0,
+            chain: chain.to_string(),
+            sell_token: sell_token.to_string(),
+            buy_token: buy_token.to_string(),
+            amount,
             sender_address: address.clone(),
             receiver_address: None,
             order_side: Some("sell".to_string()),
@@ -88,40 +90,52 @@ fn live_quote_sign_submit_avoids_wrong_owner() {
         },
         tool_ctx("get_cow_swap_quote"),
     )
-    .expect("quote should succeed");
+    .map_err(|e| format!("quote should succeed: {e}"))?;
 
     let receiver = quote
         .pointer("/quote/receiver")
         .and_then(Value::as_str)
-        .expect("quote should include receiver");
-    assert!(receiver.eq_ignore_ascii_case(&address));
+        .ok_or_else(|| "quote should include receiver".to_string())?;
+    assert!(
+        receiver.eq_ignore_ascii_case(&address),
+        "receiver should default to signer"
+    );
 
     let typed_data = quote
-        .get("typed_data")
-        .cloned()
-        .expect("typed_data missing");
+        .pointer("/wallet_signature_request/typed_data")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "wallet_signature_request.typed_data missing".to_string())
+        .and_then(|value| {
+            serde_json::from_str::<Value>(value)
+                .map_err(|e| format!("wallet typed_data should parse: {e}"))
+        })?;
     assert_eq!(
         typed_data
             .pointer("/domain/verifyingContract")
             .and_then(Value::as_str),
         Some(client::COW_SETTLEMENT_CONTRACT)
     );
+    assert_eq!(
+        quote.get("flow_version").and_then(Value::as_str),
+        Some("cow-eip712-fee-rolled-into-sell-v1")
+    );
 
-    let signature = sign_typed_data(&signer, &typed_data).expect("typed data should sign");
+    let signature = sign_typed_data(&signer, &typed_data)?;
     let mut submit_args = quote
         .get("submit_args_template")
         .cloned()
-        .expect("submit args template missing");
-    submit_args["signed_order"]["signature"] = Value::String(signature);
+        .ok_or_else(|| "submit args template missing".to_string())?;
+    submit_args["signature"] = Value::String(signature);
+    assert!(submit_args.get("signed_order").is_none());
 
     let submit_args: client::PlaceCowOrderArgs =
-        serde_json::from_value(submit_args).expect("submit args should deserialize");
+        serde_json::from_value(submit_args).map_err(|e| e.to_string())?;
     let err = <client::PlaceCowOrder as DynAomiTool>::run(
         &client::CowApp,
         submit_args,
         tool_ctx("place_cow_order"),
     )
-    .expect_err("fixture signer should not have live Polygon USDC balance");
+    .expect_err("fixture signer should not have live balance");
 
     assert!(
         err.contains("InsufficientBalance"),
@@ -131,4 +145,18 @@ fn live_quote_sign_submit_avoids_wrong_owner() {
         !err.contains("WrongOwner"),
         "signature should no longer fail owner recovery: {err}"
     );
+    Ok(())
+}
+
+#[test]
+#[ignore = "live integration against CoW orderbook"]
+fn live_quote_sign_submit_avoids_wrong_owner() {
+    quote_sign_submit("polygon", "usdc", "weth", 1.0).expect("weth live flow should succeed");
+}
+
+#[test]
+#[ignore = "live integration against CoW orderbook"]
+fn live_quote_sign_submit_0_1_usdc_polygon_flow() {
+    quote_sign_submit("polygon", "usdc", "matic", 0.1)
+        .expect("0.1 usdc polygon live flow should avoid wrong owner");
 }

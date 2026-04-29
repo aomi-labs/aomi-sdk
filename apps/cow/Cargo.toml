@@ -8,6 +8,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 aomi-sdk = { path = "../../sdk" }
+alloy-dyn-abi = { version = "1.5.7", features = ["eip712"] }
+alloy-primitives = { version = "1.5.7", features = ["k256"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
 schemars = "1.0.4"
 serde = { version = "1.0", features = ["derive"] }
@@ -15,4 +17,3 @@ serde_json = "1.0"
 
 [dev-dependencies]
 alloy = { version = "1.8.3", default-features = false, features = ["signers", "signer-local"] }
-alloy-dyn-abi = { version = "1.5.7", features = ["eip712"] }
