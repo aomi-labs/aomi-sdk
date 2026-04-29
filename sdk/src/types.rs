@@ -663,10 +663,7 @@ mod tests {
         // run_with_routes would produce.
         sink.complete(crate::route::ToolReturn::with_route(
             json!({"status": "awaiting_wallet"}),
-            crate::route::RouteStep::on_async_callback::<crate::route::WalletEip712Complete>(
-                "submit_polymarket_order",
-                json!({"market": "btc"}),
-            ),
+            crate::route::RouteStep::on_return("submit_polymarket_order", json!({"market": "btc"})),
         ))
         .expect("terminal complete should accept routed ToolReturn");
 
@@ -697,7 +694,7 @@ mod tests {
         let err = sink
             .emit(crate::route::ToolReturn::with_route(
                 json!({"progress": 0.5}),
-                crate::route::RouteStep::on_async_callback::<crate::route::WalletEip712Complete>(
+                crate::route::RouteStep::on_return(
                     "submit_polymarket_order",
                     json!({"market": "btc"}),
                 ),

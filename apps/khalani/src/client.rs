@@ -700,40 +700,36 @@ pub(crate) fn build_khalani_result(
 
     if let Some(step) = follow_up.get("step").and_then(Value::as_str) {
         let template = follow_up.get("args_template").cloned().unwrap_or_default();
-        match (step, wallet_tool) {
+        let follow_up_plan = match (step, wallet_tool) {
+            ("build_khalani_order", _) => Some((
+                "transaction_hash",
+                "Approval confirmed — re-run build_khalani_order to produce the deposit plan.",
+            )),
             ("submit_khalani_order", "commit_eip712") => {
-                return Ok(ToolReturn::route(result)
-                    .next(|next| {
-                        if let Some((name, args)) = preflight_step.as_ref() {
-                            next.add_named(name.clone(), args.clone()).note(
-                                "preflight allowance check; surface failures to the user before continuing",
-                            );
-                        }
-                        next.add_named("commit_eip712", wallet_request.clone())
-                            .bind_as("signature");
-                    })
-                    .after_named(step, template)
-                    .awaits("signature")
-                    .note("Permit2 signed — submit the Khalani order.")
-                    .build());
+                Some(("signature", "Permit2 signed — submit the Khalani order."))
             }
-            ("submit_khalani_order", "stage_tx") => {
-                return Ok(ToolReturn::route(result)
-                    .next(|next| {
-                        if let Some((name, args)) = preflight_step.as_ref() {
-                            next.add_named(name.clone(), args.clone()).note(
-                                "preflight allowance check; surface failures to the user before continuing",
-                            );
-                        }
-                        next.add_named("stage_tx", wallet_request.clone())
-                            .bind_as("transaction_hash");
-                    })
-                    .after_named(step, template)
-                    .awaits("transaction_hash")
-                    .note("Transaction confirmed — submit the Khalani order.")
-                    .build());
-            }
-            _ => {}
+            ("submit_khalani_order", _) => Some((
+                "transaction_hash",
+                "Transaction confirmed — submit the Khalani order.",
+            )),
+            _ => None,
+        };
+
+        if let Some((alias, note)) = follow_up_plan {
+            return Ok(ToolReturn::route(result)
+                .next(|next| {
+                    if let Some((name, args)) = preflight_step.as_ref() {
+                        next.add_named(name.clone(), args.clone()).note(
+                            "preflight allowance check; surface failures to the user before continuing",
+                        );
+                    }
+                    next.add_named(wallet_tool.to_string(), wallet_request.clone())
+                        .bind_as(alias);
+                })
+                .after_named(step, template)
+                .awaits(alias)
+                .note(note)
+                .build());
         }
     }
 
@@ -754,50 +750,6 @@ pub(crate) fn build_khalani_result(
         wallet_tool.to_string(),
         wallet_request.clone(),
     ));
-
-    // Follow-up — gated on a wallet callback whose family depends on the
-    // wallet step kind. `commit_eip712` -> EIP-712 sig; `stage_tx` -> tx
-    // success (after the host walks simulate_batch/commit_tx).
-    if let Some(step) = follow_up.get("step").and_then(Value::as_str) {
-        let template = follow_up.get("args_template").cloned().unwrap_or_default();
-        match (step, wallet_tool) {
-            ("build_khalani_order", _) => {
-                // Approval flow: re-invoke build after the approval tx confirms.
-                routes.push(
-                    RouteStep::on_async_callback::<WalletTxComplete>(step.to_string(), template)
-                        .prompt(
-                            "Approval confirmed — re-run build_khalani_order to produce the \
-                             deposit plan.",
-                        ),
-                );
-            }
-            ("submit_khalani_order", "commit_eip712") => {
-                routes.push(
-                    RouteStep::on_async_callback::<WalletEip712Complete>(
-                        step.to_string(),
-                        template,
-                    )
-                    .callback_field("signature")
-                    .prompt("Permit2 signed — submit the Khalani order."),
-                );
-            }
-            ("submit_khalani_order", "stage_tx") => {
-                routes.push(
-                    RouteStep::on_async_callback::<WalletTxComplete>(step.to_string(), template)
-                        .callback_field("transaction_hash")
-                        .prompt("Transaction confirmed — submit the Khalani order."),
-                );
-            }
-            ("submit_khalani_order", _) => {
-                routes.push(
-                    RouteStep::on_async_callback::<WalletTxComplete>(step.to_string(), template)
-                        .callback_field("transaction_hash")
-                        .prompt("Transaction confirmed — submit the Khalani order."),
-                );
-            }
-            _ => {}
-        }
-    }
 
     Ok(ToolReturn::with_routes(result, routes))
 }

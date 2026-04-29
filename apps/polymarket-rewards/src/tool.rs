@@ -6,9 +6,9 @@ fn to_json_value<T: serde::Serialize>(value: &T) -> Result<Value, String> {
     serde_json::to_value(value).map_err(|e| format!("failed to encode JSON payload: {e}"))
 }
 
-/// Wallet step + post-callback follow-up. The LLM walks to the wallet tool
-/// first (OnReturn); after the wallet signs, the runtime fires the
-/// follow-up with the callback field spliced into args.
+/// Wallet step + deferred follow-up. The wallet tool binds its completion
+/// artifact under `callback_field`, and the runtime fires the continuation
+/// once that alias resolves.
 fn build_rewards_follow_up_result(
     mut result: Value,
     wallet_tool: &str,
@@ -22,31 +22,15 @@ fn build_rewards_follow_up_result(
         .ok_or_else(|| "result is not an object".to_string())?;
     obj.insert("wallet_request".to_string(), wallet_request.clone());
 
-    match wallet_tool {
-        "commit_eip712" => Ok(ToolReturn::route(result)
-            .next(|next| {
-                next.add_named("commit_eip712", wallet_request)
-                    .bind_as(callback_field);
-            })
-            .after_named(follow_up_step, follow_up_args_template)
-            .awaits(callback_field)
-            .note("Wallet signed — continue the rewards flow.")
-            .build()),
-        _ => Ok(ToolReturn::with_routes(
-            result,
-            [
-                RouteStep::on_return(wallet_tool.to_string(), wallet_request),
-                RouteStep::on_async_callback::<WalletEip712Complete>(
-                    follow_up_step.to_string(),
-                    follow_up_args_template,
-                )
-                .callback_field(callback_field)
-                .prompt(
-                    "Wallet signed — continue the rewards flow. Signature is spliced into the args.",
-                ),
-            ],
-        )),
-    }
+    Ok(ToolReturn::route(result)
+        .next(|next| {
+            next.add_named(wallet_tool.to_string(), wallet_request)
+                .bind_as(callback_field);
+        })
+        .after_named(follow_up_step, follow_up_args_template)
+        .awaits(callback_field)
+        .note("Wallet signed — continue the rewards flow.")
+        .build())
 }
 
 /// Single immediate next step the LLM should walk to after this tool returns.
@@ -62,7 +46,8 @@ fn next_step_immediate(
     ))
 }
 
-/// Single deferred follow-up gated on a wallet EIP-712 callback.
+/// Single deferred follow-up gated on an artifact produced by an out-of-band
+/// wallet signature flow that the host is already staging for the user.
 fn next_step_after_wallet_signature(
     result: Value,
     follow_up_step: &str,
@@ -72,12 +57,8 @@ fn next_step_after_wallet_signature(
 ) -> Result<ToolReturn, String> {
     Ok(ToolReturn::with_route(
         result,
-        RouteStep::on_async_callback::<WalletEip712Complete>(
-            follow_up_step.to_string(),
-            follow_up_args,
-        )
-        .callback_field(callback_field)
-        .prompt(prompt),
+        RouteStep::on_bound_artifact(follow_up_step.to_string(), follow_up_args, callback_field)
+            .prompt(prompt),
     ))
 }
 
@@ -1359,10 +1340,7 @@ mod tests {
 
         assert_eq!(result.routes.len(), 1);
         match &result.routes[0].trigger {
-            RouteTrigger::OnAsyncCallback {
-                callback_field: Some(field),
-                ..
-            } => assert_eq!(field, "clob_l1_signature"),
+            RouteTrigger::OnBoundArtifact { alias } => assert_eq!(alias, "clob_l1_signature"),
             other => panic!("unexpected trigger: {other:?}"),
         }
     }

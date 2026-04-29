@@ -65,34 +65,16 @@ fn build_polymarket_follow_up_result(
         "user already confirmed upstream — proceed without re-asking"
     };
 
-    match wallet_tool {
-        "commit_eip712" => Ok(ToolReturn::route(result)
-            .next(|next| {
-                next.add_named("commit_eip712", wallet_request)
-                    .bind_as(follow_up.callback_field)
-                    .note(wallet_step_prompt);
-            })
-            .after::<SubmitPolymarketOrder>(follow_up.submit_template)
-            .awaits(follow_up.callback_field)
-            .note("Wallet signed — submit the Polymarket order.")
-            .build()),
-        _ => Ok(ToolReturn::with_routes(
-            result,
-            [
-                RouteStep::on_return(wallet_tool.to_string(), wallet_request)
-                    .prompt(wallet_step_prompt),
-                RouteStep::on_async_callback::<WalletEip712Complete>(
-                    "submit_polymarket_order".to_string(),
-                    follow_up.submit_template,
-                )
-                .callback_field(follow_up.callback_field)
-                .prompt(
-                    "Wallet signed — submit the Polymarket order. Signature is spliced \
-                     into the args.",
-                ),
-            ],
-        )),
-    }
+    Ok(ToolReturn::route(result)
+        .next(|next| {
+            next.add_named(wallet_tool.to_string(), wallet_request)
+                .bind_as(follow_up.callback_field)
+                .note(wallet_step_prompt);
+        })
+        .after::<SubmitPolymarketOrder>(follow_up.submit_template)
+        .awaits(follow_up.callback_field)
+        .note("Wallet signed — submit the Polymarket order.")
+        .build())
 }
 
 // ============================================================================
