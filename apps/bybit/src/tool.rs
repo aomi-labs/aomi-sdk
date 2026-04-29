@@ -135,7 +135,12 @@ impl DynAomiTool for CreateOrder {
             qty: &args.qty,
             price: args.price.as_deref(),
         };
-        ok(client.auth_post::<_, BybitActionResult>("/order/create", &body, &api_key, &secret_key)?)
+        ok(client.auth_post::<_, BybitActionResult>(
+            "/order/create",
+            &body,
+            &api_key,
+            &secret_key,
+        )?)
     }
 }
 
@@ -159,7 +164,12 @@ impl DynAomiTool for CancelOrder {
             symbol: &args.symbol,
             order_id: &args.order_id,
         };
-        ok(client.auth_post::<_, BybitActionResult>("/order/cancel", &body, &api_key, &secret_key)?)
+        ok(client.auth_post::<_, BybitActionResult>(
+            "/order/cancel",
+            &body,
+            &api_key,
+            &secret_key,
+        )?)
     }
 }
 
@@ -184,7 +194,12 @@ impl DynAomiTool for AmendOrder {
             qty: args.qty.as_deref(),
             price: args.price.as_deref(),
         };
-        ok(client.auth_post::<_, BybitActionResult>("/order/amend", &body, &api_key, &secret_key)?)
+        ok(client.auth_post::<_, BybitActionResult>(
+            "/order/amend",
+            &body,
+            &api_key,
+            &secret_key,
+        )?)
     }
 }
 

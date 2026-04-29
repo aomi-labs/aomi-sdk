@@ -19,29 +19,57 @@ where
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OneInchTransaction {
-    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_opt_string")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "de_opt_string"
+    )]
     pub(crate) from: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_opt_string")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "de_opt_string"
+    )]
     pub(crate) to: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_opt_string")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "de_opt_string"
+    )]
     pub(crate) data: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_opt_string")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "de_opt_string"
+    )]
     pub(crate) value: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OneInchAllowanceResponse {
-    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_opt_string")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "de_opt_string"
+    )]
     pub(crate) allowance: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OneInchQuoteResponse {
-    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_opt_string")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "de_opt_string"
+    )]
     pub(crate) src_amount: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_opt_string")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "de_opt_string"
+    )]
     pub(crate) dst_amount: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) protocols: Option<Value>,
@@ -50,9 +78,17 @@ pub(crate) struct OneInchQuoteResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OneInchSwapResponse {
-    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_opt_string")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "de_opt_string"
+    )]
     pub(crate) src_amount: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_opt_string")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "de_opt_string"
+    )]
     pub(crate) dst_amount: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) protocols: Option<Value>,
@@ -81,7 +117,11 @@ pub(crate) struct OneInchToken {
     pub(crate) symbol: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none", deserialize_with = "de_opt_string")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "de_opt_string"
+    )]
     pub(crate) address: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) decimals: Option<u64>,

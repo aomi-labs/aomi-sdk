@@ -543,9 +543,7 @@ impl Aggregator {
             request = request.header("x-lifi-api-key", api_key);
         }
 
-        if let Ok(quote) =
-            Self::send_json::<LifiQuoteResponse>(request, "lifi", "bridge quote")
-        {
+        if let Ok(quote) = Self::send_json::<LifiQuoteResponse>(request, "lifi", "bridge quote") {
             return serde_json::to_value(BridgeQuoteResponse::from_lifi_quote(
                 &quote,
                 format!(

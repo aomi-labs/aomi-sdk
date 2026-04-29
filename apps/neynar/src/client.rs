@@ -252,12 +252,16 @@ mod tests {
     /// Story: "Post a thread replying to a key influencer"
     #[test]
     fn post_thread_workflow() {
-        let Some(client) = client_or_skip() else { return };
+        let Some(client) = client_or_skip() else {
+            return;
+        };
 
         let user_resp = client
             .get(
                 "/farcaster/user/by_username",
-                &UserByUsernameQuery { username: "vitalik.eth" },
+                &UserByUsernameQuery {
+                    username: "vitalik.eth",
+                },
                 "get_user_by_username",
             )
             .expect("get_user_by_username should succeed");
@@ -274,7 +278,10 @@ mod tests {
         let users = bulk_resp["users"]
             .as_array()
             .expect("bulk response should contain users array");
-        assert!(users.len() >= 2, "should get at least 2 users in bulk response");
+        assert!(
+            users.len() >= 2,
+            "should get at least 2 users in bulk response"
+        );
 
         let _dwr_resp = client
             .get(
@@ -288,7 +295,9 @@ mod tests {
     /// Story: "Research Farcaster users to find collaboration targets and post"
     #[test]
     fn research_user_and_channel_workflow() {
-        let Some(client) = client_or_skip() else { return };
+        let Some(client) = client_or_skip() else {
+            return;
+        };
 
         let user_resp = client
             .get(
@@ -304,17 +313,23 @@ mod tests {
         let user2_resp = client
             .get(
                 "/farcaster/user/by_username",
-                &UserByUsernameQuery { username: "vitalik.eth" },
+                &UserByUsernameQuery {
+                    username: "vitalik.eth",
+                },
                 "get_user_by_username",
             )
             .expect("get_user_by_username for vitalik.eth should succeed");
-        let user2_fid = user2_resp["user"]["fid"].as_u64().expect("fid should be a number");
+        let user2_fid = user2_resp["user"]["fid"]
+            .as_u64()
+            .expect("fid should be a number");
 
         let fids_param = format!("{fid},{user2_fid},99");
         let bulk_resp = client
             .get(
                 "/farcaster/user/bulk",
-                &BulkUsersQuery { fids: fids_param.as_str() },
+                &BulkUsersQuery {
+                    fids: fids_param.as_str(),
+                },
                 "bulk_users",
             )
             .expect("bulk_users should succeed");

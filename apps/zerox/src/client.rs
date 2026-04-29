@@ -62,7 +62,10 @@ impl ZeroxClient {
             .map_err(|e| format!("[0x] {operation} decode failed: {e}; body: {body}"))
     }
 
-    fn authed(&self, request: reqwest::blocking::RequestBuilder) -> reqwest::blocking::RequestBuilder {
+    fn authed(
+        &self,
+        request: reqwest::blocking::RequestBuilder,
+    ) -> reqwest::blocking::RequestBuilder {
         request
             .header("0x-api-key", &self.zerox_api_key)
             .header("0x-version", "v2")
@@ -138,7 +141,10 @@ impl ZeroxClient {
     // ========================================================================
 
     pub(crate) fn get_swap_chains(&self) -> Result<Vec<ZeroxChainPayload>, String> {
-        let request = self.authed(self.http.get(format!("{}/swap/chains", self.zerox_endpoint)));
+        let request = self.authed(
+            self.http
+                .get(format!("{}/swap/chains", self.zerox_endpoint)),
+        );
         Self::send_json(request, "swap chains")
     }
 

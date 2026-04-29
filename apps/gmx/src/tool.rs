@@ -86,9 +86,6 @@ impl DynAomiTool for GetGmxOrders {
     fn run(_app: &GmxApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let chain = resolve_chain_label(args.chain.as_deref());
         let orders = GmxClient::new(args.chain.as_deref())?.get_orders(&args.account)?;
-        ok(
-            json!({ "account": args.account, "orders": orders }),
-            chain,
-        )
+        ok(json!({ "account": args.account, "orders": orders }), chain)
     }
 }

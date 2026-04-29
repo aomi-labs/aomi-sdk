@@ -393,7 +393,10 @@ impl LifiClient {
 
         if let Ok(quote) = Self::send_json::<LifiQuoteResponse>(request, "bridge quote") {
             return Ok(BridgeQuoteResponse::from_lifi_quote(
-                &quote, from_label, to_label, to_decimals,
+                &quote,
+                from_label,
+                to_label,
+                to_decimals,
             ));
         }
 

@@ -10,30 +10,6 @@ pub const TOOL_RETURN_MARKER: &str = "__aomi_tool_return";
 pub const TOOL_RETURN_VALUE_KEY: &str = "__aomi_tool_value";
 pub const TOOL_RETURN_ROUTES_KEY: &str = "__aomi_tool_routes";
 
-/// Marker trait identifying an out-of-band callback kind that a [`RouteStep`]
-/// can wait on. Each impl declares a stable wire `ID` matching the callback's
-/// `type` field on the host event stream. Adding new callback kinds (e.g.
-/// timer expiry, oracle update) is purely additive — define a new unit struct,
-/// `impl AsyncCallback`, and add a runtime matcher arm.
-pub trait AsyncCallback: Send + Sync + 'static {
-    /// Stable wire identifier for this callback kind. The host matches this
-    /// against the incoming callback's `type` field.
-    const NAME: &'static str;
-}
-
-/// EVM transaction completion (signed/broadcast) — payload includes
-/// `transaction_hash`.
-pub struct WalletTxComplete;
-impl AsyncCallback for WalletTxComplete {
-    const NAME: &'static str = "wallet:tx_complete";
-}
-
-/// EIP-712 typed-data signature completion — payload includes `signature`.
-pub struct WalletEip712Complete;
-impl AsyncCallback for WalletEip712Complete {
-    const NAME: &'static str = "wallet_eip712_response";
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RouteTrigger {
@@ -41,23 +17,15 @@ pub enum RouteTrigger {
     /// these as the next system prompt the LLM sees in the same completion
     /// cycle.
     OnSyncReturn,
-    /// Fires when the host receives a matching async callback (currently:
-    /// wallet events). The `kind` string equals the [`AsyncCallback::ID`] of
-    /// the callback type the route waits on.
-    OnAsyncCallback {
-        /// [`AsyncCallback::ID`] of the awaited callback kind.
-        kind: String,
-        /// Optional named field to splice from the callback payload into the
-        /// next call's args. When `None`, the host uses the default for the
-        /// callback kind (`signature` for EIP-712, `transaction_hash` for tx).
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        callback_field: Option<String>,
-    },
     /// Fires when an earlier immediate step in the same route plan binds a
-    /// named artifact under `alias`.
-    OnBoundArtifact {
-        alias: String,
-    },
+    /// named artifact under `alias`. Out-of-band events (wallet callbacks,
+    /// game state updates, exec completions) feed into the same artifact
+    /// store via the runtime's `PendingEventBridge` — domains register a
+    /// pending tool call when emitting their placeholder, and the runtime
+    /// synthesizes a terminal `ToolCompletion` when the matching event
+    /// arrives. There's no separate "on async callback" trigger from the
+    /// router's perspective; everything resolves through aliases.
+    OnBoundArtifact { alias: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -90,22 +58,6 @@ impl RouteStep {
         }
     }
 
-    /// Bind this step to a typed [`AsyncCallback`] kind. Future callback
-    /// kinds (timers, oracles, custom plugin events) plug in here by
-    /// adding an `impl AsyncCallback` and a host-side matcher arm.
-    pub fn on_async_callback<C: AsyncCallback>(tool: impl Into<String>, args: Value) -> Self {
-        Self {
-            tool: tool.into(),
-            args,
-            trigger: RouteTrigger::OnAsyncCallback {
-                kind: C::NAME.to_string(),
-                callback_field: None,
-            },
-            bind_as: None,
-            prompt: None,
-        }
-    }
-
     pub fn on_bound_artifact(
         tool: impl Into<String>,
         args: Value,
@@ -124,17 +76,6 @@ impl RouteStep {
 
     pub fn prompt(mut self, prompt: impl Into<String>) -> Self {
         self.prompt = Some(prompt.into());
-        self
-    }
-
-    pub fn callback_field(mut self, callback_field: impl Into<String>) -> Self {
-        if let RouteTrigger::OnAsyncCallback {
-            callback_field: slot,
-            ..
-        } = &mut self.trigger
-        {
-            *slot = Some(callback_field.into());
-        }
         self
     }
 
@@ -353,7 +294,12 @@ impl RouteBuilder {
                         step.tool
                     ));
                 }
-                if tool_counts.get(step.tool.as_str()).copied().unwrap_or_default() > 1 {
+                if tool_counts
+                    .get(step.tool.as_str())
+                    .copied()
+                    .unwrap_or_default()
+                    > 1
+                {
                     self.errors.push(format!(
                         "tool `{}` appears more than once in `next(...)`; bound producers must have unique tool names in RouteBuilder v1",
                         step.tool
@@ -364,9 +310,8 @@ impl RouteBuilder {
 
         if let Some(after) = self.after_step.as_mut() {
             let Some(alias) = after.awaited_alias.clone() else {
-                self.errors.push(
-                    "deferred `after(...)` step is missing `.awaits(\"alias\")`".to_string(),
-                );
+                self.errors
+                    .push("deferred `after(...)` step is missing `.awaits(\"alias\")`".to_string());
                 return if self.errors.is_empty() {
                     Ok(ToolReturn::with_routes(self.value, self.next_steps))
                 } else {
@@ -425,11 +370,7 @@ impl<'a> NextRoutesBuilder<'a> {
         self.push_step(tool, args)
     }
 
-    fn push_step(
-        &mut self,
-        tool: impl Into<String>,
-        args: impl Serialize,
-    ) -> NextStepBuilder<'_> {
+    fn push_step(&mut self, tool: impl Into<String>, args: impl Serialize) -> NextStepBuilder<'_> {
         let index = self.route.next_steps.len();
         self.route.next_steps.push(RouteStep::on_return(
             tool.into(),
@@ -500,8 +441,8 @@ impl AfterStepBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
     use crate::{DynAomiApp, DynAomiTool, DynToolCallCtx};
+    use serde_json::json;
 
     #[derive(Clone, Default)]
     struct App;
@@ -682,7 +623,10 @@ mod tests {
             .awaits("tool_result")
             .build();
 
-        assert_eq!(tool_return.routes[0].bind_as.as_deref(), Some("tool_result"));
+        assert_eq!(
+            tool_return.routes[0].bind_as.as_deref(),
+            Some("tool_result")
+        );
     }
 
     #[test]

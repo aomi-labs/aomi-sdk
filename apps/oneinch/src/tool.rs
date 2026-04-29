@@ -58,11 +58,13 @@ impl DynAomiTool for GetOneInchApproveTransaction {
     const DESCRIPTION: &'static str = "Get transaction data to approve the 1inch router to spend a token. Returns a raw approval tx object (to, data, value). Omit amount for unlimited approval. Stage it directly with `stage_tx` using `data.raw`; do not re-encode calldata.";
 
     fn run(_app: &OneInchApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        ok(OneInchClient::new(args.api_key.as_deref())?.get_approve_transaction(
-            args.chain_id.unwrap_or(1),
-            &args.token_address,
-            args.amount.as_deref(),
-        )?)
+        ok(
+            OneInchClient::new(args.api_key.as_deref())?.get_approve_transaction(
+                args.chain_id.unwrap_or(1),
+                &args.token_address,
+                args.amount.as_deref(),
+            )?,
+        )
     }
 }
 

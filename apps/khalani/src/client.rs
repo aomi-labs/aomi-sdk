@@ -610,7 +610,10 @@ mod tests {
 
         assert_eq!(result.routes.len(), 2);
         assert_eq!(result.routes[0].bind_as.as_deref(), Some("signature"));
-        assert!(matches!(result.routes[0].trigger, RouteTrigger::OnSyncReturn));
+        assert!(matches!(
+            result.routes[0].trigger,
+            RouteTrigger::OnSyncReturn
+        ));
         assert!(matches!(
             &result.routes[1].trigger,
             RouteTrigger::OnBoundArtifact { alias } if alias == "signature"
@@ -643,9 +646,18 @@ mod tests {
         .expect("route plan should build");
 
         assert_eq!(result.routes.len(), 3);
-        assert!(matches!(result.routes[0].trigger, RouteTrigger::OnSyncReturn));
-        assert_eq!(result.routes[1].bind_as.as_deref(), Some("transaction_hash"));
-        assert!(matches!(result.routes[1].trigger, RouteTrigger::OnSyncReturn));
+        assert!(matches!(
+            result.routes[0].trigger,
+            RouteTrigger::OnSyncReturn
+        ));
+        assert_eq!(
+            result.routes[1].bind_as.as_deref(),
+            Some("transaction_hash")
+        );
+        assert!(matches!(
+            result.routes[1].trigger,
+            RouteTrigger::OnSyncReturn
+        ));
         assert!(matches!(
             &result.routes[2].trigger,
             RouteTrigger::OnBoundArtifact { alias } if alias == "transaction_hash"
@@ -730,8 +742,9 @@ pub(crate) fn build_khalani_result(
     // Preflight (OnReturn) — LLM walks here first when present.
     if let Some((name, args)) = preflight_step {
         routes.push(
-            RouteStep::on_return(name, args)
-            .prompt("preflight allowance check; surface failures to the user before continuing"),
+            RouteStep::on_return(name, args).prompt(
+                "preflight allowance check; surface failures to the user before continuing",
+            ),
         );
     }
 

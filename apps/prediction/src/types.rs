@@ -317,7 +317,11 @@ pub(crate) struct SimmerAgentStatusResponse {
     pub(crate) status: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) sim_balance: Option<Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none", alias = "balance_usdc")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "balance_usdc"
+    )]
     pub(crate) balance_usdc: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) real_trading_enabled: Option<bool>,
@@ -523,7 +527,12 @@ pub(crate) struct PredictionCredentialApiResponse {
 pub(crate) struct PredictionOrderSubmissionResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) success: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none", alias = "orderID", alias = "order_id")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        alias = "orderID",
+        alias = "order_id"
+    )]
     pub(crate) order_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) status: Option<String>,

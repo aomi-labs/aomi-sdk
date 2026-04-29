@@ -140,9 +140,17 @@ pub(crate) struct LifiEstimate {
     pub(crate) to_amount: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) to_amount_min: Option<String>,
-    #[serde(default, rename = "fromAmountUSD", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "fromAmountUSD",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub(crate) from_amount_usd: Option<String>,
-    #[serde(default, rename = "toAmountUSD", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        rename = "toAmountUSD",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub(crate) to_amount_usd: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) approval_address: Option<String>,

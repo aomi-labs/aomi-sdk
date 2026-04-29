@@ -323,7 +323,10 @@ mod tests {
             .get_allowance(CHAIN_ID, USDC, WALLET)
             .expect("allowance check should succeed");
         assert!(
-            allowance.allowance.as_deref().is_some_and(|s| !s.is_empty()),
+            allowance
+                .allowance
+                .as_deref()
+                .is_some_and(|s| !s.is_empty()),
             "allowance must not be empty"
         );
 
@@ -341,13 +344,21 @@ mod tests {
     fn check_liquidity_and_swap_workflow() {
         let Some(c) = client_or_skip() else { return };
 
-        let tokens = c.get_tokens(CHAIN_ID).expect("tokens endpoint should succeed");
-        assert!(!tokens.tokens.is_empty(), "response must contain a tokens map");
+        let tokens = c
+            .get_tokens(CHAIN_ID)
+            .expect("tokens endpoint should succeed");
+        assert!(
+            !tokens.tokens.is_empty(),
+            "response must contain a tokens map"
+        );
 
         let sources = c
             .get_liquidity_sources(CHAIN_ID)
             .expect("liquidity-sources should succeed");
-        assert!(!sources.protocols.is_empty(), "response must contain protocols list");
+        assert!(
+            !sources.protocols.is_empty(),
+            "response must contain protocols list"
+        );
 
         let quote = c
             .get_quote(CHAIN_ID, DAI, WETH, "1000000000000000000000", None)
@@ -356,6 +367,9 @@ mod tests {
             quote.dst_amount.as_deref().is_some_and(|s| !s.is_empty()),
             "dstAmount should not be empty"
         );
-        assert!(quote.protocols.is_some(), "quote should contain routing protocols info");
+        assert!(
+            quote.protocols.is_some(),
+            "quote should contain routing protocols info"
+        );
     }
 }

@@ -301,8 +301,10 @@ impl DynAomiTool for GetLammaStablecoinHistory {
         "Get historical stablecoin market cap data, optionally filtered by chain or stablecoin ID.";
 
     fn run(_app: &DefiLlamaApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        ok(DefiLamaClient::new()?
-            .get_stablecoin_history(args.chain.as_deref(), args.stablecoin)?)
+        ok(
+            DefiLamaClient::new()?
+                .get_stablecoin_history(args.chain.as_deref(), args.stablecoin)?,
+        )
     }
 }
 

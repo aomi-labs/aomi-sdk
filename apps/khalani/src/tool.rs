@@ -522,8 +522,12 @@ impl DynAomiTool for SearchKhalaniTokens {
     const DESCRIPTION: &'static str = "Search Khalani token metadata.";
 
     fn run(_app: &Self::App, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        ok(KhalaniClient::new()?
-            .search_tokens(&args.query, args.chain_id, args.limit, args.offset)?)
+        ok(KhalaniClient::new()?.search_tokens(
+            &args.query,
+            args.chain_id,
+            args.limit,
+            args.offset,
+        )?)
     }
 }
 

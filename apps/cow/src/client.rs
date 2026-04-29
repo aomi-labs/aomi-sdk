@@ -54,7 +54,10 @@ impl CowClient {
             .map_err(|e| format!("[cow] {operation} decode failed: {e}; body: {body}"))
     }
 
-    fn authed(&self, mut request: reqwest::blocking::RequestBuilder) -> reqwest::blocking::RequestBuilder {
+    fn authed(
+        &self,
+        mut request: reqwest::blocking::RequestBuilder,
+    ) -> reqwest::blocking::RequestBuilder {
         if let Some(api_key) = self.cow_api_key.as_ref() {
             request = request.header("Authorization", format!("Bearer {api_key}"));
         }
@@ -177,8 +180,10 @@ impl CowClient {
         token_address: &str,
     ) -> Result<CowNativePrice, String> {
         let base = self.cow_api_base_for_chain(chain)?;
-        let request =
-            self.authed(self.http.get(format!("{base}/token/{token_address}/native_price")));
+        let request = self.authed(
+            self.http
+                .get(format!("{base}/token/{token_address}/native_price")),
+        );
         Self::send_json(request, "get native price")
     }
 
@@ -188,7 +193,10 @@ impl CowClient {
         tx_hash: &str,
     ) -> Result<Vec<CowOrder>, String> {
         let base = self.cow_api_base_for_chain(chain)?;
-        let request = self.authed(self.http.get(format!("{base}/transactions/{tx_hash}/orders")));
+        let request = self.authed(
+            self.http
+                .get(format!("{base}/transactions/{tx_hash}/orders")),
+        );
         Self::send_json(request, "get orders by tx")
     }
 

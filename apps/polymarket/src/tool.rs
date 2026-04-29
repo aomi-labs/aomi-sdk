@@ -777,8 +777,14 @@ mod tests {
         .expect("wallet follow-up should build");
 
         assert_eq!(result.routes.len(), 2);
-        assert_eq!(result.routes[0].bind_as.as_deref(), Some("clob_l1_signature"));
-        assert!(matches!(result.routes[0].trigger, RouteTrigger::OnSyncReturn));
+        assert_eq!(
+            result.routes[0].bind_as.as_deref(),
+            Some("clob_l1_signature")
+        );
+        assert!(matches!(
+            result.routes[0].trigger,
+            RouteTrigger::OnSyncReturn
+        ));
         assert!(matches!(
             &result.routes[1].trigger,
             RouteTrigger::OnBoundArtifact { alias } if alias == "clob_l1_signature"

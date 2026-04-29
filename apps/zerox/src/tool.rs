@@ -88,14 +88,16 @@ impl DynAomiTool for GetZeroxAllowanceHolderPrice {
     const DESCRIPTION: &'static str = "Get a 0x allowance-holder/price quote for price discovery. Matches the AllowanceHolder execution path so the price reflects actual execution costs.";
 
     fn run(_app: &ZeroxApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        ok(ZeroxClient::new(args.api_key.as_deref())?.get_allowance_holder_price(
-            &args.chain,
-            &args.sell_token,
-            &args.buy_token,
-            args.amount,
-            args.sender_address.as_deref(),
-            args.slippage,
-        )?)
+        ok(
+            ZeroxClient::new(args.api_key.as_deref())?.get_allowance_holder_price(
+                &args.chain,
+                &args.sell_token,
+                &args.buy_token,
+                args.amount,
+                args.sender_address.as_deref(),
+                args.slippage,
+            )?,
+        )
     }
 }
 
@@ -122,14 +124,16 @@ impl DynAomiTool for GetZeroxGaslessPrice {
     const DESCRIPTION: &'static str = "Get a gasless swap price quote from 0x. The sell token must be an ERC-20 token (not native ETH/MATIC/etc.).";
 
     fn run(_app: &ZeroxApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        ok(ZeroxClient::new(args.api_key.as_deref())?.get_gasless_price(
-            &args.chain,
-            &args.sell_token,
-            &args.buy_token,
-            args.amount,
-            args.sender_address.as_deref(),
-            args.slippage,
-        )?)
+        ok(
+            ZeroxClient::new(args.api_key.as_deref())?.get_gasless_price(
+                &args.chain,
+                &args.sell_token,
+                &args.buy_token,
+                args.amount,
+                args.sender_address.as_deref(),
+                args.slippage,
+            )?,
+        )
     }
 }
 
@@ -140,14 +144,16 @@ impl DynAomiTool for GetZeroxGaslessQuote {
     const DESCRIPTION: &'static str = "Get a gasless swap quote with EIP-712 typed data for signing. Returns approval (optional) and trade objects that the user must sign before submitting.";
 
     fn run(_app: &ZeroxApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        ok(ZeroxClient::new(args.api_key.as_deref())?.get_gasless_quote(
-            &args.chain,
-            &args.sell_token,
-            &args.buy_token,
-            args.amount,
-            &args.sender_address,
-            args.slippage,
-        )?)
+        ok(
+            ZeroxClient::new(args.api_key.as_deref())?.get_gasless_quote(
+                &args.chain,
+                &args.sell_token,
+                &args.buy_token,
+                args.amount,
+                &args.sender_address,
+                args.slippage,
+            )?,
+        )
     }
 }
 
@@ -158,11 +164,13 @@ impl DynAomiTool for SubmitZeroxGaslessSwap {
     const DESCRIPTION: &'static str = "Submit a signed gasless trade (and optional approval) to the 0x relayer. Returns a tradeHash for status polling.";
 
     fn run(_app: &ZeroxApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        ok(ZeroxClient::new(args.api_key.as_deref())?.submit_gasless_swap(
-            args.chain_id,
-            &args.trade,
-            args.approval.as_ref(),
-        )?)
+        ok(
+            ZeroxClient::new(args.api_key.as_deref())?.submit_gasless_swap(
+                args.chain_id,
+                &args.trade,
+                args.approval.as_ref(),
+            )?,
+        )
     }
 }
 

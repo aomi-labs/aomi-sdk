@@ -80,7 +80,10 @@ impl MolinarClient {
 
     /// GET /{botId}/state
     pub fn get_state(&self, bot_id: &str) -> Result<Value, String> {
-        self.get_json(&format!("{}/{}/state", self.api_endpoint, bot_id), "get_state")
+        self.get_json(
+            &format!("{}/{}/state", self.api_endpoint, bot_id),
+            "get_state",
+        )
     }
 
     /// GET /{botId}/look
@@ -90,7 +93,11 @@ impl MolinarClient {
 
     /// POST /{botId}/move
     pub fn move_bot(&self, bot_id: &str, payload: &MoveRequest) -> Result<Value, String> {
-        self.post_json(&format!("{}/{}/move", self.api_endpoint, bot_id), payload, "move")
+        self.post_json(
+            &format!("{}/{}/move", self.api_endpoint, bot_id),
+            payload,
+            "move",
+        )
     }
 
     /// POST /{botId}/jump
@@ -107,12 +114,19 @@ impl MolinarClient {
         let body = ChatRequest {
             message: message.to_string(),
         };
-        self.post_json(&format!("{}/{}/chat", self.api_endpoint, bot_id), &body, "chat")
+        self.post_json(
+            &format!("{}/{}/chat", self.api_endpoint, bot_id),
+            &body,
+            "chat",
+        )
     }
 
     /// GET /{botId}/chat
     pub fn get_chat(&self, bot_id: &str) -> Result<Value, String> {
-        self.get_json(&format!("{}/{}/chat", self.api_endpoint, bot_id), "get_chat")
+        self.get_json(
+            &format!("{}/{}/chat", self.api_endpoint, bot_id),
+            "get_chat",
+        )
     }
 
     /// GET /{botId}/chat/new
@@ -172,7 +186,11 @@ impl MolinarClient {
 
     /// POST /{botId}/ping
     pub fn ping(&self, bot_id: &str, payload: &PingRequest) -> Result<Value, String> {
-        self.post_json(&format!("{}/{}/ping", self.api_endpoint, bot_id), payload, "ping")
+        self.post_json(
+            &format!("{}/{}/ping", self.api_endpoint, bot_id),
+            payload,
+            "ping",
+        )
     }
 }
 
