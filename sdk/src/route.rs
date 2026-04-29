@@ -524,13 +524,20 @@ mod tests {
 
     #[test]
     fn routed_tool_return_serializes_to_an_envelope() {
-        let tool_return = ToolReturn::with_route(
+        // OnBoundArtifact-based plan: a producer step binds an alias and
+        // a deferred consumer awaits it. This is the canonical wire shape
+        // after the wallet-callback machinery was removed.
+        let tool_return = ToolReturn::with_routes(
             json!({"status": "awaiting_wallet"}),
-            RouteStep::on_async_callback::<WalletEip712Complete>(
-                "submit_polymarket_order",
-                json!({"market": "btc"}),
-            )
-            .callback_field("clob_l1_signature"),
+            [
+                RouteStep::on_return("commit_eip712", json!({"typed_data": {}}))
+                    .bind_as("clob_l1_signature"),
+                RouteStep::on_bound_artifact(
+                    "submit_polymarket_order",
+                    json!({"market": "btc"}),
+                    "clob_l1_signature",
+                ),
+            ],
         );
 
         let serialized = serde_json::to_value(&tool_return).unwrap();
@@ -539,33 +546,28 @@ mod tests {
             json!({
                 "__aomi_tool_return": true,
                 "__aomi_tool_value": {"status": "awaiting_wallet"},
-                "__aomi_tool_routes": [{
-                    "tool": "submit_polymarket_order",
-                    "args": {"market": "btc"},
-                    "trigger": {
-                        "type": "on_async_callback",
-                        "kind": "wallet_eip712_response",
-                        "callback_field": "clob_l1_signature",
+                "__aomi_tool_routes": [
+                    {
+                        "tool": "commit_eip712",
+                        "args": {"typed_data": {}},
+                        "trigger": {"type": "on_sync_return"},
+                        "bind_as": "clob_l1_signature",
                     },
-                }],
+                    {
+                        "tool": "submit_polymarket_order",
+                        "args": {"market": "btc"},
+                        "trigger": {
+                            "type": "on_bound_artifact",
+                            "alias": "clob_l1_signature",
+                        },
+                    }
+                ],
             })
         );
 
         let roundtrip = ToolReturn::from_value(serialized).unwrap();
         assert!(roundtrip.has_routes());
-        assert_eq!(roundtrip.routes.len(), 1);
-    }
-
-    #[test]
-    fn on_async_callback_uses_trait_id_for_kind() {
-        let tx_step = RouteStep::on_async_callback::<WalletTxComplete>("submit", json!({}));
-        match tx_step.trigger {
-            RouteTrigger::OnAsyncCallback { kind, .. } => {
-                assert_eq!(kind, WalletTxComplete::NAME);
-                assert_eq!(kind, "wallet:tx_complete");
-            }
-            _ => panic!("expected OnAsyncCallback"),
-        }
+        assert_eq!(roundtrip.routes.len(), 2);
     }
 
     #[test]
