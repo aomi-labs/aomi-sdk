@@ -500,7 +500,9 @@ impl DynAomiTool for BuildPolymarketOrder {
         });
 
         if plan.execution_mode == "DIRECT_SDK" {
-            return Ok(build_polymarket_immediate_follow_up_result::<SubmitPolymarketOrder>(
+            return Ok(build_polymarket_immediate_follow_up_result::<
+                SubmitPolymarketOrder,
+            >(
                 result,
                 to_json_value(&SubmitPolymarketOrderArgs {
                     confirmation: Some("confirm".to_string()),
