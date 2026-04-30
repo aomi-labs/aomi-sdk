@@ -16,7 +16,7 @@
 
 use serde_json::{Map, Value};
 
-use crate::{AsyncExecQueue, DynAomiTool, DynAsyncSink, DynToolCallCtx};
+use crate::{AsyncExecQueue, DynAomiTool, DynAsyncSink, DynToolCallCtx, ToolReturn};
 use std::sync::Arc;
 
 /// Builder for constructing [`DynToolCallCtx`] in tests.
@@ -68,29 +68,39 @@ impl TestCtxBuilder {
     }
 }
 
-/// Run a synchronous tool with typed args and return the result.
+/// Run a synchronous tool with typed args.
 ///
-/// Convenience wrapper that serializes `args` into the tool's `Args` type
-/// and invokes `T::run`.
+/// Serializes `args` into the tool's `Args` type, invokes
+/// [`DynAomiTool::run_with_routes`], and returns the full [`ToolReturn`]
+/// — `value` plus any emitted routes. Tests that only care about the
+/// payload can use `.value` (field access) or `.into_value()`.
 pub fn run_tool<T: DynAomiTool>(
     app: &T::App,
     args: Value,
     ctx: DynToolCallCtx,
-) -> Result<Value, String> {
+) -> Result<ToolReturn, String> {
     let typed_args: T::Args =
         serde_json::from_value(args).map_err(|e| format!("invalid test args: {e}"))?;
-    T::run(app, typed_args, ctx)
+    T::run_with_routes(app, typed_args, ctx)
 }
 
-/// Run an async tool and collect all emitted values.
+/// Run an async tool and split intermediate updates from the terminal return.
 ///
-/// Returns `Ok(updates)` where `updates` is a `Vec<Value>` of all emitted
-/// values (including the terminal one), or `Err` if the tool failed.
+/// Returns `(updates, terminal)`:
+/// - `updates`: every non-terminal `sink.emit(...)` value, in order. Always
+///   bare values — the SDK rejects routed envelopes on intermediate emits.
+/// - `terminal`: the terminal `sink.complete(...)` payload as a [`ToolReturn`].
+///   When the tool emitted a routed envelope (`ToolReturn::with_routes(...)`),
+///   `terminal.routes` is populated; otherwise `terminal.value` holds the raw
+///   completion value with `terminal.routes` empty.
+///
+/// Tests that only care about the streamed values can ignore `terminal.routes`.
+/// Tests that exercise async-with-routes can assert on both.
 pub fn run_async_tool<T: DynAomiTool>(
     app: &T::App,
     args: Value,
     ctx: DynToolCallCtx,
-) -> Result<Vec<Value>, String> {
+) -> Result<(Vec<Value>, ToolReturn), String> {
     let typed_args: T::Args =
         serde_json::from_value(args).map_err(|e| format!("invalid test args: {e}"))?;
     let queue = Arc::new(AsyncExecQueue::default());
@@ -99,12 +109,15 @@ pub fn run_async_tool<T: DynAomiTool>(
     T::run_async(app, typed_args, ctx, sink)?;
 
     let mut updates = Vec::new();
+    let mut terminal: Option<Value> = None;
     loop {
         match queue.poll() {
             crate::AsyncExecPool::Pending => break,
             crate::AsyncExecPool::Update { value, has_more } => {
-                updates.push(value);
-                if !has_more {
+                if has_more {
+                    updates.push(value);
+                } else {
+                    terminal = Some(value);
                     break;
                 }
             }
@@ -113,5 +126,10 @@ pub fn run_async_tool<T: DynAomiTool>(
             crate::AsyncExecPool::NotFound => break,
         }
     }
-    Ok(updates)
+
+    let terminal =
+        terminal.ok_or_else(|| "async tool finished without a terminal complete()".to_string())?;
+    let terminal = ToolReturn::from_value(terminal)
+        .map_err(|e| format!("failed to decode terminal ToolReturn: {e}"))?;
+    Ok((updates, terminal))
 }

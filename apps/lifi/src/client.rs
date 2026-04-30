@@ -1,8 +1,15 @@
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde::de::DeserializeOwned;
+use serde_json::Value;
 use std::time::Duration;
+
+use crate::types::{
+    BridgeQuoteResponse, ChainsQuery, ConnectionsQuery, GasSuggestionQuery, LifiQuoteResponse,
+    PreparedOrder, PreparedTransaction, QuoteQuery, ReverseQuoteQuery, RouteOptions, RouteRequest,
+    StatusQuery, TokenQuery, TokensQuery, ToolsQuery,
+};
 
 #[derive(Clone, Default)]
 pub(crate) struct LifiApp;
@@ -34,10 +41,10 @@ impl LifiClient {
         })
     }
 
-    pub(crate) fn send_json(
+    fn send_json<T: DeserializeOwned>(
         request: reqwest::blocking::RequestBuilder,
         operation: &str,
-    ) -> Result<Value, String> {
+    ) -> Result<T, String> {
         let response = request
             .send()
             .map_err(|e| format!("[lifi] {operation} request failed: {e}"))?;
@@ -50,8 +57,18 @@ impl LifiClient {
             ));
         }
 
-        serde_json::from_str::<Value>(&body)
+        serde_json::from_str::<T>(&body)
             .map_err(|e| format!("[lifi] {operation} decode failed: {e}; body: {body}"))
+    }
+
+    fn authed(
+        &self,
+        mut request: reqwest::blocking::RequestBuilder,
+    ) -> reqwest::blocking::RequestBuilder {
+        if let Some(api_key) = self.lifi_api_key.as_ref() {
+            request = request.header("x-lifi-api-key", api_key);
+        }
+        request
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -67,28 +84,23 @@ impl LifiClient {
     ) -> Result<Value, String> {
         let from_chain_id = normalize_lifi_chain_id(from_chain)?;
         let to_chain_id = normalize_lifi_chain_id(to_chain)?;
+        let query = QuoteQuery {
+            from_chain: &from_chain_id,
+            to_chain: &to_chain_id,
+            from_token,
+            to_token,
+            from_amount,
+            from_address,
+            to_address,
+            slippage: None,
+        };
 
-        let mut request = self
-            .http
-            .get(format!("{}/v1/quote", self.lifi_endpoint))
-            .query(&[
-                ("fromChain", from_chain_id.as_str()),
-                ("toChain", to_chain_id.as_str()),
-                ("fromToken", from_token),
-                ("toToken", to_token),
-                ("fromAmount", from_amount),
-                ("fromAddress", from_address),
-            ]);
-
-        if let Some(to_address) = to_address {
-            request = request.query(&[("toAddress", to_address)]);
-        }
-        if let Some(api_key) = self.lifi_api_key.as_ref() {
-            request = request.header("x-lifi-api-key", api_key);
-        }
-
-        let value = Self::send_json(request, "quote")?;
-        Ok(with_source(value))
+        let request = self.authed(
+            self.http
+                .get(format!("{}/v1/quote", self.lifi_endpoint))
+                .query(&query),
+        );
+        Self::send_json(request, "quote")
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -102,43 +114,35 @@ impl LifiClient {
         from_address: &str,
         receiver_address: Option<&str>,
         slippage: Option<f64>,
-    ) -> Result<Value, String> {
+    ) -> Result<PreparedOrder, String> {
         let from_chain_id = normalize_lifi_chain_id(from_chain)?;
         let to_chain_id = normalize_lifi_chain_id(to_chain)?;
+        let query = QuoteQuery {
+            from_chain: &from_chain_id,
+            to_chain: &to_chain_id,
+            from_token: sell_token,
+            to_token: buy_token,
+            from_amount,
+            from_address,
+            to_address: receiver_address,
+            slippage,
+        };
 
-        let mut request = self
-            .http
-            .get(format!("{}/v1/quote", self.lifi_endpoint))
-            .query(&[
-                ("fromChain", from_chain_id.as_str()),
-                ("toChain", to_chain_id.as_str()),
-                ("fromToken", sell_token),
-                ("toToken", buy_token),
-                ("fromAmount", from_amount),
-                ("fromAddress", from_address),
-            ]);
-        if let Some(receiver_address) = receiver_address {
-            request = request.query(&[("toAddress", receiver_address)]);
-        }
-        if let Some(slippage) = slippage {
-            request = request.query(&[("slippage", slippage.to_string())]);
-        }
-        if let Some(api_key) = self.lifi_api_key.as_ref() {
-            request = request.header("x-lifi-api-key", api_key);
-        }
+        let request = self.authed(
+            self.http
+                .get(format!("{}/v1/quote", self.lifi_endpoint))
+                .query(&query),
+        );
 
-        let quote = Self::send_json(request, "place order")?;
-        let mut out = json!({
-            "source": "lifi",
-            "raw_quote": quote,
-            "main_tx": Value::Null,
-            "approval_tx": Value::Null,
-        });
-
-        out["main_tx"] = build_lifi_main_tx(&out["raw_quote"]);
-        out["approval_tx"] = build_lifi_approval_tx(&out["raw_quote"], from_amount)?;
-
-        Ok(out)
+        let quote: LifiQuoteResponse = Self::send_json(request, "place order")?;
+        let main_tx = build_lifi_main_tx(&quote);
+        let approval_tx = build_lifi_approval_tx(&quote, from_amount)?;
+        Ok(PreparedOrder {
+            raw_quote: serde_json::to_value(&quote)
+                .map_err(|e| format!("[lifi] failed to serialize raw quote: {e}"))?,
+            main_tx,
+            approval_tx,
+        })
     }
 
     pub(crate) fn get_transfer_status(
@@ -148,36 +152,26 @@ impl LifiClient {
         to_chain: Option<&str>,
         bridge: Option<&str>,
     ) -> Result<Value, String> {
-        let mut request = self
-            .http
-            .get(format!("{}/v1/status", self.lifi_endpoint))
-            .query(&[("txHash", tx_hash)]);
-        if let Some(fc) = from_chain {
-            request = request.query(&[("fromChain", fc)]);
-        }
-        if let Some(tc) = to_chain {
-            request = request.query(&[("toChain", tc)]);
-        }
-        if let Some(b) = bridge {
-            request = request.query(&[("bridge", b)]);
-        }
-        if let Some(api_key) = self.lifi_api_key.as_ref() {
-            request = request.header("x-lifi-api-key", api_key);
-        }
-        let value = Self::send_json(request, "transfer status")?;
-        Ok(with_source(value))
+        let request = self.authed(
+            self.http
+                .get(format!("{}/v1/status", self.lifi_endpoint))
+                .query(&StatusQuery {
+                    tx_hash,
+                    from_chain,
+                    to_chain,
+                    bridge,
+                }),
+        );
+        Self::send_json(request, "transfer status")
     }
 
     pub(crate) fn get_chains(&self, chain_types: Option<&str>) -> Result<Value, String> {
-        let mut request = self.http.get(format!("{}/v1/chains", self.lifi_endpoint));
-        if let Some(ct) = chain_types {
-            request = request.query(&[("chainTypes", ct)]);
-        }
-        if let Some(api_key) = self.lifi_api_key.as_ref() {
-            request = request.header("x-lifi-api-key", api_key);
-        }
-        let value = Self::send_json(request, "chains")?;
-        Ok(with_source(value))
+        let request = self.authed(
+            self.http
+                .get(format!("{}/v1/chains", self.lifi_endpoint))
+                .query(&ChainsQuery { chain_types }),
+        );
+        Self::send_json(request, "chains")
     }
 
     pub(crate) fn get_tokens(
@@ -185,30 +179,24 @@ impl LifiClient {
         chains: Option<&str>,
         chain_types: Option<&str>,
     ) -> Result<Value, String> {
-        let mut request = self.http.get(format!("{}/v1/tokens", self.lifi_endpoint));
-        if let Some(c) = chains {
-            request = request.query(&[("chains", c)]);
-        }
-        if let Some(ct) = chain_types {
-            request = request.query(&[("chainTypes", ct)]);
-        }
-        if let Some(api_key) = self.lifi_api_key.as_ref() {
-            request = request.header("x-lifi-api-key", api_key);
-        }
-        let value = Self::send_json(request, "tokens")?;
-        Ok(with_source(value))
+        let request = self.authed(
+            self.http
+                .get(format!("{}/v1/tokens", self.lifi_endpoint))
+                .query(&TokensQuery {
+                    chains,
+                    chain_types,
+                }),
+        );
+        Self::send_json(request, "tokens")
     }
 
     pub(crate) fn get_token(&self, chain: &str, token: &str) -> Result<Value, String> {
-        let mut request = self
-            .http
-            .get(format!("{}/v1/token", self.lifi_endpoint))
-            .query(&[("chain", chain), ("token", token)]);
-        if let Some(api_key) = self.lifi_api_key.as_ref() {
-            request = request.header("x-lifi-api-key", api_key);
-        }
-        let value = Self::send_json(request, "token")?;
-        Ok(with_source(value))
+        let request = self.authed(
+            self.http
+                .get(format!("{}/v1/token", self.lifi_endpoint))
+                .query(&TokenQuery { chain, token }),
+        );
+        Self::send_json(request, "token")
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -229,49 +217,37 @@ impl LifiClient {
         let to_token_addr = get_token_address(to_chain_name, to_token)?;
         let from_decimals = get_token_decimals(from_chain_name, from_token);
         let from_amount = amount_to_base_units(amount, from_decimals)?;
+        let body = RouteRequest {
+            from_chain_id,
+            to_chain_id,
+            from_token_address: &from_token_addr,
+            to_token_address: &to_token_addr,
+            from_amount: &from_amount,
+            from_address,
+            options: RouteOptions {
+                slippage,
+                order: order_preference,
+            },
+        };
 
-        let mut options = json!({});
-        if let Some(s) = slippage {
-            options["slippage"] = json!(s);
-        }
-        if let Some(order) = order_preference {
-            options["order"] = json!(order);
-        }
-
-        let body = json!({
-            "fromChainId": from_chain_id,
-            "toChainId": to_chain_id,
-            "fromTokenAddress": from_token_addr,
-            "toTokenAddress": to_token_addr,
-            "fromAmount": from_amount,
-            "fromAddress": from_address,
-            "options": options,
-        });
-
-        let mut request = self
-            .http
-            .post(format!("{}/v1/advanced/routes", self.lifi_endpoint))
-            .json(&body);
-        if let Some(api_key) = self.lifi_api_key.as_ref() {
-            request = request.header("x-lifi-api-key", api_key);
-        }
-        let value = Self::send_json(request, "routes")?;
-        Ok(with_source(value))
+        let request = self.authed(
+            self.http
+                .post(format!("{}/v1/advanced/routes", self.lifi_endpoint))
+                .json(&body),
+        );
+        Self::send_json(request, "routes")
     }
 
     pub(crate) fn get_step_transaction(&self, step: &Value) -> Result<Value, String> {
-        let mut request = self
-            .http
-            .post(format!(
-                "{}/v1/advanced/stepTransaction",
-                self.lifi_endpoint
-            ))
-            .json(step);
-        if let Some(api_key) = self.lifi_api_key.as_ref() {
-            request = request.header("x-lifi-api-key", api_key);
-        }
-        let value = Self::send_json(request, "step transaction")?;
-        Ok(with_source(value))
+        let request = self.authed(
+            self.http
+                .post(format!(
+                    "{}/v1/advanced/stepTransaction",
+                    self.lifi_endpoint
+                ))
+                .json(step),
+        );
+        Self::send_json(request, "step transaction")
     }
 
     pub(crate) fn get_connections(
@@ -281,38 +257,26 @@ impl LifiClient {
         from_token: Option<&str>,
         to_token: Option<&str>,
     ) -> Result<Value, String> {
-        let mut request = self
-            .http
-            .get(format!("{}/v1/connections", self.lifi_endpoint));
-        if let Some(fc) = from_chain {
-            request = request.query(&[("fromChain", fc)]);
-        }
-        if let Some(tc) = to_chain {
-            request = request.query(&[("toChain", tc)]);
-        }
-        if let Some(ft) = from_token {
-            request = request.query(&[("fromToken", ft)]);
-        }
-        if let Some(tt) = to_token {
-            request = request.query(&[("toToken", tt)]);
-        }
-        if let Some(api_key) = self.lifi_api_key.as_ref() {
-            request = request.header("x-lifi-api-key", api_key);
-        }
-        let value = Self::send_json(request, "connections")?;
-        Ok(with_source(value))
+        let request = self.authed(
+            self.http
+                .get(format!("{}/v1/connections", self.lifi_endpoint))
+                .query(&ConnectionsQuery {
+                    from_chain,
+                    to_chain,
+                    from_token,
+                    to_token,
+                }),
+        );
+        Self::send_json(request, "connections")
     }
 
     pub(crate) fn get_tools(&self, chains: Option<&str>) -> Result<Value, String> {
-        let mut request = self.http.get(format!("{}/v1/tools", self.lifi_endpoint));
-        if let Some(c) = chains {
-            request = request.query(&[("chains", c)]);
-        }
-        if let Some(api_key) = self.lifi_api_key.as_ref() {
-            request = request.header("x-lifi-api-key", api_key);
-        }
-        let value = Self::send_json(request, "tools")?;
-        Ok(with_source(value))
+        let request = self.authed(
+            self.http
+                .get(format!("{}/v1/tools", self.lifi_endpoint))
+                .query(&ToolsQuery { chains }),
+        );
+        Self::send_json(request, "tools")
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -329,26 +293,22 @@ impl LifiClient {
         let from_chain_id = normalize_lifi_chain_id(from_chain)?;
         let effective_to_chain = to_chain.unwrap_or(from_chain);
         let to_chain_id = normalize_lifi_chain_id(effective_to_chain)?;
+        let query = ReverseQuoteQuery {
+            from_chain: &from_chain_id,
+            to_chain: &to_chain_id,
+            from_token,
+            to_token,
+            to_amount,
+            from_address,
+            to_address,
+        };
 
-        let mut request = self
-            .http
-            .get(format!("{}/v1/quote/toAmount", self.lifi_endpoint))
-            .query(&[
-                ("fromChain", from_chain_id.as_str()),
-                ("toChain", to_chain_id.as_str()),
-                ("fromToken", from_token),
-                ("toToken", to_token),
-                ("toAmount", to_amount),
-                ("fromAddress", from_address),
-            ]);
-        if let Some(ta) = to_address {
-            request = request.query(&[("toAddress", ta)]);
-        }
-        if let Some(api_key) = self.lifi_api_key.as_ref() {
-            request = request.header("x-lifi-api-key", api_key);
-        }
-        let value = Self::send_json(request, "reverse quote")?;
-        Ok(with_source(value))
+        let request = self.authed(
+            self.http
+                .get(format!("{}/v1/quote/toAmount", self.lifi_endpoint))
+                .query(&query),
+        );
+        Self::send_json(request, "reverse quote")
     }
 
     pub(crate) fn get_gas_suggestion(
@@ -357,21 +317,18 @@ impl LifiClient {
         from_chain: Option<&str>,
         from_token: Option<&str>,
     ) -> Result<Value, String> {
-        let mut request = self.http.get(format!(
-            "{}/v1/gas/suggestion/{}",
-            self.lifi_endpoint, chain
-        ));
-        if let Some(fc) = from_chain {
-            request = request.query(&[("fromChain", fc)]);
-        }
-        if let Some(ft) = from_token {
-            request = request.query(&[("fromToken", ft)]);
-        }
-        if let Some(api_key) = self.lifi_api_key.as_ref() {
-            request = request.header("x-lifi-api-key", api_key);
-        }
-        let value = Self::send_json(request, "gas suggestion")?;
-        Ok(with_source(value))
+        let request = self.authed(
+            self.http
+                .get(format!(
+                    "{}/v1/gas/suggestion/{}",
+                    self.lifi_endpoint, chain
+                ))
+                .query(&GasSuggestionQuery {
+                    from_chain,
+                    from_token,
+                }),
+        );
+        Self::send_json(request, "gas suggestion")
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -385,7 +342,7 @@ impl LifiClient {
         from_address: Option<&str>,
         to_address: Option<&str>,
         slippage_bps: Option<u32>,
-    ) -> Result<Value, String> {
+    ) -> Result<BridgeQuoteResponse, String> {
         let (from_chain_name, _) = get_chain_info(from_chain)?;
         let (to_chain_name, _) = get_chain_info(to_chain)?;
         let from_token_addr = get_token_address(from_chain_name, from_token)?;
@@ -395,113 +352,52 @@ impl LifiClient {
         let from_amount_wei = amount_to_base_units(amount, from_decimals)?;
         let slippage_bps = slippage_bps.unwrap_or(50);
         let slippage = (slippage_bps as f64) / 10_000.0;
+        let from_chain_id = normalize_lifi_chain_id(from_chain)?;
+        let to_chain_id = normalize_lifi_chain_id(to_chain)?;
+
+        let from_label = format!(
+            "{amount} {} on {}",
+            from_token.to_uppercase(),
+            from_chain.to_lowercase()
+        );
+        let to_label = format!("{} on {}", to_token.to_uppercase(), to_chain.to_lowercase());
 
         let from_addr = from_address.unwrap_or("");
         let to_addr = to_address.unwrap_or("");
-        let has_wallet_addresses = is_hex_address(from_addr) && is_hex_address(to_addr);
-        if !has_wallet_addresses {
-            return Ok(json!({
-                "from": format!("{amount} {} on {}", from_token.to_uppercase(), from_chain.to_lowercase()),
-                "to": format!("{} on {}", to_token.to_uppercase(), to_chain.to_lowercase()),
-                "to_amount_estimate": Value::Null,
-                "min_received": Value::Null,
-                "bridge": "planning-only",
-                "estimated_duration_seconds": Value::Null,
-                "estimated_fee_usd": Value::Null,
-                "route_summary": ["Source and destination wallet addresses are required"],
-                "executable_tx": Value::Null,
-                "execution_supported": false,
-                "warning": "Provide source and destination wallet addresses to request an executable bridge route.",
-            }));
+        if !(is_hex_address(from_addr) && is_hex_address(to_addr)) {
+            return Ok(BridgeQuoteResponse::planning_only(
+                from_label,
+                to_label,
+                vec!["Source and destination wallet addresses are required".to_string()],
+                Some(
+                    "Provide source and destination wallet addresses to request an executable bridge route."
+                        .to_string(),
+                ),
+            ));
         }
 
-        let mut request = self
-            .http
-            .get(format!("{}/v1/quote", self.lifi_endpoint))
-            .query(&[
-                ("fromChain", normalize_lifi_chain_id(from_chain)?),
-                ("toChain", normalize_lifi_chain_id(to_chain)?),
-                ("fromToken", from_token_addr),
-                ("toToken", to_token_addr),
-                ("fromAmount", from_amount_wei),
-                ("fromAddress", from_addr.to_string()),
-                ("toAddress", to_addr.to_string()),
-                ("slippage", format!("{slippage:.4}")),
-            ]);
-        if let Some(api_key) = self.lifi_api_key.as_ref() {
-            request = request.header("x-lifi-api-key", api_key);
-        }
+        let request = self.authed(
+            self.http
+                .get(format!("{}/v1/quote", self.lifi_endpoint))
+                .query(&QuoteQuery {
+                    from_chain: &from_chain_id,
+                    to_chain: &to_chain_id,
+                    from_token: &from_token_addr,
+                    to_token: &to_token_addr,
+                    from_amount: &from_amount_wei,
+                    from_address: from_addr,
+                    to_address: Some(to_addr),
+                    slippage: Some(slippage),
+                }),
+        );
 
-        if let Ok(quote) = Self::send_json(request, "bridge quote")
-            && let Some(estimate) = quote.get("estimate")
-        {
-            let to_amount = estimate
-                .get("toAmount")
-                .and_then(Value::as_str)
-                .and_then(|s| s.parse::<f64>().ok())
-                .map(|raw| raw / 10f64.powi(to_decimals as i32));
-            let min_received = estimate
-                .get("toAmountMin")
-                .and_then(Value::as_str)
-                .and_then(|s| s.parse::<f64>().ok())
-                .map(|raw| raw / 10f64.powi(to_decimals as i32));
-            let fee_costs = estimate
-                .get("feeCosts")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .chain(
-                    estimate
-                        .get("gasCosts")
-                        .and_then(Value::as_array)
-                        .into_iter()
-                        .flatten(),
-                )
-                .filter_map(|cost| {
-                    cost.get("amountUSD")
-                        .and_then(Value::as_str)
-                        .and_then(|s| s.parse::<f64>().ok())
-                })
-                .sum::<f64>();
-            let bridge_name = quote
-                .get("toolDetails")
-                .and_then(|details| details.get("name"))
-                .and_then(Value::as_str)
-                .or_else(|| quote.get("tool").and_then(Value::as_str))
-                .unwrap_or("unknown");
-            let route_summary: Vec<Value> = estimate
-                .get("steps")
-                .and_then(Value::as_array)
-                .map(|steps| {
-                    steps
-                        .iter()
-                        .filter_map(|step| step.get("tool").and_then(Value::as_str))
-                        .map(|tool| Value::String(tool.to_string()))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let executable_tx = quote.get("transactionRequest").map(|tx| {
-                json!({
-                    "to": tx.get("to").cloned().unwrap_or(Value::Null),
-                    "data": tx.get("data").cloned().unwrap_or(Value::Null),
-                    "value": tx.get("value").cloned().unwrap_or(Value::Null),
-                    "gas_limit": tx.get("gasLimit").cloned().unwrap_or(Value::Null),
-                })
-            });
-
-            return Ok(json!({
-                "from": format!("{amount} {} on {}", from_token.to_uppercase(), from_chain.to_lowercase()),
-                "to": format!("{} on {}", to_token.to_uppercase(), to_chain.to_lowercase()),
-                "to_amount_estimate": to_amount.map(|v| format!("{v:.6}")),
-                "min_received": min_received.map(|v| format!("{v:.6}")),
-                "bridge": bridge_name,
-                "estimated_duration_seconds": estimate.get("executionDuration").cloned().unwrap_or(Value::Null),
-                "estimated_fee_usd": if fee_costs > 0.0 { Some(format!("{fee_costs:.2}")) } else { None },
-                "route_summary": route_summary,
-                "executable_tx": executable_tx,
-                "execution_supported": executable_tx.is_some(),
-                "warning": Value::Null,
-            }));
+        if let Ok(quote) = Self::send_json::<LifiQuoteResponse>(request, "bridge quote") {
+            return Ok(BridgeQuoteResponse::from_lifi_quote(
+                &quote,
+                from_label,
+                to_label,
+                to_decimals,
+            ));
         }
 
         // Fallback: minimal price estimate using DeFiLlama
@@ -510,38 +406,28 @@ impl LifiClient {
         let estimated_to_amount = (amount * from_price) / to_price * (1.0 - slippage.max(0.001));
         let min_received = estimated_to_amount * (1.0 - slippage);
 
-        Ok(json!({
-            "from": format!("{amount} {} on {}", from_token.to_uppercase(), from_chain.to_lowercase()),
-            "to": format!("{} on {}", to_token.to_uppercase(), to_chain.to_lowercase()),
-            "to_amount_estimate": format!("{estimated_to_amount:.6}"),
-            "min_received": format!("{min_received:.6}"),
-            "bridge": "planning-only",
-            "estimated_duration_seconds": Value::Null,
-            "estimated_fee_usd": Value::Null,
-            "route_summary": ["No executable bridge payload available"],
-            "executable_tx": Value::Null,
-            "execution_supported": false,
-            "warning": "Bridge quote is planning-only. Provide source and destination wallet addresses for executable routing.",
-        }))
+        Ok(BridgeQuoteResponse {
+            from: from_label,
+            to: to_label,
+            to_amount_estimate: Some(format!("{estimated_to_amount:.6}")),
+            min_received: Some(format!("{min_received:.6}")),
+            bridge: "planning-only".to_string(),
+            estimated_duration_seconds: None,
+            estimated_fee_usd: None,
+            route_summary: vec!["No executable bridge payload available".to_string()],
+            executable_tx: None,
+            execution_supported: false,
+            warning: Some(
+                "Bridge quote is planning-only. Provide source and destination wallet addresses for executable routing."
+                    .to_string(),
+            ),
+        })
     }
 }
 
 // ============================================================================
 // Shared helpers
 // ============================================================================
-
-pub(crate) fn with_source(value: Value) -> Value {
-    match value {
-        Value::Object(mut map) => {
-            map.insert("source".to_string(), Value::String("lifi".to_string()));
-            Value::Object(map)
-        }
-        other => json!({
-            "source": "lifi",
-            "data": other,
-        }),
-    }
-}
 
 pub(crate) fn normalize_lifi_chain_id(chain: &str) -> Result<String, String> {
     let normalized = chain.to_lowercase();
@@ -571,35 +457,30 @@ pub(crate) fn normalize_lifi_chain_id(chain: &str) -> Result<String, String> {
     Ok(chain_id.to_string())
 }
 
-pub(crate) fn build_lifi_main_tx(quote: &Value) -> Value {
-    let main_tx = quote
-        .get("transactionRequest")
-        .cloned()
-        .unwrap_or(Value::Null);
-
-    json!({
-        "to": main_tx.get("to").cloned().unwrap_or(Value::Null),
-        "data": main_tx.get("data").cloned().unwrap_or(Value::String("0x".to_string())),
-        "value": main_tx.get("value").cloned().unwrap_or(Value::String("0".to_string())),
-        "gas_limit": main_tx
-            .get("gasLimit")
-            .cloned()
-            .or_else(|| main_tx.get("gas").cloned())
-            .unwrap_or(Value::Null),
-        "description": "LI.FI main transaction",
-    })
+pub(crate) fn build_lifi_main_tx(quote: &LifiQuoteResponse) -> PreparedTransaction {
+    quote
+        .transaction_request
+        .as_ref()
+        .map(|tx| tx.to_prepared_transaction("LI.FI main transaction"))
+        .unwrap_or(PreparedTransaction {
+            to: Value::Null,
+            data: Value::String("0x".to_string()),
+            value: Value::String("0".to_string()),
+            gas_limit: Value::Null,
+            description: "LI.FI main transaction",
+        })
 }
 
-pub(crate) fn build_lifi_approval_tx(quote: &Value, from_amount: &str) -> Result<Value, String> {
-    let approval_address = quote
-        .get("estimate")
-        .and_then(|e| e.get("approvalAddress"))
-        .and_then(Value::as_str);
+pub(crate) fn build_lifi_approval_tx(
+    quote: &LifiQuoteResponse,
+    from_amount: &str,
+) -> Result<Option<PreparedTransaction>, String> {
+    let approval_address = quote.estimate.approval_address.as_deref();
     let from_token_address = quote
-        .get("action")
-        .and_then(|a| a.get("fromToken"))
-        .and_then(|t| t.get("address"))
-        .and_then(Value::as_str);
+        .action
+        .as_ref()
+        .and_then(|action| action.from_token.as_ref())
+        .and_then(|token| token.address.as_deref());
 
     if let (Some(spender), Some(token_address)) = (approval_address, from_token_address) {
         let is_native = token_address
@@ -607,17 +488,17 @@ pub(crate) fn build_lifi_approval_tx(quote: &Value, from_amount: &str) -> Result
             || token_address.eq_ignore_ascii_case("0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee");
         if !is_native && is_hex_address(token_address) && is_hex_address(spender) {
             let approve_calldata = encode_approve_calldata(spender, from_amount)?;
-            return Ok(json!({
-                "to": token_address,
-                "data": approve_calldata,
-                "value": "0",
-                "gas_limit": Value::Null,
-                "description": "LI.FI token approval",
+            return Ok(Some(PreparedTransaction {
+                to: Value::String(token_address.to_string()),
+                data: Value::String(approve_calldata),
+                value: Value::String("0".to_string()),
+                gas_limit: Value::Null,
+                description: "LI.FI token approval",
             }));
         }
     }
 
-    Ok(Value::Null)
+    Ok(None)
 }
 
 pub(crate) fn encode_approve_calldata(
@@ -963,16 +844,14 @@ mod tests {
     #[test]
     fn chains_smoke() {
         let res = client().get_chains(None).expect("should get chains");
-        assert_eq!(res.get("source").and_then(Value::as_str), Some("lifi"));
         assert!(res.get("chains").is_some(), "should have chains key");
     }
 
     #[test]
     fn chains_evm_filter_smoke() {
-        let res = client()
+        let _ = client()
             .get_chains(Some("EVM"))
             .expect("should get EVM chains");
-        assert_eq!(res.get("source").and_then(Value::as_str), Some("lifi"));
     }
 
     #[test]
@@ -980,22 +859,19 @@ mod tests {
         let res = client()
             .get_tokens(Some("1"), None)
             .expect("should get ethereum tokens");
-        assert_eq!(res.get("source").and_then(Value::as_str), Some("lifi"));
         assert!(res.get("tokens").is_some(), "should have tokens key");
     }
 
     #[test]
     fn token_detail_smoke() {
-        let res = client()
+        let _ = client()
             .get_token("1", "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48")
             .expect("should get USDC token detail");
-        assert_eq!(res.get("source").and_then(Value::as_str), Some("lifi"));
     }
 
     #[test]
     fn tools_smoke() {
         let res = client().get_tools(None).expect("should get tools");
-        assert_eq!(res.get("source").and_then(Value::as_str), Some("lifi"));
         assert!(res.get("bridges").is_some() || res.get("exchanges").is_some());
     }
 
@@ -1004,7 +880,6 @@ mod tests {
         let res = client()
             .get_connections(Some("1"), Some("137"), None, None)
             .expect("should get connections");
-        assert_eq!(res.get("source").and_then(Value::as_str), Some("lifi"));
         assert!(
             res.get("connections").is_some(),
             "should have connections key"
@@ -1013,10 +888,9 @@ mod tests {
 
     #[test]
     fn gas_suggestion_smoke() {
-        let res = client()
+        let _ = client()
             .get_gas_suggestion("1", None, None)
             .expect("should get gas suggestion for ethereum");
-        assert_eq!(res.get("source").and_then(Value::as_str), Some("lifi"));
     }
 
     #[test]

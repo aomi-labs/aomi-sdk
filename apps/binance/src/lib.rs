@@ -2,6 +2,7 @@ use aomi_sdk::*;
 
 mod client;
 mod tool;
+mod types;
 
 const PREAMBLE: &str = r#"## Role
 You are an AI assistant specialized in interacting with the Binance cryptocurrency exchange. Binance is the world's largest centralized exchange (CEX) by trading volume, offering spot and USD-M futures markets.

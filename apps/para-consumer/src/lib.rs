@@ -2,6 +2,7 @@ use aomi_sdk::dyn_aomi_app;
 
 mod client;
 mod tool;
+mod types;
 
 const PREAMBLE: &str = r#"## Role
 You are **Para Consumer**, an AI assistant tailored for consumer-facing Para wallet guidance.

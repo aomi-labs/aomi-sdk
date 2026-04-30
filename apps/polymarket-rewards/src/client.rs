@@ -21,6 +21,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 #[derive(Clone, Default)]
 pub(crate) struct PolymarketRewardsApp;
+pub(crate) use crate::types::*;
 
 // ============================================================================
 // Preamble
@@ -105,8 +106,8 @@ Treat `submit_reward_quote` as a staged state machine. Only do what the returned
 - After live submission succeeds in the staged `submit_reward_quote` flow, stop and report only the exact returned submission result. Only call `get_quote_plan_status` if the user explicitly asks you to verify status next.
 
 ## Wallet UX
-- Prefer host-driven wallet callbacks (`send_eip712_to_wallet` or `send_eip712_batch_to_wallet`) over asking the user to copy/paste typed data or signatures manually.
-- If multiple order signatures are needed, batch them with `send_eip712_batch_to_wallet` so the host can collect them in one deterministic flow.
+- Prefer host-driven wallet callbacks via `commit_eip712` over asking the user to copy/paste typed data or signatures manually.
+- Do not assume a batch-signature host helper exists. If multiple order signatures are needed, collect them through repeated `commit_eip712` calls using the exact typed data returned by the tool flow.
 - Do not narrate that a second signature request was sent unless the wallet-signing tool actually ran in that same turn.
 
 ## Reward Qualification
@@ -1258,33 +1259,29 @@ fn build_signed_quote_order_body(
     creds: &ClobCredentials,
     envelope: &SignedQuoteEnvelope,
 ) -> Result<Value, String> {
-    let mut body = json!({
-        "owner": creds.api_key,
-        "orderType": serde_json::to_value(envelope.order_type)
+    serde_json::to_value(SignedQuoteOrderHttpBody {
+        owner: creds.api_key.clone(),
+        order_type: serde_json::to_value(envelope.order_type)
             .map_err(|e| format!("failed to encode order_type: {e}"))?,
-        "order": {
-            "salt": envelope.order.salt,
-            "maker": envelope.order.maker,
-            "signer": envelope.order.signer,
-            "taker": envelope.order.taker,
-            "tokenId": envelope.order.token_id,
-            "makerAmount": envelope.order.maker_amount,
-            "takerAmount": envelope.order.taker_amount,
-            "expiration": envelope.order.expiration,
-            "nonce": envelope.order.nonce,
-            "feeRateBps": envelope.order.fee_rate_bps,
-            "side": serde_json::to_value(envelope.order.side)
+        order: SignedQuoteOrderHttpPayload {
+            salt: envelope.order.salt,
+            maker: envelope.order.maker.clone(),
+            signer: envelope.order.signer.clone(),
+            taker: envelope.order.taker.clone(),
+            token_id: envelope.order.token_id.clone(),
+            maker_amount: envelope.order.maker_amount.clone(),
+            taker_amount: envelope.order.taker_amount.clone(),
+            expiration: envelope.order.expiration.clone(),
+            nonce: envelope.order.nonce.clone(),
+            fee_rate_bps: envelope.order.fee_rate_bps.clone(),
+            side: serde_json::to_value(envelope.order.side)
                 .map_err(|e| format!("failed to encode side: {e}"))?,
-            "signatureType": parse_signature_type(envelope.order.signature_type.as_str())? as u8,
-            "signature": envelope.order.signature,
-        }
-    });
-
-    if let Some(post_only) = envelope.post_only {
-        body["postOnly"] = Value::Bool(post_only);
-    }
-
-    Ok(body)
+            signature_type: parse_signature_type(envelope.order.signature_type.as_str())? as u8,
+            signature: envelope.order.signature.clone(),
+        },
+        post_only: envelope.post_only,
+    })
+    .map_err(|e| format!("failed to encode signed quote order body: {e}"))
 }
 
 fn display_to_f64<T: ToString>(value: &T) -> Option<f64> {
@@ -1633,7 +1630,7 @@ pub(crate) fn validate_confirmation(token: Option<&str>) -> Result<(), String> {
 // Tool arg structs (used by tool.rs)
 // ============================================================================
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct FindRewardMarketsArgs {
     /// Maximum number of reward-eligible markets to return (default: 20, max: 100)
     pub(crate) limit: Option<u32>,
@@ -1641,7 +1638,7 @@ pub(crate) struct FindRewardMarketsArgs {
     pub(crate) filter: Option<String>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct EnsureRewardClobCredentialsArgs {
     /// Wallet address that will own the Polymarket CLOB credentials
     pub(crate) address: String,
@@ -1651,7 +1648,7 @@ pub(crate) struct EnsureRewardClobCredentialsArgs {
     pub(crate) clob_l1_signature: Option<String>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct RankRewardPlansArgs {
     /// Maximum number of ranked plans to return (default: 10, max: 50)
     pub(crate) limit: Option<u32>,
@@ -1665,7 +1662,7 @@ pub(crate) struct RankRewardPlansArgs {
     pub(crate) scan_limit: Option<u32>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct ResolveRewardDeploymentArgs {
     /// Plan ID from rank_reward_plans (e.g. "P1"), or a condition_id (0x-prefixed)
     pub(crate) plan_id: String,
@@ -1675,7 +1672,7 @@ pub(crate) struct ResolveRewardDeploymentArgs {
     pub(crate) capital_usd: Option<f64>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct BuildQuotePlanArgs {
     /// Condition ID of the market to quote
     pub(crate) condition_id: String,
@@ -1699,7 +1696,7 @@ pub(crate) struct BuildQuotePlanArgs {
     pub(crate) rewards_min_size: Option<f64>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct SubmitRewardQuoteArgs {
     /// Confirmation token from the user. Prefer passing "confirm", but missing confirmation no longer blocks staged wallet setup.
     pub(crate) confirmation: Option<String>,
@@ -1839,7 +1836,7 @@ mod tests {
     }
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct ExecuteQuotePlanArgs {
     /// Explicit user confirmation; must be "confirm"
     pub(crate) confirmation: Option<String>,
@@ -1871,7 +1868,7 @@ pub(crate) struct ExecuteQuotePlanArgs {
     pub(crate) simulation_confirmed: Option<bool>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct GetQuotePlanStatusArgs {
     /// CLOB wallet address (0x-prefixed)
     pub(crate) address: String,
@@ -1891,7 +1888,7 @@ pub(crate) struct GetQuotePlanStatusArgs {
     pub(crate) include_earnings: Option<bool>,
 }
 
-#[derive(Debug, Deserialize, JsonSchema)]
+#[derive(Debug, Serialize, Deserialize, JsonSchema)]
 pub(crate) struct WithdrawQuoteLiquidityArgs {
     /// Explicit user confirmation; must be "confirm" unless simulate=true
     pub(crate) confirmation: Option<String>,

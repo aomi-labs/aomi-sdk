@@ -1,9 +1,13 @@
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
-use std::collections::HashMap;
+use serde_json::Value;
 use std::time::Duration;
+
+use crate::types::{
+    XPostAuthorView, XPostMediaView, XPostMentionView, XPostUrlView, XPostView, XTrendView,
+    XUserView,
+};
 
 #[derive(Clone, Default)]
 pub(crate) struct XApp;
@@ -36,11 +40,11 @@ impl XClient {
         Ok(Self { http, api_key })
     }
 
-    pub(crate) fn get<T: serde::de::DeserializeOwned>(
-        &self,
-        path: &str,
-        query: &[(&str, &str)],
-    ) -> Result<T, String> {
+    pub(crate) fn get<T, Q>(&self, path: &str, query: &Q) -> Result<T, String>
+    where
+        T: serde::de::DeserializeOwned,
+        Q: Serialize,
+    {
         let url = format!("{API_BASE}{path}");
         let resp = self
             .http
@@ -56,17 +60,27 @@ impl XClient {
             return Err(format!("X API error {status}: {text}"));
         }
 
-        let api_resp: ApiResponse<T> = resp
-            .json()
-            .map_err(|e| format!("X API decode failed: {e}"))?;
+        let text = resp
+            .text()
+            .map_err(|e| format!("X API body read failed: {e}"))?;
 
-        if !api_resp.is_success() {
-            return Err(format!("X API logical error: {}", api_resp.error_message()));
+        if let Ok(api_resp) = serde_json::from_str::<ApiResponse<T>>(&text) {
+            if api_resp.is_success() {
+                if let Some(data) = api_resp.data {
+                    return Ok(data);
+                }
+            } else if api_resp.data.is_some()
+                || api_resp.status.is_some()
+                || api_resp.msg.is_some()
+                || api_resp.message.is_some()
+                || api_resp.code.is_some()
+                || api_resp.success.is_some()
+            {
+                return Err(format!("X API logical error: {}", api_resp.error_message()));
+            }
         }
 
-        api_resp
-            .data
-            .ok_or_else(|| "X API returned empty data".to_string())
+        serde_json::from_str::<T>(&text).map_err(|e| format!("X API decode failed: {e}"))
     }
 }
 
@@ -110,7 +124,7 @@ impl<T> ApiResponse<T> {
 }
 
 // ============================================================================
-// Data models
+// API response models
 // ============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -138,8 +152,6 @@ pub(crate) struct User {
     pub(crate) created_at: Option<String>,
     pub(crate) verified: Option<bool>,
     pub(crate) is_blue_verified: Option<bool>,
-    #[serde(flatten)]
-    pub(crate) _extra: HashMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -170,8 +182,6 @@ pub(crate) struct Post {
     pub(crate) mentions: Option<Vec<Mention>>,
     pub(crate) urls: Option<Vec<UrlEntity>>,
     pub(crate) media: Option<Vec<Media>>,
-    #[serde(flatten)]
-    pub(crate) _extra: HashMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -230,48 +240,87 @@ pub(crate) struct TrendsData {
     pub(crate) trends: Option<Vec<Trend>>,
 }
 
-pub(crate) fn format_post(p: &Post) -> Value {
-    json!({
-        "id": p.id,
-        "text": p.full_text.as_ref().or(p.text.as_ref()),
-        "created_at": p.created_at,
-        "author": p.author.as_ref().map(|a| json!({
-            "id": a.id,
-            "username": a.user_name,
-            "name": a.name,
-            "profile_image": a.profile_image_url,
-            "blue_verified": a.is_blue_verified,
-        })),
-        "reposts": p.retweet_count,
-        "likes": p.favorite_count,
-        "replies": p.reply_count,
-        "quotes": p.quote_count,
-        "views": p.view_count,
-        "language": p.lang,
-        "is_repost": p.is_retweet,
-        "is_quote": p.is_quote,
-        "reply_to": p.in_reply_to_status_id,
-        "conversation_id": p.conversation_id,
-        "hashtags": p.hashtags,
-        "mentions": p.mentions.as_ref().map(|m|
-            m.iter().map(|mention| json!({
-                "username": mention.user_name,
-                "name": mention.name,
-            })).collect::<Vec<_>>()
-        ),
-        "urls": p.urls.as_ref().map(|u|
-            u.iter().map(|url| json!({
-                "url": url.expanded_url,
-                "display": url.display_url,
-            })).collect::<Vec<_>>()
-        ),
-        "media": p.media.as_ref().map(|m|
-            m.iter().map(|media| json!({
-                "url": media.media_url_https,
-                "type": media.media_type,
-            })).collect::<Vec<_>>()
-        ),
-    })
+pub(crate) fn format_user(user: &User) -> XUserView {
+    XUserView {
+        id: user.id.clone(),
+        username: user.user_name.clone(),
+        name: user.name.clone(),
+        bio: user.description.clone(),
+        location: user.location.clone(),
+        url: user.url.clone(),
+        profile_image: user.profile_image_url.clone(),
+        banner_image: user.profile_banner_url.clone(),
+        followers: user.followers_count,
+        following: user.following_count,
+        posts_count: user.statuses_count,
+        likes_count: user.favourites_count,
+        listed_count: user.listed_count,
+        created_at: user.created_at.clone(),
+        verified: user.verified,
+        blue_verified: user.is_blue_verified,
+    }
+}
+
+pub(crate) fn format_post(p: &Post) -> XPostView {
+    XPostView {
+        id: p.id.clone(),
+        text: p.full_text.clone().or_else(|| p.text.clone()),
+        created_at: p.created_at.clone(),
+        author: p.author.as_ref().map(|a| XPostAuthorView {
+            id: a.id.clone(),
+            username: a.user_name.clone(),
+            name: a.name.clone(),
+            profile_image: a.profile_image_url.clone(),
+            blue_verified: a.is_blue_verified,
+        }),
+        reposts: p.retweet_count,
+        likes: p.favorite_count,
+        replies: p.reply_count,
+        quotes: p.quote_count,
+        views: p.view_count,
+        language: p.lang.clone(),
+        is_repost: p.is_retweet,
+        is_quote: p.is_quote,
+        reply_to: p.in_reply_to_status_id.clone(),
+        conversation_id: p.conversation_id.clone(),
+        hashtags: p.hashtags.clone(),
+        mentions: p.mentions.as_ref().map(|mentions| {
+            mentions
+                .iter()
+                .map(|mention| XPostMentionView {
+                    username: mention.user_name.clone(),
+                    name: mention.name.clone(),
+                })
+                .collect()
+        }),
+        urls: p.urls.as_ref().map(|urls| {
+            urls.iter()
+                .map(|url| XPostUrlView {
+                    url: url.expanded_url.clone(),
+                    display: url.display_url.clone(),
+                })
+                .collect()
+        }),
+        media: p.media.as_ref().map(|media| {
+            media
+                .iter()
+                .map(|item| XPostMediaView {
+                    url: item.media_url_https.clone(),
+                    media_type: item.media_type.clone(),
+                })
+                .collect()
+        }),
+    }
+}
+
+pub(crate) fn format_trend(trend: &Trend) -> XTrendView {
+    XTrendView {
+        name: trend.name.clone(),
+        url: trend.url.clone(),
+        post_count: trend.tweet_count,
+        description: trend.description.clone(),
+        category: trend.domain_context.clone(),
+    }
 }
 
 // Custom deserializers for flexible API responses

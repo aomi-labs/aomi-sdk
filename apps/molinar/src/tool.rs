@@ -1,8 +1,21 @@
 use crate::client::*;
+use crate::types::{CustomizeRequest, ExploreRequest, MoveRequest, PingRequest};
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+fn ok<T: Serialize>(value: T) -> Result<Value, String> {
+    let value = serde_json::to_value(value)
+        .map_err(|e| format!("[molinar] failed to serialize response: {e}"))?;
+    Ok(match value {
+        Value::Object(mut map) => {
+            map.insert("source".to_string(), Value::String("molinar".to_string()));
+            Value::Object(map)
+        }
+        other => serde_json::json!({ "source": "molinar", "data": other }),
+    })
+}
 
 impl DynAomiTool for MolinarGetState {
     type App = MolinarApp;
@@ -11,9 +24,7 @@ impl DynAomiTool for MolinarGetState {
     const DESCRIPTION: &'static str = "Get the current world snapshot without taking any action: your position, nearby players, coins, buildings, terrain, and chat history. Use to poll the world between decisions.";
 
     fn run(_app: &MolinarApp, _args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
-        let bot_id = get_bot_id(&ctx)?;
-        let client = MolinarClient::new()?;
-        client.get_state(&bot_id)
+        ok(MolinarClient::new()?.get_state(&get_bot_id(&ctx)?)?)
     }
 }
 
@@ -33,9 +44,7 @@ impl DynAomiTool for MolinarLook {
     const DESCRIPTION: &'static str = "Look around — returns the full world snapshot (same as get_state). Use when you want to observe your surroundings.";
 
     fn run(_app: &MolinarApp, _args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
-        let bot_id = get_bot_id(&ctx)?;
-        let client = MolinarClient::new()?;
-        client.look(&bot_id)
+        ok(MolinarClient::new()?.look(&get_bot_id(&ctx)?)?)
     }
 }
 
@@ -60,12 +69,11 @@ impl DynAomiTool for MolinarMove {
     const DESCRIPTION: &'static str = "Move the character exactly 1 tile in the specified direction. Call multiple times to travel further distances. Valid directions: forward, backward, left, right, forward_left, forward_right, backward_left, backward_right, north, south, east, west.";
 
     fn run(_app: &MolinarApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
-        let bot_id = get_bot_id(&ctx)?;
-        let client = MolinarClient::new()?;
-        let payload = json!({
-            "direction": args.direction
-        });
-        client.move_bot(&bot_id, payload)
+        let payload = MoveRequest {
+            direction: Some(args.direction),
+            ..MoveRequest::default()
+        };
+        ok(MolinarClient::new()?.move_bot(&get_bot_id(&ctx)?, &payload)?)
     }
 }
 
@@ -86,9 +94,7 @@ impl DynAomiTool for MolinarJump {
         "Make the character jump. Only works when grounded. Returns action.jumped (true/false).";
 
     fn run(_app: &MolinarApp, _args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
-        let bot_id = get_bot_id(&ctx)?;
-        let client = MolinarClient::new()?;
-        client.jump(&bot_id)
+        ok(MolinarClient::new()?.jump(&get_bot_id(&ctx)?)?)
     }
 }
 
@@ -111,9 +117,7 @@ impl DynAomiTool for MolinarChat {
     const DESCRIPTION: &'static str = "Send a chat message visible to all players in the world. Returns updated world state with chat history.";
 
     fn run(_app: &MolinarApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
-        let bot_id = get_bot_id(&ctx)?;
-        let client = MolinarClient::new()?;
-        client.send_chat(&bot_id, &args.message)
+        ok(MolinarClient::new()?.send_chat(&get_bot_id(&ctx)?, &args.message)?)
     }
 }
 
@@ -133,9 +137,7 @@ impl DynAomiTool for MolinarGetChat {
     const DESCRIPTION: &'static str = "Get chat history (last 20 messages). Returns full world snapshot with chat in the `chat` field.";
 
     fn run(_app: &MolinarApp, _args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
-        let bot_id = get_bot_id(&ctx)?;
-        let client = MolinarClient::new()?;
-        client.get_chat(&bot_id)
+        ok(MolinarClient::new()?.get_chat(&get_bot_id(&ctx)?)?)
     }
 }
 
@@ -155,9 +157,7 @@ impl DynAomiTool for MolinarGetNewMessages {
     const DESCRIPTION: &'static str = "Get new chat messages from other players since the last check. Messages are drained (returned once). Use to detect when someone talks to you. New messages in action.newMessages.";
 
     fn run(_app: &MolinarApp, _args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
-        let bot_id = get_bot_id(&ctx)?;
-        let client = MolinarClient::new()?;
-        client.get_new_messages(&bot_id)
+        ok(MolinarClient::new()?.get_new_messages(&get_bot_id(&ctx)?)?)
     }
 }
 
@@ -177,9 +177,7 @@ impl DynAomiTool for MolinarGetPlayers {
     const DESCRIPTION: &'static str = "Get all online players. Returns full world snapshot — all players in `allPlayers`, nearby ones in `nearby.players` with distance and direction.";
 
     fn run(_app: &MolinarApp, _args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
-        let bot_id = get_bot_id(&ctx)?;
-        let client = MolinarClient::new()?;
-        client.get_players(&bot_id)
+        ok(MolinarClient::new()?.get_players(&get_bot_id(&ctx)?)?)
     }
 }
 
@@ -199,9 +197,7 @@ impl DynAomiTool for MolinarCollectCoins {
     const DESCRIPTION: &'static str = "Collect nearby coins. If coins are within reach, collects them. Otherwise moves towards the nearest coin. Call repeatedly to farm. Gold=1pt, Silver=2pt, Gem=5pt. Returns action.collected count and action.movingTo.";
 
     fn run(_app: &MolinarApp, _args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
-        let bot_id = get_bot_id(&ctx)?;
-        let client = MolinarClient::new()?;
-        client.collect_coins(&bot_id)
+        ok(MolinarClient::new()?.collect_coins(&get_bot_id(&ctx)?)?)
     }
 }
 
@@ -221,9 +217,7 @@ impl DynAomiTool for MolinarExplore {
     const DESCRIPTION: &'static str = "Explore the world by stepping 1 tile in a random cardinal direction. Call multiple times to wander and discover new areas. Returns updated world state.";
 
     fn run(_app: &MolinarApp, _args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
-        let bot_id = get_bot_id(&ctx)?;
-        let client = MolinarClient::new()?;
-        client.explore(&bot_id, json!({}))
+        ok(MolinarClient::new()?.explore(&get_bot_id(&ctx)?, &ExploreRequest::default())?)
     }
 }
 
@@ -247,9 +241,7 @@ impl DynAomiTool for MolinarCreateObject {
     const DESCRIPTION: &'static str = "AI-generate a 3D object from a text description and place it at the bot's current position in the world.";
 
     fn run(_app: &MolinarApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
-        let bot_id = get_bot_id(&ctx)?;
-        let client = MolinarClient::new()?;
-        client.create_object(&bot_id, &args.prompt)
+        ok(MolinarClient::new()?.create_object(&get_bot_id(&ctx)?, &args.prompt)?)
     }
 }
 
@@ -278,16 +270,11 @@ impl DynAomiTool for MolinarCustomize {
         "Change the character's display name and/or color. Color must be from the allowed palette.";
 
     fn run(_app: &MolinarApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
-        let bot_id = get_bot_id(&ctx)?;
-        let client = MolinarClient::new()?;
-        let mut payload = json!({});
-        if let Some(name) = &args.name {
-            payload["name"] = Value::String(name.clone());
-        }
-        if let Some(color) = &args.color {
-            payload["color"] = Value::String(color.clone());
-        }
-        client.customize(&bot_id, payload)
+        let payload = CustomizeRequest {
+            name: args.name,
+            color: args.color,
+        };
+        ok(MolinarClient::new()?.customize(&get_bot_id(&ctx)?, &payload)?)
     }
 }
 
@@ -312,15 +299,10 @@ impl DynAomiTool for MolinarPing {
     const DESCRIPTION: &'static str = "Send a visual ping marker that other players can see. Defaults to current position if no coordinates provided.";
 
     fn run(_app: &MolinarApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
-        let bot_id = get_bot_id(&ctx)?;
-        let client = MolinarClient::new()?;
-        let mut payload = json!({});
-        if let Some(x) = args.x {
-            payload["x"] = json!(x);
-        }
-        if let Some(z) = args.z {
-            payload["z"] = json!(z);
-        }
-        client.ping(&bot_id, payload)
+        let payload = PingRequest {
+            x: args.x,
+            z: args.z,
+        };
+        ok(MolinarClient::new()?.ping(&get_bot_id(&ctx)?, &payload)?)
     }
 }

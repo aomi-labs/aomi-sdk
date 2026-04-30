@@ -1,5 +1,5 @@
 use chrono::Local;
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::time::Duration;
 #[cfg(test)]
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -40,6 +40,7 @@ IMPORTANT -- show this disclaimer on registration (before claim link), on first 
 pub(crate) struct KalshiApp;
 
 pub(crate) use crate::tool::*;
+pub(crate) use crate::types::*;
 
 pub(crate) const SIMMER_API_URL: &str = "https://api.simmer.markets";
 
@@ -121,7 +122,7 @@ impl SimmerClient {
         Self::send_json(req, "get_market_context")
     }
 
-    pub(crate) fn trade(&self, body: Value) -> Result<Value, String> {
+    pub(crate) fn trade(&self, body: &SimmerTradeRequest) -> Result<Value, String> {
         let url = format!("{SIMMER_API_URL}/api/sdk/trade");
         let req = self
             .http
@@ -178,11 +179,14 @@ impl SimmerClient {
 
     pub(crate) fn import_kalshi_market(&self, kalshi_url: &str) -> Result<Value, String> {
         let url = format!("{SIMMER_API_URL}/api/sdk/markets/import/kalshi");
+        let body = ImportKalshiMarketRequest {
+            kalshi_url: kalshi_url.to_string(),
+        };
         let req = self
             .http
             .post(&url)
             .header("Authorization", self.auth_header())
-            .json(&json!({ "kalshi_url": kalshi_url }));
+            .json(&body);
         Self::send_json(req, "import_kalshi_market")
     }
 }
@@ -196,10 +200,10 @@ pub(crate) fn simmer_register_agent(
         .build()
         .map_err(|e| format!("failed to build HTTP client: {e}"))?;
 
-    let mut body = json!({ "name": name });
-    if let Some(desc) = description {
-        body["description"] = Value::String(desc.to_string());
-    }
+    let body = SimmerRegisterRequest {
+        name: name.to_string(),
+        description: description.map(str::to_string),
+    };
 
     let req = http
         .post(format!("{SIMMER_API_URL}/api/sdk/agents/register"))

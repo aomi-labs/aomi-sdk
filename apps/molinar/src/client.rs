@@ -1,9 +1,14 @@
 //! GameFi dynamic plugin — Molinar 3D world bot agent.
 
+use crate::types::{
+    ChatRequest, CreateObjectRequest, CustomizeRequest, EmptyRequest, ExploreRequest, MoveRequest,
+    PingRequest,
+};
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde::Serialize;
+use serde_json::Value;
 use std::time::Duration;
 
 #[derive(Clone, Default)]
@@ -53,7 +58,7 @@ impl MolinarClient {
             .map_err(|e| format!("[molinar] {op} decode failed ({url}): {e}"))
     }
 
-    pub fn post_json(&self, url: &str, body: &Value, op: &str) -> Result<Value, String> {
+    pub fn post_json<B: Serialize>(&self, url: &str, body: &B, op: &str) -> Result<Value, String> {
         let response = self
             .http
             .post(url)
@@ -71,112 +76,121 @@ impl MolinarClient {
             .map_err(|e| format!("[molinar] {op} decode failed ({url}): {e}"))
     }
 
-    pub fn with_source(value: Value) -> Value {
-        match value {
-            Value::Object(mut map) => {
-                map.insert("source".to_string(), Value::String("molinar".to_string()));
-                Value::Object(map)
-            }
-            other => json!({
-                "source": "molinar",
-                "data": other,
-            }),
-        }
-    }
-
     // ── API Methods ──────────────────────────────────────────────────────
 
     /// GET /{botId}/state
     pub fn get_state(&self, bot_id: &str) -> Result<Value, String> {
-        let url = format!("{}/{}/state", self.api_endpoint, bot_id);
-        let value = self.get_json(&url, "get_state")?;
-        Ok(Self::with_source(value))
+        self.get_json(
+            &format!("{}/{}/state", self.api_endpoint, bot_id),
+            "get_state",
+        )
     }
 
     /// GET /{botId}/look
     pub fn look(&self, bot_id: &str) -> Result<Value, String> {
-        let url = format!("{}/{}/look", self.api_endpoint, bot_id);
-        let value = self.get_json(&url, "look")?;
-        Ok(Self::with_source(value))
+        self.get_json(&format!("{}/{}/look", self.api_endpoint, bot_id), "look")
     }
 
     /// POST /{botId}/move
-    pub fn move_bot(&self, bot_id: &str, payload: Value) -> Result<Value, String> {
-        let url = format!("{}/{}/move", self.api_endpoint, bot_id);
-        let value = self.post_json(&url, &payload, "move")?;
-        Ok(Self::with_source(value))
+    pub fn move_bot(&self, bot_id: &str, payload: &MoveRequest) -> Result<Value, String> {
+        self.post_json(
+            &format!("{}/{}/move", self.api_endpoint, bot_id),
+            payload,
+            "move",
+        )
     }
 
     /// POST /{botId}/jump
     pub fn jump(&self, bot_id: &str) -> Result<Value, String> {
-        let url = format!("{}/{}/jump", self.api_endpoint, bot_id);
-        let value = self.post_json(&url, &json!({}), "jump")?;
-        Ok(Self::with_source(value))
+        self.post_json(
+            &format!("{}/{}/jump", self.api_endpoint, bot_id),
+            &EmptyRequest::default(),
+            "jump",
+        )
     }
 
     /// POST /{botId}/chat
     pub fn send_chat(&self, bot_id: &str, message: &str) -> Result<Value, String> {
-        let url = format!("{}/{}/chat", self.api_endpoint, bot_id);
-        let body = json!({ "message": message });
-        let value = self.post_json(&url, &body, "chat")?;
-        Ok(Self::with_source(value))
+        let body = ChatRequest {
+            message: message.to_string(),
+        };
+        self.post_json(
+            &format!("{}/{}/chat", self.api_endpoint, bot_id),
+            &body,
+            "chat",
+        )
     }
 
     /// GET /{botId}/chat
     pub fn get_chat(&self, bot_id: &str) -> Result<Value, String> {
-        let url = format!("{}/{}/chat", self.api_endpoint, bot_id);
-        let value = self.get_json(&url, "get_chat")?;
-        Ok(Self::with_source(value))
+        self.get_json(
+            &format!("{}/{}/chat", self.api_endpoint, bot_id),
+            "get_chat",
+        )
     }
 
     /// GET /{botId}/chat/new
     pub fn get_new_messages(&self, bot_id: &str) -> Result<Value, String> {
-        let url = format!("{}/{}/chat/new", self.api_endpoint, bot_id);
-        let value = self.get_json(&url, "get_new_messages")?;
-        Ok(Self::with_source(value))
+        self.get_json(
+            &format!("{}/{}/chat/new", self.api_endpoint, bot_id),
+            "get_new_messages",
+        )
     }
 
     /// GET /{botId}/players
     pub fn get_players(&self, bot_id: &str) -> Result<Value, String> {
-        let url = format!("{}/{}/players", self.api_endpoint, bot_id);
-        let value = self.get_json(&url, "get_players")?;
-        Ok(Self::with_source(value))
+        self.get_json(
+            &format!("{}/{}/players", self.api_endpoint, bot_id),
+            "get_players",
+        )
     }
 
     /// POST /{botId}/collect
     pub fn collect_coins(&self, bot_id: &str) -> Result<Value, String> {
-        let url = format!("{}/{}/collect", self.api_endpoint, bot_id);
-        let value = self.post_json(&url, &json!({}), "collect")?;
-        Ok(Self::with_source(value))
+        self.post_json(
+            &format!("{}/{}/collect", self.api_endpoint, bot_id),
+            &EmptyRequest::default(),
+            "collect",
+        )
     }
 
     /// POST /{botId}/explore
-    pub fn explore(&self, bot_id: &str, payload: Value) -> Result<Value, String> {
-        let url = format!("{}/{}/explore", self.api_endpoint, bot_id);
-        let value = self.post_json(&url, &payload, "explore")?;
-        Ok(Self::with_source(value))
+    pub fn explore(&self, bot_id: &str, payload: &ExploreRequest) -> Result<Value, String> {
+        self.post_json(
+            &format!("{}/{}/explore", self.api_endpoint, bot_id),
+            payload,
+            "explore",
+        )
     }
 
     /// POST /{botId}/create
     pub fn create_object(&self, bot_id: &str, prompt: &str) -> Result<Value, String> {
-        let url = format!("{}/{}/create", self.api_endpoint, bot_id);
-        let body = json!({ "prompt": prompt });
-        let value = self.post_json(&url, &body, "create_object")?;
-        Ok(Self::with_source(value))
+        let body = CreateObjectRequest {
+            prompt: prompt.to_string(),
+        };
+        self.post_json(
+            &format!("{}/{}/create", self.api_endpoint, bot_id),
+            &body,
+            "create_object",
+        )
     }
 
     /// POST /{botId}/customize
-    pub fn customize(&self, bot_id: &str, payload: Value) -> Result<Value, String> {
-        let url = format!("{}/{}/customize", self.api_endpoint, bot_id);
-        let value = self.post_json(&url, &payload, "customize")?;
-        Ok(Self::with_source(value))
+    pub fn customize(&self, bot_id: &str, payload: &CustomizeRequest) -> Result<Value, String> {
+        self.post_json(
+            &format!("{}/{}/customize", self.api_endpoint, bot_id),
+            payload,
+            "customize",
+        )
     }
 
     /// POST /{botId}/ping
-    pub fn ping(&self, bot_id: &str, payload: Value) -> Result<Value, String> {
-        let url = format!("{}/{}/ping", self.api_endpoint, bot_id);
-        let value = self.post_json(&url, &payload, "ping")?;
-        Ok(Self::with_source(value))
+    pub fn ping(&self, bot_id: &str, payload: &PingRequest) -> Result<Value, String> {
+        self.post_json(
+            &format!("{}/{}/ping", self.api_endpoint, bot_id),
+            payload,
+            "ping",
+        )
     }
 }
 

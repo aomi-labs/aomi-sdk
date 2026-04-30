@@ -1,6 +1,14 @@
-# aomi-apps
+# Aomi SDK
 
-Open-source app layer for the Aomi ecosystem.
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![Rust](https://img.shields.io/badge/Rust-000000?logo=rust&logoColor=white)](https://www.rust-lang.org/)
+[![CI](https://github.com/aomi-labs/aomi-sdk/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/aomi-labs/aomi-sdk/actions/workflows/ci.yml)
+
+> Build plugins for Aomi — open-source AI infrastructure for automating crypto.
+
+## What is Aomi SDK?
+
+The Aomi SDK is the open-source plugin development kit for extending Aomi — open-source AI infrastructure for automating crypto. This repository contains the public SDK, reference apps, and a build toolchain for compiling dynamic plugins that the Aomi runtime hot-loads.
 
 This repository contains public dynamic app crates, the public SDK they build against, and a small build toolchain for compiling plugins. It intentionally excludes:
 
@@ -32,6 +40,17 @@ This repository contains public dynamic app crates, the public SDK they build ag
 - `prediction`
 - `social`
 - `x`
+
+## What Can I Build?
+
+The Aomi SDK lets you wrap any crypto API as a dynamic plugin that the Aomi runtime hot-loads. The apps in this repo show the range:
+
+- **DeFi** — wrap a DEX, lending, or staking protocol as chat-driven tools (see `defi`)
+- **Prediction markets** — market discovery, search, and trading flows (see `polymarket`, `kalshi`)
+- **Cross-chain intents** — bridge and intent-order clients (see `khalani`)
+- **Social / media** — feeds, posts, user data (see `social`, `x`)
+- **Wallet and account tooling** — manage keys, wallets, and account flows (see `para`)
+- **Games / metaverse** — in-game actions, inventory, chat (see `molinar`)
 
 ## Public Boundary
 
@@ -226,3 +245,26 @@ LOCAL_AOMI_APPS=/path/to/aomi-apps bash scripts/dev.sh --local-apps
 ## SDK and Examples
 
 The SDK is vendored in `sdk`, including its tests and `examples/hello-app`, so this repository compiles without reaching back into `product-mono`.
+
+## FAQ
+
+**Is the Aomi SDK open-source?**
+Yes. The plugin SDK, example apps, and build toolchain in this repo are all MIT licensed. The runtime/loader implementation is intentionally excluded and not open-source.
+
+**What language is the SDK in?**
+Rust. Plugins compile to dynamic libraries (`.so` on Linux, `.dylib` on macOS) that the runtime hot-loads.
+
+**How do I scaffold a new app?**
+Run `cargo run -p xtask -- new-app <name>`, or copy `sdk/examples/app-template-http` and adapt it. The standard file split is `lib.rs` (manifest + preamble), `client.rs` (HTTP client + models), `tool.rs` (tool implementations).
+
+**How does hot-loading work?**
+This repo publishes GitHub Releases with pre-built plugin tarballs per target (Linux x86_64, macOS ARM64). The backend polls for new releases every 5 minutes, downloads and verifies the tarball, then atomically swaps new plugin binaries in via `dlopen`. Active sessions keep their old plugin `Arc`; new sessions get the new one. No restart required.
+
+**Do I need to deploy infrastructure to get my plugin running?**
+No. Once your PR merges to `publish`, CI builds and publishes the plugin tarball. The Aomi runtime picks it up on the next poll.
+
+**Can I test a plugin locally before opening a PR?**
+Yes. Build with `cargo run -p xtask -- build-aomi --app <name>`, run unit tests using the `aomi_sdk::testing` helpers (`TestCtxBuilder`, `run_tool`, `run_async_tool`), and point a local product-mono instance at your working copy with `LOCAL_AOMI_APPS=/path/to/aomi-apps`.
+
+**How do I structure tool descriptions so the LLM uses them correctly?**
+Prefer intent-shaped names (`search_*`, `get_*`, `build_*`, `submit_*`) over raw endpoint wraps. Keep the toolset small — 3 to 8 tools per app is typical for a clean workflow. Use `JsonSchema` with doc comments for typed arguments; those comments are model-facing and directly shape how the agent picks tools. See `sdk/examples/app-template-http` for the canonical pattern.

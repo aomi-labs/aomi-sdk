@@ -4,6 +4,7 @@ use aomi_sdk::*;
 
 mod client;
 mod tool;
+pub mod types;
 
 pub use client::MolinarClient;
 

@@ -1,6 +1,19 @@
 use crate::client::*;
 use aomi_sdk::*;
+use serde::Serialize;
 use serde_json::{Value, json};
+
+fn ok<T: Serialize>(value: T) -> Result<Value, String> {
+    let value = serde_json::to_value(value)
+        .map_err(|e| format!("[defillama] failed to serialize response: {e}"))?;
+    Ok(match value {
+        Value::Object(mut map) => {
+            map.insert("source".to_string(), Value::String("defillama".to_string()));
+            Value::Object(map)
+        }
+        other => json!({ "source": "defillama", "data": other }),
+    })
+}
 
 impl DynAomiTool for GetLammaTokenPrice {
     type App = DefiLlamaApp;
@@ -9,25 +22,16 @@ impl DynAomiTool for GetLammaTokenPrice {
     const DESCRIPTION: &'static str = "Get overall token price estimation from DefiLlama (informational, not an executable trade quote).";
 
     fn run(_app: &DefiLlamaApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = DefiLamaClient::new()?;
-        let response = client.get_token_price(&args.token)?;
-        let source = response
-            .get("source")
-            .and_then(Value::as_str)
-            .unwrap_or("defillama");
+        let response = DefiLamaClient::new()?.get_token_price(&args.token)?;
         let coin = response
             .get("coins")
             .and_then(Value::as_object)
             .and_then(|coins| coins.values().next())
             .ok_or_else(|| format!("Token not found: {}", args.token))?;
-        let symbol = coin.get("symbol").and_then(Value::as_str).unwrap_or("N/A");
-        let price = coin.get("price").and_then(Value::as_f64).unwrap_or(0.0);
-        let confidence = coin.get("confidence").cloned().unwrap_or(Value::Null);
-        Ok(json!({
-            "symbol": symbol,
-            "price_usd": format!("${:.2}", price),
-            "confidence": confidence,
-            "source": source,
+        ok(json!({
+            "symbol": coin.get("symbol").and_then(Value::as_str).unwrap_or("N/A"),
+            "price_usd": format!("${:.2}", coin.get("price").and_then(Value::as_f64).unwrap_or(0.0)),
+            "confidence": coin.get("confidence").cloned().unwrap_or(Value::Null),
         }))
     }
 }
@@ -39,12 +43,8 @@ impl DynAomiTool for GetLammaYieldOpportunities {
     const DESCRIPTION: &'static str = "Get overall yield estimation from DefiLlama and list pools sorted by APY (informational, not trade execution).";
 
     fn run(_app: &DefiLlamaApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = DefiLamaClient::new()?;
-        let response = client.get_yield_pools(args.chain.as_deref(), args.project.as_deref())?;
-        let source = response
-            .get("source")
-            .and_then(Value::as_str)
-            .unwrap_or("defillama");
+        let response = DefiLamaClient::new()?
+            .get_yield_pools(args.chain.as_deref(), args.project.as_deref())?;
 
         let mut pools = response
             .get("data")
@@ -86,11 +86,7 @@ impl DynAomiTool for GetLammaYieldOpportunities {
             })
             .collect();
 
-        Ok(json!({
-            "pools_found": formatted.len(),
-            "pools": formatted,
-            "source": source,
-        }))
+        ok(json!({ "pools_found": formatted.len(), "pools": formatted }))
     }
 }
 
@@ -101,22 +97,17 @@ impl DynAomiTool for GetLammaProtocols {
     const DESCRIPTION: &'static str = "Get overall protocol TVL estimation from DefiLlama (informational, not executable trading data).";
 
     fn run(_app: &DefiLlamaApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = DefiLamaClient::new()?;
-        let response = client.get_protocols(args.category.as_deref())?;
-        let source = response
-            .get("source")
-            .and_then(Value::as_str)
-            .unwrap_or("defillama");
+        let response = DefiLamaClient::new()?.get_protocols(args.category.as_deref())?;
 
-        let mut protocols = response
-            .get("data")
-            .and_then(Value::as_array)
+        let protocols = response
+            .as_array()
             .cloned()
+            .or_else(|| response.get("data").and_then(Value::as_array).cloned())
             .unwrap_or_default();
-        protocols.truncate(args.limit.unwrap_or(20) as usize);
 
         let formatted: Vec<Value> = protocols
             .into_iter()
+            .take(args.limit.unwrap_or(20) as usize)
             .map(|p| {
                 json!({
                     "name": p.get("name").and_then(Value::as_str).unwrap_or("N/A"),
@@ -128,11 +119,7 @@ impl DynAomiTool for GetLammaProtocols {
             })
             .collect();
 
-        Ok(json!({
-            "protocols_count": formatted.len(),
-            "protocols": formatted,
-            "source": source,
-        }))
+        ok(json!({ "protocols_count": formatted.len(), "protocols": formatted }))
     }
 }
 
@@ -143,21 +130,16 @@ impl DynAomiTool for GetLammaChainTvl {
     const DESCRIPTION: &'static str = "Get overall chain TVL estimation from DefiLlama (informational, not executable trading data).";
 
     fn run(_app: &DefiLlamaApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = DefiLamaClient::new()?;
-        let response = client.get_chains_tvl()?;
-        let source = response
-            .get("source")
-            .and_then(Value::as_str)
-            .unwrap_or("defillama");
-        let mut chains = response
-            .get("data")
-            .and_then(Value::as_array)
+        let response = DefiLamaClient::new()?.get_chains_tvl()?;
+        let chains = response
+            .as_array()
             .cloned()
+            .or_else(|| response.get("data").and_then(Value::as_array).cloned())
             .unwrap_or_default();
-        chains.truncate(args.limit.unwrap_or(15) as usize);
 
         let formatted: Vec<Value> = chains
-            .iter()
+            .into_iter()
+            .take(args.limit.unwrap_or(15) as usize)
             .enumerate()
             .map(|(i, c)| {
                 json!({
@@ -169,16 +151,9 @@ impl DynAomiTool for GetLammaChainTvl {
             })
             .collect();
 
-        Ok(json!({
-            "chains": formatted,
-            "source": source,
-        }))
+        ok(json!({ "chains": formatted }))
     }
 }
-
-// ============================================================================
-// Tier 1 tool impls
-// ============================================================================
 
 impl DynAomiTool for GetLammaProtocolDetail {
     type App = DefiLlamaApp;
@@ -188,8 +163,7 @@ impl DynAomiTool for GetLammaProtocolDetail {
         "Get deep-dive data for a single protocol: historical TVL, chain breakdown, metadata.";
 
     fn run(_app: &DefiLlamaApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = DefiLamaClient::new()?;
-        client.get_protocol_detail(&args.protocol)
+        ok(DefiLamaClient::new()?.get_protocol_detail(&args.protocol)?)
     }
 }
 
@@ -201,12 +175,11 @@ impl DynAomiTool for GetLammaDexVolumes {
         "Get DEX volume rankings across all chains or for a specific chain.";
 
     fn run(_app: &DefiLlamaApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = DefiLamaClient::new()?;
-        client.get_dex_volumes(
+        ok(DefiLamaClient::new()?.get_dex_volumes(
             args.chain.as_deref(),
             args.exclude_total_data_chart,
             args.exclude_total_data_chart_breakdown,
-        )
+        )?)
     }
 }
 
@@ -218,13 +191,12 @@ impl DynAomiTool for GetLammaFeesOverview {
         "Get protocol fee and revenue rankings across all chains or for a specific chain.";
 
     fn run(_app: &DefiLlamaApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = DefiLamaClient::new()?;
-        client.get_fees_overview(
+        ok(DefiLamaClient::new()?.get_fees_overview(
             args.chain.as_deref(),
             args.exclude_total_data_chart,
             args.exclude_total_data_chart_breakdown,
             args.data_type.as_deref(),
-        )
+        )?)
     }
 }
 
@@ -235,8 +207,7 @@ impl DynAomiTool for GetLammaProtocolFees {
     const DESCRIPTION: &'static str = "Get fee and revenue detail for a single protocol.";
 
     fn run(_app: &DefiLlamaApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = DefiLamaClient::new()?;
-        client.get_protocol_fees(&args.protocol, args.data_type.as_deref())
+        ok(DefiLamaClient::new()?.get_protocol_fees(&args.protocol, args.data_type.as_deref())?)
     }
 }
 
@@ -247,8 +218,7 @@ impl DynAomiTool for GetLammaStablecoins {
     const DESCRIPTION: &'static str = "List all stablecoins with their circulating supply data.";
 
     fn run(_app: &DefiLlamaApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = DefiLamaClient::new()?;
-        client.get_stablecoins(args.include_prices)
+        ok(DefiLamaClient::new()?.get_stablecoins(args.include_prices)?)
     }
 }
 
@@ -259,8 +229,7 @@ impl DynAomiTool for GetLammaStablecoinChains {
     const DESCRIPTION: &'static str = "Get stablecoin market cap per chain.";
 
     fn run(_app: &DefiLlamaApp, _args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = DefiLamaClient::new()?;
-        client.get_stablecoin_chains()
+        ok(DefiLamaClient::new()?.get_stablecoin_chains()?)
     }
 }
 
@@ -271,14 +240,13 @@ impl DynAomiTool for GetLammaHistoricalTokenPrice {
     const DESCRIPTION: &'static str = "Get historical price chart for one or more tokens.";
 
     fn run(_app: &DefiLlamaApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = DefiLamaClient::new()?;
-        client.get_historical_token_price(
+        ok(DefiLamaClient::new()?.get_historical_token_price(
             &args.coins,
             args.start,
             args.end,
             args.span,
             args.period.as_deref(),
-        )
+        )?)
     }
 }
 
@@ -290,19 +258,14 @@ impl DynAomiTool for GetLammaTokenPriceChange {
         "Get percentage price change for one or more tokens over a given period.";
 
     fn run(_app: &DefiLlamaApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = DefiLamaClient::new()?;
-        client.get_token_price_change(
+        ok(DefiLamaClient::new()?.get_token_price_change(
             &args.coins,
             args.timestamp,
             args.look_forward,
             args.period.as_deref(),
-        )
+        )?)
     }
 }
-
-// ============================================================================
-// Tier 2 tool impls
-// ============================================================================
 
 impl DynAomiTool for GetLammaHistoricalChainTvl {
     type App = DefiLlamaApp;
@@ -311,8 +274,7 @@ impl DynAomiTool for GetLammaHistoricalChainTvl {
     const DESCRIPTION: &'static str = "Get daily historical TVL for a specific chain.";
 
     fn run(_app: &DefiLlamaApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = DefiLamaClient::new()?;
-        client.get_historical_chain_tvl(&args.chain)
+        ok(DefiLamaClient::new()?.get_historical_chain_tvl(&args.chain)?)
     }
 }
 
@@ -323,12 +285,11 @@ impl DynAomiTool for GetLammaDexProtocolVolume {
     const DESCRIPTION: &'static str = "Get volume detail for a single DEX protocol.";
 
     fn run(_app: &DefiLlamaApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = DefiLamaClient::new()?;
-        client.get_dex_protocol_volume(
+        ok(DefiLamaClient::new()?.get_dex_protocol_volume(
             &args.protocol,
             args.exclude_total_data_chart,
             args.exclude_total_data_chart_breakdown,
-        )
+        )?)
     }
 }
 
@@ -340,8 +301,10 @@ impl DynAomiTool for GetLammaStablecoinHistory {
         "Get historical stablecoin market cap data, optionally filtered by chain or stablecoin ID.";
 
     fn run(_app: &DefiLlamaApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = DefiLamaClient::new()?;
-        client.get_stablecoin_history(args.chain.as_deref(), args.stablecoin)
+        ok(
+            DefiLamaClient::new()?
+                .get_stablecoin_history(args.chain.as_deref(), args.stablecoin)?,
+        )
     }
 }
 
@@ -352,7 +315,6 @@ impl DynAomiTool for GetLammaYieldPoolHistory {
     const DESCRIPTION: &'static str = "Get historical APY and TVL data for a specific yield pool.";
 
     fn run(_app: &DefiLlamaApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = DefiLamaClient::new()?;
-        client.get_yield_pool_history(&args.pool)
+        ok(DefiLamaClient::new()?.get_yield_pool_history(&args.pool)?)
     }
 }

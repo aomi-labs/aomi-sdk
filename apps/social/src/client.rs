@@ -1,3 +1,7 @@
+use crate::types::{
+    BulkUsersQuery, ChannelFeedQuery, ChannelQuery, LimitQuery, SearchCastsQuery,
+    UserByUsernameQuery,
+};
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
 use serde::{Deserialize, Serialize};
@@ -36,11 +40,11 @@ impl XClient {
         Ok(Self { http, api_key })
     }
 
-    pub(crate) fn get<T: serde::de::DeserializeOwned>(
-        &self,
-        path: &str,
-        query: &[(&str, &str)],
-    ) -> Result<T, String> {
+    pub(crate) fn get<T, Q>(&self, path: &str, query: &Q) -> Result<T, String>
+    where
+        T: serde::de::DeserializeOwned,
+        Q: Serialize,
+    {
         let url = format!("{X_API_BASE}{path}");
         let resp = self
             .http
@@ -56,17 +60,27 @@ impl XClient {
             return Err(format!("X API error {status}: {text}"));
         }
 
-        let api_resp: XApiResponse<T> = resp
-            .json()
-            .map_err(|e| format!("X API decode failed: {e}"))?;
+        let text = resp
+            .text()
+            .map_err(|e| format!("X API body read failed: {e}"))?;
 
-        if !api_resp.is_success() {
-            return Err(format!("X API logical error: {}", api_resp.error_message()));
+        if let Ok(api_resp) = serde_json::from_str::<XApiResponse<T>>(&text) {
+            if api_resp.is_success() {
+                if let Some(data) = api_resp.data {
+                    return Ok(data);
+                }
+            } else if api_resp.data.is_some()
+                || api_resp.status.is_some()
+                || api_resp.msg.is_some()
+                || api_resp.message.is_some()
+                || api_resp.code.is_some()
+                || api_resp.success.is_some()
+            {
+                return Err(format!("X API logical error: {}", api_resp.error_message()));
+            }
         }
 
-        api_resp
-            .data
-            .ok_or_else(|| "X API returned empty data".to_string())
+        serde_json::from_str::<T>(&text).map_err(|e| format!("X API decode failed: {e}"))
     }
 }
 
@@ -138,8 +152,6 @@ pub(crate) struct XUser {
     pub(crate) created_at: Option<String>,
     pub(crate) verified: Option<bool>,
     pub(crate) is_blue_verified: Option<bool>,
-    #[serde(flatten)]
-    pub(crate) _extra: HashMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -170,8 +182,6 @@ pub(crate) struct XPost {
     pub(crate) mentions: Option<Vec<XMention>>,
     pub(crate) urls: Option<Vec<XUrlEntity>>,
     pub(crate) media: Option<Vec<XMedia>>,
-    #[serde(flatten)]
-    pub(crate) _extra: HashMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -339,18 +349,16 @@ impl NeynarClient {
         limit: Option<u32>,
     ) -> Result<NeynarCastsResponse, String> {
         let url = format!("{NEYNAR_API_BASE}/farcaster/cast/search");
-        let limit_val = limit.unwrap_or(25).to_string();
-
-        let mut params: Vec<(&str, &str)> = vec![("q", query), ("limit", &limit_val)];
-        if let Some(c) = cursor {
-            params.push(("cursor", c));
-        }
 
         let resp = self
             .http
             .get(&url)
             .header("x-api-key", &self.api_key)
-            .query(&params)
+            .query(&SearchCastsQuery {
+                q: query,
+                cursor,
+                limit: limit.unwrap_or(25),
+            })
             .send()
             .map_err(|e| format!("Neynar search failed: {e}"))?;
 
@@ -376,7 +384,7 @@ impl NeynarClient {
             .http
             .get(&url)
             .header("x-api-key", &self.api_key)
-            .query(&[("username", username)])
+            .query(&UserByUsernameQuery { username })
             .send()
             .map_err(|e| format!("Neynar get user failed: {e}"))?;
 
@@ -401,7 +409,9 @@ impl NeynarClient {
             .http
             .get(&url)
             .header("x-api-key", &self.api_key)
-            .query(&[("fids", fid.to_string())])
+            .query(&BulkUsersQuery {
+                fids: fid.to_string(),
+            })
             .send()
             .map_err(|e| format!("Neynar get user by fid failed: {e}"))?;
 
@@ -428,7 +438,7 @@ impl NeynarClient {
             .http
             .get(&url)
             .header("x-api-key", &self.api_key)
-            .query(&[("id", channel_id)])
+            .query(&ChannelQuery { id: channel_id })
             .send()
             .map_err(|e| format!("Neynar get channel failed: {e}"))?;
 
@@ -451,13 +461,14 @@ impl NeynarClient {
         limit: Option<u32>,
     ) -> Result<Vec<FarcasterChannel>, String> {
         let url = format!("{NEYNAR_API_BASE}/farcaster/channel/trending");
-        let limit_val = limit.unwrap_or(10).to_string();
 
         let resp = self
             .http
             .get(&url)
             .header("x-api-key", &self.api_key)
-            .query(&[("limit", &limit_val)])
+            .query(&LimitQuery {
+                limit: limit.unwrap_or(10),
+            })
             .send()
             .map_err(|e| format!("Neynar trending channels failed: {e}"))?;
 
@@ -480,19 +491,16 @@ impl NeynarClient {
         limit: Option<u32>,
     ) -> Result<NeynarCastsResponse, String> {
         let url = format!("{NEYNAR_API_BASE}/farcaster/feed/channels");
-        let limit_val = limit.unwrap_or(25).to_string();
-
-        let mut params: Vec<(&str, &str)> =
-            vec![("channel_ids", channel_id), ("limit", &limit_val)];
-        if let Some(c) = cursor {
-            params.push(("cursor", c));
-        }
 
         let resp = self
             .http
             .get(&url)
             .header("x-api-key", &self.api_key)
-            .query(&params)
+            .query(&ChannelFeedQuery {
+                channel_ids: channel_id,
+                cursor,
+                limit: limit.unwrap_or(25),
+            })
             .send()
             .map_err(|e| format!("Neynar channel feed failed: {e}"))?;
 
@@ -579,8 +587,6 @@ pub(crate) struct FarcasterUser {
     pub(crate) following_count: Option<u64>,
     pub(crate) verifications: Option<Vec<String>>,
     pub(crate) verified_addresses: Option<FarcasterVerifiedAddresses>,
-    #[serde(flatten)]
-    pub(crate) _extra: HashMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -608,8 +614,6 @@ pub(crate) struct FarcasterCast {
     pub(crate) reactions: Option<FarcasterCastReactions>,
     pub(crate) replies: Option<FarcasterCastReplies>,
     pub(crate) channel: Option<FarcasterCastChannel>,
-    #[serde(flatten)]
-    pub(crate) _extra: HashMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -646,8 +650,6 @@ pub(crate) struct FarcasterChannel {
     pub(crate) image_url: Option<String>,
     pub(crate) follower_count: Option<u64>,
     pub(crate) lead: Option<FarcasterCastAuthor>,
-    #[serde(flatten)]
-    pub(crate) _extra: HashMap<String, Value>,
 }
 
 pub(crate) fn format_cast(c: &FarcasterCast) -> Value {
@@ -827,8 +829,6 @@ pub(crate) struct LunarCrushTrendingTopic {
     pub(crate) num_contributors: Option<u64>,
     pub(crate) num_posts: Option<u64>,
     pub(crate) interactions_24h: Option<u64>,
-    #[serde(flatten)]
-    pub(crate) _extra: HashMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -846,8 +846,6 @@ pub(crate) struct LunarCrushTopicSentiment {
     pub(crate) num_posts: Option<u64>,
     pub(crate) categories: Option<Vec<String>>,
     pub(crate) trend: Option<String>,
-    #[serde(flatten)]
-    pub(crate) _extra: HashMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,6 +1,6 @@
 [package]
 name = "aomi-sdk"
-version = "0.1.14"
+version = "0.1.15"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/aomi-labs/aomi-sdk"

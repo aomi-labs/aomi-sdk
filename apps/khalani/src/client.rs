@@ -7,14 +7,15 @@ use std::time::Duration;
 #[derive(Clone, Default)]
 pub(crate) struct KhalaniApp;
 
+#[allow(unused_imports)]
 pub(crate) use crate::tool::*;
+pub(crate) use crate::types::*;
 
 // ============================================================================
 // Khalani HTTP Client (blocking)
 // ============================================================================
 
 pub(crate) const DEFAULT_KHALANI_API: &str = "https://api.hyperstream.dev";
-pub(crate) const SYSTEM_NEXT_ACTION_KEY: &str = "SYSTEM_NEXT_ACTION";
 
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedKhalaniToken {
@@ -61,19 +62,6 @@ impl KhalaniClient {
             .map_err(|e| format!("[khalani] {operation} decode failed: {e}; body: {body}"))
     }
 
-    pub(crate) fn with_source(value: Value) -> Value {
-        match value {
-            Value::Object(mut map) => {
-                map.insert("source".to_string(), Value::String("khalani".to_string()));
-                Value::Object(map)
-            }
-            other => json!({
-                "source": "khalani",
-                "data": other,
-            }),
-        }
-    }
-
     // ---- Quote ----
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn get_quote(
@@ -87,32 +75,27 @@ impl KhalaniClient {
         receiver_address: Option<&str>,
         slippage_bps: Option<u32>,
     ) -> Result<Value, String> {
-        let mut payload = json!({
-            "tradeType": "EXACT_INPUT",
-            "fromChainId": from_chain_id,
-            "toChainId": to_chain_id,
-            "fromToken": from_token,
-            "toToken": to_token,
-            "amount": amount,
-            "fromAddress": sender_address,
-        });
-        if let Some(receiver) = receiver_address {
-            payload["receiver"] = Value::String(receiver.to_string());
-        }
-        if let Some(bps) = slippage_bps {
-            payload["slippageInBps"] = json!(bps);
-        }
+        let payload = KhalaniQuoteRequest {
+            trade_type: "EXACT_INPUT",
+            from_chain_id,
+            to_chain_id,
+            from_token: from_token.to_string(),
+            to_token: to_token.to_string(),
+            amount: amount.to_string(),
+            from_address: sender_address.to_string(),
+            recipient: receiver_address.map(str::to_string),
+            slippage_in_bps: slippage_bps,
+        };
 
         let request = self
             .http
             .post(format!("{}/v1/quotes", self.api_endpoint))
             .json(&payload);
-        let value = Self::send_json(request, "get quote")?;
-        Ok(Self::with_source(value))
+        Self::send_json(request, "get quote")
     }
 
     // ---- Build Deposit ----
-    pub(crate) fn build_deposit(&self, payload: Value) -> Result<Value, String> {
+    pub(crate) fn build_deposit<T: Serialize>(&self, payload: &T) -> Result<Value, String> {
         let request = self
             .http
             .post(format!("{}/v1/deposit/build", self.api_endpoint))
@@ -121,13 +104,12 @@ impl KhalaniClient {
     }
 
     // ---- Submit Deposit ----
-    pub(crate) fn submit_deposit(&self, payload: Value) -> Result<Value, String> {
+    pub(crate) fn submit_deposit<T: Serialize>(&self, payload: &T) -> Result<Value, String> {
         let request = self
             .http
             .put(format!("{}/v1/deposit/submit", self.api_endpoint))
             .json(&payload);
-        let value = Self::send_json(request, "submit deposit")?;
-        Ok(Self::with_source(value))
+        Self::send_json(request, "submit deposit")
     }
 
     // ---- Orders by Address ----
@@ -160,8 +142,7 @@ impl KhalaniClient {
             request = request.query(&query_params);
         }
 
-        let value = Self::send_json(request, "get orders by address")?;
-        Ok(Self::with_source(value))
+        Self::send_json(request, "get orders by address")
     }
 
     // ---- Tokens ----
@@ -191,8 +172,7 @@ impl KhalaniClient {
             request = request.query(&query_params);
         }
 
-        let value = Self::send_json(request, "get tokens")?;
-        Ok(Self::with_source(value))
+        Self::send_json(request, "get tokens")
     }
 
     // ---- Search Tokens ----
@@ -222,15 +202,13 @@ impl KhalaniClient {
             request = request.query(&query_params);
         }
 
-        let value = Self::send_json(request, "search tokens")?;
-        Ok(Self::with_source(value))
+        Self::send_json(request, "search tokens")
     }
 
     // ---- Chains ----
     pub(crate) fn get_chains(&self) -> Result<Value, String> {
         let request = self.http.get(format!("{}/v1/chains", self.api_endpoint));
-        let value = Self::send_json(request, "get chains")?;
-        Ok(Self::with_source(value))
+        Self::send_json(request, "get chains")
     }
 
     pub(crate) fn resolve_token(
@@ -530,7 +508,7 @@ pub(crate) fn build_transaction_preflight(tx: &Value) -> Option<Value> {
         let amount_hex = format!("0x{amount_word}");
 
         return Some(json!({
-            "tool": "encode_and_simulate",
+            "tool": "run_tx",
             "args": {
                 "function_signature": "approve(address,uint256)",
                 "arguments": [spender, amount_hex],
@@ -567,19 +545,31 @@ pub(crate) fn extract_quote_summary(quote_entry: &Value) -> Value {
     })
 }
 
-pub(crate) fn build_wallet_tx_request(tx: &Value, description: String) -> Value {
-    json!({
-        "to": tx.get("to").cloned().unwrap_or(Value::Null),
-        "value": tx.get("value").cloned().unwrap_or_else(|| Value::String("0".to_string())),
-        "data": tx.get("data").cloned().unwrap_or_else(|| Value::String("0x".to_string())),
-        "gas_limit": tx.get("gas_limit").cloned().unwrap_or(Value::Null),
-        "description": description,
+pub(crate) fn build_stage_tx_request(tx: &Value, description: String) -> Value {
+    serde_json::to_value(KhalaniStageTxRequest {
+        to: tx.get("to").cloned().unwrap_or(Value::Null),
+        value: tx
+            .get("value")
+            .cloned()
+            .unwrap_or_else(|| Value::String("0".to_string())),
+        gas_limit: tx.get("gas_limit").cloned().unwrap_or(Value::Null),
+        description,
+        data: KhalaniStageTxData {
+            raw: tx
+                .get("data")
+                .cloned()
+                .unwrap_or_else(|| Value::String("0x".to_string())),
+        },
+        kind: "contract_call",
     })
+    .unwrap_or(Value::Null)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use aomi_sdk::RouteTrigger;
+    use serde_json::json;
 
     #[test]
     fn resolves_common_chain_aliases() {
@@ -595,112 +585,150 @@ mod tests {
         assert!(!is_hex_address("ETH"));
         assert!(!is_hex_address("0x1234"));
     }
+
+    #[test]
+    fn permit2_follow_up_uses_signature_artifact_plan() {
+        let result = build_khalani_follow_up_result::<host::CommitEip712, SubmitKhalaniOrder>(
+            "quote-1",
+            &Some("route-1".to_string()),
+            "PERMIT2",
+            json!({"summary": "ok"}),
+            json!({"typed_data": {"domain": {"chainId": 1}}}),
+            None,
+            json!({
+                "quote_id": "quote-1",
+                "route_id": "route-1",
+                "submit_type": "SIGNED_EIP712",
+                "signature": null
+            }),
+            "signature",
+            "Permit2 signed — submit the Khalani order.",
+        )
+        .expect("route plan should build");
+
+        assert_eq!(result.routes.len(), 2);
+        assert_eq!(result.routes[0].bind_as.as_deref(), Some("signature"));
+        assert!(matches!(
+            result.routes[0].trigger,
+            RouteTrigger::OnSyncReturn
+        ));
+        assert!(matches!(
+            &result.routes[1].trigger,
+            RouteTrigger::OnBoundEvent { alias } if alias == "signature"
+        ));
+    }
+
+    #[test]
+    fn staged_tx_follow_up_uses_transaction_hash_artifact_plan() {
+        let result = build_khalani_follow_up_result::<host::StageTx, SubmitKhalaniOrder>(
+            "quote-1",
+            &Some("route-1".to_string()),
+            "CALL",
+            json!({"summary": "ok"}),
+            json!({"to": "0x1", "data": {"raw": "0x"}}),
+            Some(json!({
+                "tool": "view_state",
+                "args": {"to": "0x1", "function_signature": "allowance(address,address)", "arguments": ["0x1", "0x2"]}
+            })),
+            json!({
+                "quote_id": "quote-1",
+                "route_id": "route-1",
+                "submit_type": "SIGNED_TRANSACTION",
+                "transaction_hash": null
+            }),
+            "transaction_hash",
+            "Transaction confirmed — submit the Khalani order.",
+        )
+        .expect("route plan should build");
+
+        assert_eq!(result.routes.len(), 3);
+        assert!(matches!(
+            result.routes[0].trigger,
+            RouteTrigger::OnSyncReturn
+        ));
+        assert_eq!(
+            result.routes[1].bind_as.as_deref(),
+            Some("transaction_hash")
+        );
+        assert!(matches!(
+            result.routes[1].trigger,
+            RouteTrigger::OnSyncReturn
+        ));
+        assert!(matches!(
+            &result.routes[2].trigger,
+            RouteTrigger::OnBoundEvent { alias } if alias == "transaction_hash"
+        ));
+    }
 }
 
 // ============================================================================
-// SYSTEM_NEXT_ACTION types and builder
+// Typed RouteStep emission
 // ============================================================================
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-enum NextAction {
-    ToolCalls(Vec<NextActionTool>),
-    #[allow(dead_code)]
-    Instructions(String),
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct NextActionTool {
-    pub(crate) name: String,
-    pub(crate) reason: String,
-    pub(crate) args: Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) condition: Option<String>,
+fn add_khalani_preflight_step(
+    next: &mut NextRoutesBuilder<'_>,
+    preflight_step: Option<&(String, Value)>,
+) {
+    if let Some((name, args)) = preflight_step {
+        match name.as_str() {
+            "view_state" => {
+                next.add::<host::ViewState>(args.clone()).note(
+                    "preflight allowance check; surface failures to the user before continuing",
+                );
+            }
+            _ => {
+                next.add_named(name.clone(), args.clone()).note(
+                    "preflight allowance check; surface failures to the user before continuing",
+                );
+            }
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn build_khalani_result(
+pub(crate) fn build_khalani_follow_up_result<WalletTool, FollowUpTool>(
     quote_id: &str,
     route_id: &Option<String>,
     transaction_type: &str,
     summary: Value,
-    wallet_tool: &str,
     wallet_request: Value,
     preflight: Option<Value>,
-    follow_up: Value,
-) -> Result<Value, String> {
-    let mut tool_calls = Vec::new();
-
-    if let Some(ref pf) = preflight
-        && let Some(name) = pf.get("tool").and_then(Value::as_str)
-    {
-        tool_calls.push(NextActionTool {
-            name: name.to_string(),
-            reason: "Run preflight checks before wallet interaction.".to_string(),
-            args: pf.get("args").cloned().unwrap_or_default(),
-            condition: None,
-        });
-    }
-
-    tool_calls.push(NextActionTool {
-        name: wallet_tool.to_string(),
-        reason: "REQUIRED: Call this tool with these exact args. \
-                 Do NOT skip or assume it was already sent."
-            .to_string(),
-        args: wallet_request.clone(),
-        condition: if preflight.is_some() {
-            Some("After preflight succeeds.".to_string())
-        } else {
-            None
-        },
+    follow_up_args: Value,
+    callback_field: &'static str,
+    note: &'static str,
+) -> Result<ToolReturn, String>
+where
+    WalletTool: RouteTarget,
+    FollowUpTool: RouteTarget,
+{
+    let preflight_step = preflight.as_ref().and_then(|pf| {
+        pf.get("tool").and_then(Value::as_str).map(|name| {
+            (
+                name.to_string(),
+                pf.get("args").cloned().unwrap_or_default(),
+            )
+        })
     });
 
-    if let Some(step) = follow_up.get("step").and_then(Value::as_str) {
-        let condition = match step {
-            "build_khalani_order" => {
-                Some("After wallet callback reports approval success.".to_string())
-            }
-            "submit_khalani_order" if wallet_tool == "send_eip712_to_wallet" => Some(
-                "After wallet callback reports signature success; \
-                 include signature from callback."
-                    .to_string(),
-            ),
-            "submit_khalani_order" => Some(
-                "After wallet callback reports transaction success; \
-                 include transaction_hash from callback."
-                    .to_string(),
-            ),
-            _ => None,
-        };
-        tool_calls.push(NextActionTool {
-            name: step.to_string(),
-            reason: follow_up
-                .get("reason")
-                .and_then(Value::as_str)
-                .unwrap_or("Run the follow-up step for this workflow.")
-                .to_string(),
-            args: follow_up.get("args_template").cloned().unwrap_or_default(),
-            condition,
-        });
-    }
-
-    let action_value = serde_json::to_value(NextAction::ToolCalls(tool_calls))
-        .map_err(|e| format!("Failed to serialize SYSTEM_NEXT_ACTION: {e}"))?;
-
-    let mut result = json!({
+    let result = json!({
         "source": "khalani",
         "quote_id": quote_id,
         "route_id": route_id,
         "transaction_type": transaction_type,
         "summary": summary,
-        "wallet_request": wallet_request,
+        "wallet_request": wallet_request.clone(),
     });
-    let obj = result
-        .as_object_mut()
-        .ok_or_else(|| "result is not an object".to_string())?;
-    obj.insert(SYSTEM_NEXT_ACTION_KEY.to_string(), action_value);
 
-    Ok(result)
+    Ok(ToolReturn::route(result)
+        .next(|next| {
+            add_khalani_preflight_step(next, preflight_step.as_ref());
+            next.add::<WalletTool>(wallet_request)
+                .bind_as(callback_field);
+        })
+        .after::<FollowUpTool>(follow_up_args)
+        .awaits(callback_field)
+        .note(note)
+        .build())
 }
 
 // ============================================================================
