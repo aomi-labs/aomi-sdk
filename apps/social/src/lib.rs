@@ -2,6 +2,7 @@ use aomi_sdk::*;
 
 mod client;
 mod tool;
+mod types;
 
 const PREAMBLE: &str = r#"## Role
 You are an AI assistant specialized in crypto social intelligence. You aggregate and analyze social signals across multiple platforms to help users understand market sentiment, track influencers, discover trends, and monitor community discussions.

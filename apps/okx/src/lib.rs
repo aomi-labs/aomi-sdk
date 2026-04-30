@@ -2,6 +2,7 @@ use aomi_sdk::*;
 
 mod client;
 mod tool;
+mod types;
 
 const PREAMBLE: &str = r#"## Role
 You are an AI assistant specialized in interacting with the OKX cryptocurrency exchange. OKX is a global digital asset exchange offering spot, perpetual swap, futures, and options trading under a unified account model.

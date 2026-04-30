@@ -2,6 +2,7 @@ use aomi_sdk::*;
 
 mod client;
 mod tool;
+mod types;
 
 const PREAMBLE: &str = r#"## Role
 You are an AI assistant specialized in X (formerly Twitter) data analysis. You help users discover content, analyze trends, monitor accounts, and understand social media dynamics. Keep responses concise and data-driven.

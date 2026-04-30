@@ -1,6 +1,23 @@
 use crate::client::*;
+use crate::types::{
+    Binance24hrStatsResponse, BinanceAccountResponse, BinanceDepthResponse, BinanceKlineResponse,
+    BinanceOrderResponse, BinancePriceResponse, BinanceTradeList,
+};
 use aomi_sdk::*;
+use serde::Serialize;
 use serde_json::Value;
+
+fn ok<T: Serialize>(value: T) -> Result<Value, String> {
+    let value = serde_json::to_value(value)
+        .map_err(|e| format!("[binance] failed to serialize response: {e}"))?;
+    Ok(match value {
+        Value::Object(mut map) => {
+            map.insert("source".to_string(), Value::String("binance".to_string()));
+            Value::Object(map)
+        }
+        other => serde_json::json!({ "source": "binance", "data": other }),
+    })
+}
 
 fn resolve_binance_credentials(
     api_key: Option<&str>,
@@ -36,7 +53,7 @@ impl DynAomiTool for GetPrice {
             Some(s) => format!("symbol={s}"),
             None => String::new(),
         };
-        client.public_get(SPOT_BASE_URL, "/ticker/price", &query)
+        ok(client.public_get::<BinancePriceResponse>(SPOT_BASE_URL, "/ticker/price", &query)?)
     }
 }
 
@@ -56,7 +73,7 @@ impl DynAomiTool for GetDepth {
         if let Some(limit) = args.limit {
             query.push_str(&format!("&limit={limit}"));
         }
-        client.public_get(SPOT_BASE_URL, "/depth", &query)
+        ok(client.public_get::<BinanceDepthResponse>(SPOT_BASE_URL, "/depth", &query)?)
     }
 }
 
@@ -82,7 +99,7 @@ impl DynAomiTool for GetKlines {
         if let Some(limit) = args.limit {
             query.push_str(&format!("&limit={limit}"));
         }
-        client.public_get(SPOT_BASE_URL, "/klines", &query)
+        ok(client.public_get::<BinanceKlineResponse>(SPOT_BASE_URL, "/klines", &query)?)
     }
 }
 
@@ -102,7 +119,7 @@ impl DynAomiTool for Get24hrStats {
             Some(s) => format!("symbol={s}"),
             None => String::new(),
         };
-        client.public_get(SPOT_BASE_URL, "/ticker/24hr", &query)
+        ok(client.public_get::<Binance24hrStatsResponse>(SPOT_BASE_URL, "/ticker/24hr", &query)?)
     }
 }
 
@@ -133,7 +150,13 @@ impl DynAomiTool for PlaceOrder {
         if let Some(ref price) = args.price {
             query.push_str(&format!("&price={price}"));
         }
-        client.signed_post(SPOT_BASE_URL, "/order", &api_key, &secret_key, &query)
+        ok(client.signed_post::<BinanceOrderResponse>(
+            SPOT_BASE_URL,
+            "/order",
+            &api_key,
+            &secret_key,
+            &query,
+        )?)
     }
 }
 
@@ -158,7 +181,13 @@ impl DynAomiTool for CancelOrder {
         if let Some(ref cid) = args.orig_client_order_id {
             query.push_str(&format!("&origClientOrderId={cid}"));
         }
-        client.signed_delete(SPOT_BASE_URL, "/order", &api_key, &secret_key, &query)
+        ok(client.signed_delete::<BinanceOrderResponse>(
+            SPOT_BASE_URL,
+            "/order",
+            &api_key,
+            &secret_key,
+            &query,
+        )?)
     }
 }
 
@@ -176,7 +205,13 @@ impl DynAomiTool for GetAccount {
         let client = BinanceClient::new()?;
         let (api_key, secret_key) =
             resolve_binance_credentials(args.api_key.as_deref(), args.secret_key.as_deref())?;
-        client.signed_get(SPOT_BASE_URL, "/account", &api_key, &secret_key, "")
+        ok(client.signed_get::<BinanceAccountResponse>(
+            SPOT_BASE_URL,
+            "/account",
+            &api_key,
+            &secret_key,
+            "",
+        )?)
     }
 }
 
@@ -208,6 +243,12 @@ impl DynAomiTool for GetTrades {
         if let Some(limit) = args.limit {
             query.push_str(&format!("&limit={limit}"));
         }
-        client.signed_get(SPOT_BASE_URL, "/myTrades", &api_key, &secret_key, &query)
+        ok(client.signed_get::<BinanceTradeList>(
+            SPOT_BASE_URL,
+            "/myTrades",
+            &api_key,
+            &secret_key,
+            &query,
+        )?)
     }
 }

@@ -11,10 +11,10 @@ This repository contains standalone Aomi app crates under `apps/<name>`. When an
 
 ## Runtime Rules
 
-- Treat `SYSTEM_NEXT_ACTION` as the source of truth for execution workflows.
-- Preserve wallet/tool args exactly when a tool returns `SYSTEM_NEXT_ACTION`.
+- Treat the `ToolReturn` envelope's `routes` (built via `RouteStep::on_return / on_wallet_*`) as the source of truth for multi-step execution workflows.
+- Preserve wallet/tool args exactly when a tool emits a route hint.
 - Do not rebuild wallet payloads manually if the tool already emitted them.
-- Preserve callback artifacts exactly: `transaction_hash`, `signature`, `quote_id`, `route_id`, `submit_type`, and similar follow-up fields.
+- Preserve callback artifacts exactly: `transaction_hash`, `signature`, `quote_id`, `route_id`, `submit_type`, and similar follow-up fields. The host splices wallet callback fields into hinted args automatically — don't re-thread them by hand.
 - Do not bypass harness-driven wallet steps with ad hoc tool calls.
 
 ## Debug Process
@@ -31,7 +31,7 @@ This repository contains standalone Aomi app crates under `apps/<name>`. When an
    - request payload shape
    - response parsing
    - prompt/preamble wording if the runtime flow changed
-5. Keep runtime flow compatibility where possible. If an app already uses `SYSTEM_NEXT_ACTION`, fix the API client first and preserve the harness contract.
+5. Keep runtime flow compatibility where possible. If an app already emits route hints via `ToolReturn::with_routes`, fix the API client first and preserve the harness contract.
 
 ## API Migration Rules
 
@@ -64,5 +64,5 @@ When debugging live integrations, keep one or two direct `curl` probes as eviden
 ## Writing Guidance
 
 - Keep app preambles aligned with the real runtime behavior.
-- If a tool now returns `SYSTEM_NEXT_ACTION`, say that explicitly in the preamble and tool descriptions.
+- If a tool now emits route hints via `ToolReturn::with_routes`, mention that the host will inject `[[SYSTEM:...]]` next-step prompts in the preamble and tool descriptions.
 - Prefer succinct operational instructions over long explanations.

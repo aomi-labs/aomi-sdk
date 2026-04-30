@@ -1,4 +1,5 @@
 use crate::client::*;
+use crate::types::CowQuoteRequest;
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
 use serde::Deserialize;
@@ -203,30 +204,24 @@ impl DynAomiTool for GetAggregatorSwapQuote {
         }
 
         if want_all || preferred == "cow" {
-            let mut payload = json!({
-                "sellToken": client.resolve_token_address(&args.chain, &args.sell_token)?,
-                "buyToken": client.resolve_token_address(&args.chain, &args.buy_token)?,
-                "sellAmountBeforeFee": amount_base_units,
-                "from": args.sender_address,
-                "kind": args.order_side.clone().unwrap_or_else(|| "sell".to_string()),
-            });
-            if let Some(receiver) = args.receiver_address.clone() {
-                payload["receiver"] = Value::String(receiver);
-            }
-            if let Some(valid_to) = args.valid_to {
-                payload["validTo"] = json!(valid_to);
-            }
-            if let Some(partially_fillable) = args.partially_fillable {
-                payload["partiallyFillable"] = json!(partially_fillable);
-            }
-            if let Some(signing_scheme) = args.signing_scheme.clone() {
-                payload["signingScheme"] = Value::String(signing_scheme);
-            }
-            if let Some(slippage) = args.slippage {
-                payload["slippageBps"] = json!((slippage * 10_000.0) as u32);
-            }
+            let sell_token = client.resolve_token_address(&args.chain, &args.sell_token)?;
+            let buy_token = client.resolve_token_address(&args.chain, &args.buy_token)?;
+            let order_kind = args.order_side.as_deref().unwrap_or("sell");
+            let slippage_bps = args.slippage.map(|slippage| (slippage * 10_000.0) as u32);
+            let payload = CowQuoteRequest {
+                sell_token: &sell_token,
+                buy_token: &buy_token,
+                sell_amount_before_fee: &amount_base_units,
+                from: &args.sender_address,
+                kind: order_kind,
+                receiver: args.receiver_address.as_deref(),
+                valid_to: args.valid_to,
+                partially_fillable: args.partially_fillable,
+                signing_scheme: args.signing_scheme.as_deref(),
+                slippage_bps,
+            };
 
-            match client.get_quote_cow(&args.chain, payload) {
+            match client.get_quote_cow(&args.chain, &payload) {
                 Ok(v) => quotes.push(v),
                 Err(e) => quotes.push(json!({"source":"cow","error": e})),
             }
@@ -272,7 +267,7 @@ impl DynAomiTool for PlaceAggregatorEvmOrder {
     type App = DefiApp;
     type Args = PlaceAggregatorEvmOrderArgs;
     const NAME: &'static str = "place_aggregator_evm_order";
-    const DESCRIPTION: &'static str = "Get executable order tx data via 0x or LI.FI. Returns transaction data (to, data, value) that the host should verify with `encode_and_simulate` and send with `send_transaction_to_wallet`. LI.FI may return an approval_tx that must be executed first.";
+    const DESCRIPTION: &'static str = "Get executable order tx data via 0x or LI.FI. Returns raw transaction payloads that the host should stage with `stage_tx` using `data.raw`, verify with `simulate_batch`, then finalize with `commit_tx`. LI.FI may return an approval_tx that must be executed first.";
 
     fn run(_app: &DefiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = Aggregator::new()?;
@@ -307,7 +302,7 @@ impl DynAomiTool for PlaceAggregatorEvmOrder {
                 "source": "0x",
                 "quote": quote,
                 "transaction": tx,
-                "note": "Use the host's encode_and_simulate tool to verify this transaction, then use send_transaction_to_wallet to execute it.",
+                "note": "Stage this raw 0x transaction with stage_tx using data.raw, verify the staged pending_tx_id with simulate_batch, then call commit_tx. Do not re-encode 0x calldata.",
             }));
         }
 
@@ -334,7 +329,7 @@ impl DynAomiTool for PlaceAggregatorEvmOrder {
                 "payload": payload,
                 "approval_tx": payload.get("approval_tx").cloned().unwrap_or(Value::Null),
                 "main_tx": payload.get("main_tx").cloned().unwrap_or(Value::Null),
-                "note": "If approval_tx is present, use the host's encode_and_simulate and send_transaction_to_wallet tools for the approval first, then do the same for main_tx.",
+                "note": "If approval_tx is present, stage approval_tx with stage_tx first using data.raw, stage main_tx the same way, verify the staged pending_tx_id list with simulate_batch, then call commit_tx once per staged tx. Do not re-encode LI.FI calldata.",
             }));
         }
 

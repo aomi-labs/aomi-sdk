@@ -1,6 +1,20 @@
 use crate::client::*;
+use crate::types::TransferTransaction;
 use aomi_sdk::*;
+use serde::Serialize;
 use serde_json::{Value, json};
+
+fn ok<T: Serialize>(value: T) -> Result<Value, String> {
+    let value = serde_json::to_value(value)
+        .map_err(|e| format!("[pelagos] failed to serialize response: {e}"))?;
+    Ok(match value {
+        Value::Object(mut map) => {
+            map.insert("source".to_string(), Value::String("pelagos".to_string()));
+            Value::Object(map)
+        }
+        other => json!({ "source": "pelagos", "data": other }),
+    })
+}
 
 pub(crate) struct PelagosHealth;
 
@@ -13,7 +27,7 @@ impl DynAomiTool for PelagosHealth {
     fn run(_app: &PelagosApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let c = client_from(args.base_url.as_deref())?;
         let payload = c.health()?;
-        Ok(json!({
+        ok(json!({
             "base_url": c.base_url,
             "healthy": true,
             "response": payload,
@@ -32,7 +46,7 @@ impl DynAomiTool for PelagosGetBalance {
     fn run(_app: &PelagosApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let c = client_from(args.base_url.as_deref())?;
         let result = c.get_balance(&args.user, &args.token)?;
-        Ok(json!({
+        ok(json!({
             "base_url": c.base_url,
             "user": args.user,
             "token": args.token,
@@ -52,7 +66,7 @@ impl DynAomiTool for PelagosTxStatus {
     fn run(_app: &PelagosApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let c = client_from(args.base_url.as_deref())?;
         let status = c.tx_status(&args.tx_hash)?;
-        Ok(json!({
+        ok(json!({
             "base_url": c.base_url,
             "tx_hash": args.tx_hash,
             "status": status,
@@ -71,7 +85,7 @@ impl DynAomiTool for PelagosTxReceipt {
     fn run(_app: &PelagosApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let c = client_from(args.base_url.as_deref())?;
         let receipt = c.tx_receipt(&args.tx_hash)?;
-        Ok(json!({
+        ok(json!({
             "base_url": c.base_url,
             "tx_hash": args.tx_hash,
             "receipt": receipt,
@@ -94,7 +108,6 @@ impl DynAomiTool for PelagosSend {
                     .to_string(),
             );
         }
-
         if args.hash.is_empty() {
             return Err("hash field must not be empty".to_string());
         }
@@ -105,18 +118,18 @@ impl DynAomiTool for PelagosSend {
             return Err("token must not be empty".to_string());
         }
 
-        let tx = json!({
-            "sender": args.sender,
-            "receiver": args.receiver,
-            "value": args.value,
-            "token": args.token,
-            "hash": args.hash,
-        });
+        let tx = TransferTransaction {
+            sender: args.sender,
+            receiver: args.receiver,
+            value: args.value,
+            token: args.token,
+            hash: args.hash,
+        };
 
         let c = client_from(args.base_url.as_deref())?;
         let result = c.send_transaction(&tx)?;
 
-        Ok(json!({
+        ok(json!({
             "base_url": c.base_url,
             "submitted": true,
             "transaction": tx,
@@ -164,7 +177,7 @@ impl DynAomiTool for PelagosRpc {
         let c = client_from(args.base_url.as_deref())?;
         let result = c.call(&args.method, params.clone())?;
 
-        Ok(json!({
+        ok(json!({
             "base_url": c.base_url,
             "method": args.method,
             "params": params,

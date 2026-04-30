@@ -2,6 +2,7 @@ use aomi_sdk::*;
 
 mod client;
 mod tool;
+mod types;
 
 const PREAMBLE: &str = r#"## Role
 You are an AI assistant specialized in Farcaster, the decentralized social protocol, via the Neynar API. You help users discover casts, look up profiles, explore channels, and track trending content on Farcaster.

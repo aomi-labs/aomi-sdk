@@ -5,6 +5,7 @@ use std::time::Duration;
 use uuid::Uuid;
 
 pub(crate) use crate::tool::*;
+use crate::types::{CreateWalletRequest, SignRawRequest};
 
 pub(crate) const DEFAULT_PARA_API: &str = "https://api.beta.getpara.com";
 const MAX_RETRIES: u32 = 3;
@@ -93,7 +94,11 @@ impl ParaClient {
         }
     }
 
-    pub(crate) fn create_wallet(&self, api_key: &str, body: Value) -> Result<Value, String> {
+    pub(crate) fn create_wallet(
+        &self,
+        api_key: &str,
+        body: &CreateWalletRequest,
+    ) -> Result<Value, String> {
         self.send_with_retry(
             api_key,
             move |http, base_url, key| {
@@ -125,7 +130,9 @@ impl ParaClient {
         data: &str,
     ) -> Result<Value, String> {
         let wallet_id = wallet_id.to_string();
-        let payload = json!({ "data": data });
+        let payload = SignRawRequest {
+            data: data.to_string(),
+        };
         self.send_with_retry(
             api_key,
             move |http, base_url, key| {

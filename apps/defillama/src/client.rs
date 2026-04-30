@@ -1,7 +1,12 @@
+use crate::types::{
+    ExcludedChartsQuery, FeesOverviewQuery, HistoricalTokenPriceQuery, IncludePricesQuery,
+    ProtocolFeesQuery, StablecoinHistoryQuery, TokenPriceChangeQuery,
+};
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde::Serialize;
+use serde_json::Value;
 use std::time::Duration;
 
 #[derive(Clone, Default)]
@@ -44,7 +49,7 @@ impl DefiLamaClient {
         })
     }
 
-    pub(crate) fn get_json(&self, url: &str, op: &str) -> Result<Value, String> {
+    fn get_json(&self, url: &str, op: &str) -> Result<Value, String> {
         let response = self
             .http
             .get(url)
@@ -63,24 +68,35 @@ impl DefiLamaClient {
             .map_err(|e| format!("[defillama] {op} decode failed ({url}): {e}; body: {body}"))
     }
 
-    pub(crate) fn with_source(value: Value) -> Value {
-        match value {
-            Value::Object(mut map) => {
-                map.insert("source".to_string(), Value::String("defillama".to_string()));
-                Value::Object(map)
-            }
-            other => json!({
-                "source": "defillama",
-                "data": other,
-            }),
+    fn get_json_with_query<Q: Serialize>(
+        &self,
+        url: &str,
+        query: &Q,
+        op: &str,
+    ) -> Result<Value, String> {
+        let response = self
+            .http
+            .get(url)
+            .query(query)
+            .send()
+            .map_err(|e| format!("[defillama] {op} request failed ({url}): {e}"))?;
+
+        let status = response.status();
+        let body = response.text().unwrap_or_default();
+        if !status.is_success() {
+            return Err(format!(
+                "[defillama] {op} request failed ({url}): {status} {body}"
+            ));
         }
+
+        serde_json::from_str::<Value>(&body)
+            .map_err(|e| format!("[defillama] {op} decode failed ({url}): {e}; body: {body}"))
     }
 
     pub(crate) fn get_token_price(&self, token: &str) -> Result<Value, String> {
         let coin_id = normalize_token_id(token);
         let url = format!("{}/prices/current/{}", self.coins_endpoint, coin_id);
-        let value = self.get_json(&url, "token price")?;
-        Ok(Self::with_source(value))
+        self.get_json(&url, "token price")
     }
 
     pub(crate) fn get_yield_pools(
@@ -115,7 +131,7 @@ impl DefiLamaClient {
             });
         }
 
-        Ok(Self::with_source(value))
+        Ok(value)
     }
 
     pub(crate) fn get_protocols(&self, category: Option<&str>) -> Result<Value, String> {
@@ -140,7 +156,7 @@ impl DefiLamaClient {
             });
         }
 
-        Ok(Self::with_source(value))
+        Ok(value)
     }
 
     pub(crate) fn get_chains_tvl(&self) -> Result<Value, String> {
@@ -155,17 +171,12 @@ impl DefiLamaClient {
             });
         }
 
-        Ok(Self::with_source(value))
+        Ok(value)
     }
-
-    // ========================================================================
-    // Tier 1 methods
-    // ========================================================================
 
     pub(crate) fn get_protocol_detail(&self, protocol: &str) -> Result<Value, String> {
         let url = format!("{}/protocol/{}", self.api_endpoint, protocol);
-        let value = self.get_json(&url, "protocol detail")?;
-        Ok(Self::with_source(value))
+        self.get_json(&url, "protocol detail")
     }
 
     pub(crate) fn get_dex_volumes(
@@ -178,29 +189,15 @@ impl DefiLamaClient {
             Some(c) => format!("{}/overview/dexs/{}", self.api_endpoint, c),
             None => format!("{}/overview/dexs", self.api_endpoint),
         };
-        let mut request = self.http.get(&url);
-        let exc = exclude_total_data_chart.unwrap_or(true).to_string();
-        let excb = exclude_total_data_chart_breakdown
-            .unwrap_or(true)
-            .to_string();
-        request = request.query(&[
-            ("excludeTotalDataChart", exc.as_str()),
-            ("excludeTotalDataChartBreakdown", excb.as_str()),
-        ]);
-        let response = request
-            .send()
-            .map_err(|e| format!("[defillama] dex volumes request failed ({url}): {e}"))?;
-        let status = response.status();
-        let body = response.text().unwrap_or_default();
-        if !status.is_success() {
-            return Err(format!(
-                "[defillama] dex volumes request failed ({url}): {status} {body}"
-            ));
-        }
-        let value: Value = serde_json::from_str(&body).map_err(|e| {
-            format!("[defillama] dex volumes decode failed ({url}): {e}; body: {body}")
-        })?;
-        Ok(Self::with_source(value))
+        self.get_json_with_query(
+            &url,
+            &ExcludedChartsQuery {
+                exclude_total_data_chart: exclude_total_data_chart.unwrap_or(true),
+                exclude_total_data_chart_breakdown: exclude_total_data_chart_breakdown
+                    .unwrap_or(true),
+            },
+            "dex volumes",
+        )
     }
 
     pub(crate) fn get_fees_overview(
@@ -214,32 +211,16 @@ impl DefiLamaClient {
             Some(c) => format!("{}/overview/fees/{}", self.api_endpoint, c),
             None => format!("{}/overview/fees", self.api_endpoint),
         };
-        let mut request = self.http.get(&url);
-        let exc = exclude_total_data_chart.unwrap_or(true).to_string();
-        let excb = exclude_total_data_chart_breakdown
-            .unwrap_or(true)
-            .to_string();
-        request = request.query(&[
-            ("excludeTotalDataChart", exc.as_str()),
-            ("excludeTotalDataChartBreakdown", excb.as_str()),
-        ]);
-        if let Some(dt) = data_type {
-            request = request.query(&[("dataType", dt)]);
-        }
-        let response = request
-            .send()
-            .map_err(|e| format!("[defillama] fees overview request failed ({url}): {e}"))?;
-        let status = response.status();
-        let body = response.text().unwrap_or_default();
-        if !status.is_success() {
-            return Err(format!(
-                "[defillama] fees overview request failed ({url}): {status} {body}"
-            ));
-        }
-        let value: Value = serde_json::from_str(&body).map_err(|e| {
-            format!("[defillama] fees overview decode failed ({url}): {e}; body: {body}")
-        })?;
-        Ok(Self::with_source(value))
+        self.get_json_with_query(
+            &url,
+            &FeesOverviewQuery {
+                exclude_total_data_chart: exclude_total_data_chart.unwrap_or(true),
+                exclude_total_data_chart_breakdown: exclude_total_data_chart_breakdown
+                    .unwrap_or(true),
+                data_type: data_type.map(str::to_string),
+            },
+            "fees overview",
+        )
     }
 
     pub(crate) fn get_protocol_fees(
@@ -248,51 +229,29 @@ impl DefiLamaClient {
         data_type: Option<&str>,
     ) -> Result<Value, String> {
         let url = format!("{}/summary/fees/{}", self.api_endpoint, protocol);
-        let mut request = self.http.get(&url);
-        if let Some(dt) = data_type {
-            request = request.query(&[("dataType", dt)]);
-        }
-        let response = request
-            .send()
-            .map_err(|e| format!("[defillama] protocol fees request failed ({url}): {e}"))?;
-        let status = response.status();
-        let body = response.text().unwrap_or_default();
-        if !status.is_success() {
-            return Err(format!(
-                "[defillama] protocol fees request failed ({url}): {status} {body}"
-            ));
-        }
-        let value: Value = serde_json::from_str(&body).map_err(|e| {
-            format!("[defillama] protocol fees decode failed ({url}): {e}; body: {body}")
-        })?;
-        Ok(Self::with_source(value))
+        self.get_json_with_query(
+            &url,
+            &ProtocolFeesQuery {
+                data_type: data_type.map(str::to_string),
+            },
+            "protocol fees",
+        )
     }
 
     pub(crate) fn get_stablecoins(&self, include_prices: Option<bool>) -> Result<Value, String> {
         let url = format!("{}/stablecoins", self.stablecoins_endpoint);
-        let mut request = self.http.get(&url);
-        let ip = include_prices.unwrap_or(true).to_string();
-        request = request.query(&[("includePrices", ip.as_str())]);
-        let response = request
-            .send()
-            .map_err(|e| format!("[defillama] stablecoins request failed ({url}): {e}"))?;
-        let status = response.status();
-        let body = response.text().unwrap_or_default();
-        if !status.is_success() {
-            return Err(format!(
-                "[defillama] stablecoins request failed ({url}): {status} {body}"
-            ));
-        }
-        let value: Value = serde_json::from_str(&body).map_err(|e| {
-            format!("[defillama] stablecoins decode failed ({url}): {e}; body: {body}")
-        })?;
-        Ok(Self::with_source(value))
+        self.get_json_with_query(
+            &url,
+            &IncludePricesQuery {
+                include_prices: include_prices.unwrap_or(true),
+            },
+            "stablecoins",
+        )
     }
 
     pub(crate) fn get_stablecoin_chains(&self) -> Result<Value, String> {
         let url = format!("{}/stablecoinchains", self.stablecoins_endpoint);
-        let value = self.get_json(&url, "stablecoin chains")?;
-        Ok(Self::with_source(value))
+        self.get_json(&url, "stablecoin chains")
     }
 
     pub(crate) fn get_historical_token_price(
@@ -304,33 +263,16 @@ impl DefiLamaClient {
         period: Option<&str>,
     ) -> Result<Value, String> {
         let url = format!("{}/chart/{}", self.coins_endpoint, coins);
-        let mut request = self.http.get(&url);
-        if let Some(s) = start {
-            request = request.query(&[("start", s.to_string())]);
-        }
-        if let Some(e) = end {
-            request = request.query(&[("end", e.to_string())]);
-        }
-        if let Some(sp) = span {
-            request = request.query(&[("span", sp.to_string())]);
-        }
-        if let Some(p) = period {
-            request = request.query(&[("period", p)]);
-        }
-        let response = request.send().map_err(|e| {
-            format!("[defillama] historical token price request failed ({url}): {e}")
-        })?;
-        let status = response.status();
-        let body = response.text().unwrap_or_default();
-        if !status.is_success() {
-            return Err(format!(
-                "[defillama] historical token price request failed ({url}): {status} {body}"
-            ));
-        }
-        let value: Value = serde_json::from_str(&body).map_err(|e| {
-            format!("[defillama] historical token price decode failed ({url}): {e}; body: {body}")
-        })?;
-        Ok(Self::with_source(value))
+        self.get_json_with_query(
+            &url,
+            &HistoricalTokenPriceQuery {
+                start,
+                end,
+                span,
+                period: period.map(str::to_string),
+            },
+            "historical token price",
+        )
     }
 
     pub(crate) fn get_token_price_change(
@@ -341,40 +283,20 @@ impl DefiLamaClient {
         period: Option<&str>,
     ) -> Result<Value, String> {
         let url = format!("{}/percentage/{}", self.coins_endpoint, coins);
-        let mut request = self.http.get(&url);
-        if let Some(ts) = timestamp {
-            request = request.query(&[("timestamp", ts.to_string())]);
-        }
-        if let Some(lf) = look_forward {
-            request = request.query(&[("lookForward", lf.to_string())]);
-        }
-        if let Some(p) = period {
-            request = request.query(&[("period", p)]);
-        }
-        let response = request
-            .send()
-            .map_err(|e| format!("[defillama] token price change request failed ({url}): {e}"))?;
-        let status = response.status();
-        let body = response.text().unwrap_or_default();
-        if !status.is_success() {
-            return Err(format!(
-                "[defillama] token price change request failed ({url}): {status} {body}"
-            ));
-        }
-        let value: Value = serde_json::from_str(&body).map_err(|e| {
-            format!("[defillama] token price change decode failed ({url}): {e}; body: {body}")
-        })?;
-        Ok(Self::with_source(value))
+        self.get_json_with_query(
+            &url,
+            &TokenPriceChangeQuery {
+                timestamp,
+                look_forward,
+                period: period.map(str::to_string),
+            },
+            "token price change",
+        )
     }
-
-    // ========================================================================
-    // Tier 2 methods
-    // ========================================================================
 
     pub(crate) fn get_historical_chain_tvl(&self, chain: &str) -> Result<Value, String> {
         let url = format!("{}/v2/historicalChainTvl/{}", self.api_endpoint, chain);
-        let value = self.get_json(&url, "historical chain tvl")?;
-        Ok(Self::with_source(value))
+        self.get_json(&url, "historical chain tvl")
     }
 
     pub(crate) fn get_dex_protocol_volume(
@@ -384,29 +306,15 @@ impl DefiLamaClient {
         exclude_total_data_chart_breakdown: Option<bool>,
     ) -> Result<Value, String> {
         let url = format!("{}/summary/dexs/{}", self.api_endpoint, protocol);
-        let mut request = self.http.get(&url);
-        let exc = exclude_total_data_chart.unwrap_or(true).to_string();
-        let excb = exclude_total_data_chart_breakdown
-            .unwrap_or(true)
-            .to_string();
-        request = request.query(&[
-            ("excludeTotalDataChart", exc.as_str()),
-            ("excludeTotalDataChartBreakdown", excb.as_str()),
-        ]);
-        let response = request
-            .send()
-            .map_err(|e| format!("[defillama] dex protocol volume request failed ({url}): {e}"))?;
-        let status = response.status();
-        let body = response.text().unwrap_or_default();
-        if !status.is_success() {
-            return Err(format!(
-                "[defillama] dex protocol volume request failed ({url}): {status} {body}"
-            ));
-        }
-        let value: Value = serde_json::from_str(&body).map_err(|e| {
-            format!("[defillama] dex protocol volume decode failed ({url}): {e}; body: {body}")
-        })?;
-        Ok(Self::with_source(value))
+        self.get_json_with_query(
+            &url,
+            &ExcludedChartsQuery {
+                exclude_total_data_chart: exclude_total_data_chart.unwrap_or(true),
+                exclude_total_data_chart_breakdown: exclude_total_data_chart_breakdown
+                    .unwrap_or(true),
+            },
+            "dex protocol volume",
+        )
     }
 
     pub(crate) fn get_stablecoin_history(
@@ -418,30 +326,16 @@ impl DefiLamaClient {
             Some(c) => format!("{}/stablecoincharts/{}", self.stablecoins_endpoint, c),
             None => format!("{}/stablecoincharts/all", self.stablecoins_endpoint),
         };
-        let mut request = self.http.get(&url);
-        if let Some(sc) = stablecoin {
-            request = request.query(&[("stablecoin", sc.to_string())]);
-        }
-        let response = request
-            .send()
-            .map_err(|e| format!("[defillama] stablecoin history request failed ({url}): {e}"))?;
-        let status = response.status();
-        let body = response.text().unwrap_or_default();
-        if !status.is_success() {
-            return Err(format!(
-                "[defillama] stablecoin history request failed ({url}): {status} {body}"
-            ));
-        }
-        let value: Value = serde_json::from_str(&body).map_err(|e| {
-            format!("[defillama] stablecoin history decode failed ({url}): {e}; body: {body}")
-        })?;
-        Ok(Self::with_source(value))
+        self.get_json_with_query(
+            &url,
+            &StablecoinHistoryQuery { stablecoin },
+            "stablecoin history",
+        )
     }
 
     pub(crate) fn get_yield_pool_history(&self, pool: &str) -> Result<Value, String> {
         let url = format!("{}/chart/{}", self.yields_endpoint, pool);
-        let value = self.get_json(&url, "yield pool history")?;
-        Ok(Self::with_source(value))
+        self.get_json(&url, "yield pool history")
     }
 }
 
@@ -512,10 +406,6 @@ pub(crate) struct GetLammaChainTvlArgs {
     /// Maximum results (default: 15)
     pub(crate) limit: Option<u32>,
 }
-
-// ============================================================================
-// Tier 1 tool arg structs
-// ============================================================================
 
 pub(crate) struct GetLammaProtocolDetail;
 
@@ -628,10 +518,6 @@ pub(crate) struct GetLammaTokenPriceChangeArgs {
     pub period: Option<String>,
 }
 
-// ============================================================================
-// Tier 2 tool arg structs
-// ============================================================================
-
 pub(crate) struct GetLammaHistoricalChainTvl;
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -689,7 +575,6 @@ mod tests {
         let res = client()
             .get_token_price("ethereum")
             .expect("should get ETH price");
-        assert_eq!(res.get("source").and_then(Value::as_str), Some("defillama"));
         let coins = res.get("coins").expect("should have coins key");
         assert!(coins.as_object().map(|m| !m.is_empty()).unwrap_or(false));
     }
@@ -697,20 +582,14 @@ mod tests {
     #[test]
     fn protocols_smoke() {
         let res = client().get_protocols(None).expect("should get protocols");
-        assert_eq!(res.get("source").and_then(Value::as_str), Some("defillama"));
-        let arr = res
-            .as_array()
-            .or_else(|| res.get("data").and_then(Value::as_array));
-        assert!(
-            arr.map(|a| !a.is_empty()).unwrap_or(false),
-            "should have protocols"
-        );
+        let arr = res.as_array();
+        assert!(arr.map(|a| !a.is_empty()).unwrap_or(false));
     }
 
     #[test]
     fn chains_tvl_smoke() {
         let res = client().get_chains_tvl().expect("should get chains tvl");
-        assert_eq!(res.get("source").and_then(Value::as_str), Some("defillama"));
+        assert!(res.is_array());
     }
 
     #[test]
@@ -718,7 +597,6 @@ mod tests {
         let res = client()
             .get_protocol_detail("aave")
             .expect("should get aave detail");
-        assert_eq!(res.get("source").and_then(Value::as_str), Some("defillama"));
         assert!(res.get("name").is_some(), "should have protocol name");
     }
 
@@ -727,24 +605,21 @@ mod tests {
         let res = client()
             .get_dex_volumes(None, None, None)
             .expect("should get dex volumes");
-        assert_eq!(res.get("source").and_then(Value::as_str), Some("defillama"));
         assert!(res.get("protocols").is_some() || res.get("allChains").is_some());
     }
 
     #[test]
     fn fees_overview_smoke() {
-        let res = client()
+        client()
             .get_fees_overview(None, None, None, None)
             .expect("should get fees overview");
-        assert_eq!(res.get("source").and_then(Value::as_str), Some("defillama"));
     }
 
     #[test]
     fn protocol_fees_smoke() {
-        let res = client()
+        client()
             .get_protocol_fees("aave", None)
             .expect("should get aave fees");
-        assert_eq!(res.get("source").and_then(Value::as_str), Some("defillama"));
     }
 
     #[test]
@@ -752,19 +627,14 @@ mod tests {
         let res = client()
             .get_stablecoins(Some(true))
             .expect("should get stablecoins");
-        assert_eq!(res.get("source").and_then(Value::as_str), Some("defillama"));
-        assert!(
-            res.get("peggedAssets").is_some(),
-            "should have peggedAssets"
-        );
+        assert!(res.get("peggedAssets").is_some());
     }
 
     #[test]
     fn stablecoin_chains_smoke() {
-        let res = client()
+        client()
             .get_stablecoin_chains()
             .expect("should get stablecoin chains");
-        assert_eq!(res.get("source").and_then(Value::as_str), Some("defillama"));
     }
 
     #[test]
@@ -772,7 +642,6 @@ mod tests {
         let res = client()
             .get_historical_token_price("coingecko:ethereum", None, None, Some(5), Some("1d"))
             .expect("should get historical price chart");
-        assert_eq!(res.get("source").and_then(Value::as_str), Some("defillama"));
         assert!(res.get("coins").is_some(), "should have coins key");
     }
 
@@ -781,32 +650,28 @@ mod tests {
         let res = client()
             .get_token_price_change("coingecko:ethereum", None, None, Some("1d"))
             .expect("should get price change");
-        assert_eq!(res.get("source").and_then(Value::as_str), Some("defillama"));
         assert!(res.get("coins").is_some(), "should have coins key");
     }
 
     #[test]
     fn historical_chain_tvl_smoke() {
-        let res = client()
+        client()
             .get_historical_chain_tvl("Ethereum")
             .expect("should get historical chain tvl");
-        assert_eq!(res.get("source").and_then(Value::as_str), Some("defillama"));
     }
 
     #[test]
     fn dex_protocol_volume_smoke() {
-        let res = client()
+        client()
             .get_dex_protocol_volume("uniswap", None, None)
             .expect("should get uniswap volume");
-        assert_eq!(res.get("source").and_then(Value::as_str), Some("defillama"));
     }
 
     #[test]
     fn stablecoin_history_smoke() {
-        let res = client()
+        client()
             .get_stablecoin_history(None, None)
             .expect("should get stablecoin history");
-        assert_eq!(res.get("source").and_then(Value::as_str), Some("defillama"));
     }
 
     #[test]

@@ -2,6 +2,7 @@ use aomi_sdk::*;
 
 mod client;
 mod tool;
+mod types;
 
 const PREAMBLE: &str = r#"## Role
 You are a **Manifold Markets Assistant**, an AI specialized in interacting with Manifold Markets -- a prediction market platform where users trade on the outcomes of real-world events.

@@ -1,8 +1,23 @@
 use crate::client::*;
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+
+fn ok<T: Serialize>(value: T) -> Result<Value, String> {
+    let value = serde_json::to_value(value)
+        .map_err(|e| format!("[prediction] failed to serialize response: {e}"))?;
+    Ok(match value {
+        Value::Object(mut map) => {
+            map.insert(
+                "source".to_string(),
+                Value::String("prediction".to_string()),
+            );
+            Value::Object(map)
+        }
+        other => json!({ "source": "prediction", "data": other }),
+    })
+}
 
 fn resolve_simmer_api_key(api_key: Option<&str>) -> Result<String, String> {
     resolve_secret_value(
@@ -48,7 +63,7 @@ impl DynAomiTool for SearchPolymarket {
                 })
             })
             .collect();
-        Ok(json!({
+        ok(json!({
             "markets_count": formatted.len(),
             "markets": formatted,
         }))
@@ -77,7 +92,7 @@ impl DynAomiTool for GetPolymarketDetails {
     fn run(_app: &PredictionApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = PolymarketClient::new()?;
         let market = client.get_market(&args.market_id_or_slug)?;
-        Ok(json!({
+        ok(json!({
             "id": market.get("id"),
             "question": market.get("question"),
             "slug": market.get("slug"),
@@ -157,7 +172,7 @@ impl DynAomiTool for GetPolymarketTrades {
                 })
             })
             .collect();
-        Ok(json!({
+        ok(json!({
             "trades_count": formatted.len(),
             "trades": formatted,
         }))
@@ -208,7 +223,14 @@ impl DynAomiTool for ResolvePolymarketTradeIntent {
             tag: None,
         };
         let markets = client.get_markets(&params)?;
-        let ranked = rank_market_candidates(&intent, &markets);
+        let market_values: Vec<Value> = markets
+            .iter()
+            .map(|market| {
+                serde_json::to_value(market)
+                    .map_err(|e| format!("failed to serialize market candidate: {e}"))
+            })
+            .collect::<Result<_, _>>()?;
+        let ranked = rank_market_candidates(&intent, &market_values);
 
         let top1_score = ranked
             .first()
@@ -245,7 +267,7 @@ impl DynAomiTool for ResolvePolymarketTradeIntent {
             None
         };
 
-        Ok(json!({
+        ok(json!({
             "user_request": args.user_request,
             "parsed_intent": {
                 "action": intent.action,
@@ -328,8 +350,10 @@ impl DynAomiTool for BuildPolymarketOrderPreview {
 
         let client = PolymarketClient::new()?;
         let market = client.get_market(&args.market_id_or_slug)?;
+        let market_value = serde_json::to_value(&market)
+            .map_err(|e| format!("failed to serialize market: {e}"))?;
 
-        let (yes_price, no_price) = extract_yes_no_prices(&market);
+        let (yes_price, no_price) = extract_yes_no_prices(&market_value);
         let market_price = if outcome == "YES" {
             yes_price
         } else {
@@ -337,7 +361,7 @@ impl DynAomiTool for BuildPolymarketOrderPreview {
         };
         let execution_price = args.limit_price.or(market_price);
 
-        let (yes_token_id, no_token_id) = extract_outcome_token_ids(&market);
+        let (yes_token_id, no_token_id) = extract_outcome_token_ids(&market_value);
         let token_id = if outcome == "YES" {
             yes_token_id
         } else {
@@ -372,7 +396,7 @@ impl DynAomiTool for BuildPolymarketOrderPreview {
             );
         }
 
-        Ok(json!({
+        ok(json!({
             "market": {
                 "market_id": market.get("id"),
                 "slug": market.get("slug"),
@@ -460,35 +484,57 @@ impl DynAomiTool for GetPolymarketClobSignature {
             .filter(|v| !v.trim().is_empty())
             .unwrap_or_else(|| "This message attests that I control the given wallet".to_string());
 
-        let typed_data = json!({
-            "domain": {
-                "name": "ClobAuthDomain",
-                "version": "1",
-                "chainId": 137
+        let typed_data = serde_json::to_value(ClobAuthTypedData {
+            domain: ClobAuthDomain {
+                name: "ClobAuthDomain",
+                version: "1",
+                chain_id: 137,
             },
-            "types": {
-                "EIP712Domain": [
-                    { "name": "name", "type": "string" },
-                    { "name": "version", "type": "string" },
-                    { "name": "chainId", "type": "uint256" }
+            types: ClobAuthTypes {
+                eip712_domain: vec![
+                    Eip712TypeField {
+                        name: "name",
+                        kind: "string",
+                    },
+                    Eip712TypeField {
+                        name: "version",
+                        kind: "string",
+                    },
+                    Eip712TypeField {
+                        name: "chainId",
+                        kind: "uint256",
+                    },
                 ],
-                "ClobAuth": [
-                    { "name": "address", "type": "address" },
-                    { "name": "timestamp", "type": "string" },
-                    { "name": "nonce", "type": "uint256" },
-                    { "name": "message", "type": "string" }
-                ]
+                clob_auth: vec![
+                    Eip712TypeField {
+                        name: "address",
+                        kind: "address",
+                    },
+                    Eip712TypeField {
+                        name: "timestamp",
+                        kind: "string",
+                    },
+                    Eip712TypeField {
+                        name: "nonce",
+                        kind: "uint256",
+                    },
+                    Eip712TypeField {
+                        name: "message",
+                        kind: "string",
+                    },
+                ],
             },
-            "primaryType": "ClobAuth",
-            "message": {
-                "address": address,
-                "timestamp": timestamp,
-                "nonce": nonce_u64,
-                "message": message
-            }
-        });
+            primary_type: "ClobAuth",
+            message: ClobAuthMessage {
+                address,
+                timestamp,
+                nonce: nonce_u64,
+                message,
+            },
+        })
+        .map_err(|e| format!("failed to encode ClobAuth typed data: {e}"))?;
 
-        Ok(json!({
+        ok(json!({
             "address": typed_data["message"]["address"],
             "timestamp": typed_data["message"]["timestamp"],
             "nonce": nonce,
@@ -531,7 +577,7 @@ impl DynAomiTool for EnsurePolymarketClobCredentials {
         };
         let client = PolymarketClient::new()?;
         let creds = client.create_or_derive_api_credentials(&l1_auth)?;
-        Ok(json!({
+        ok(json!({
             "api_key": creds.key,
             "api_secret": creds.secret,
             "passphrase": creds.passphrase,
@@ -660,7 +706,7 @@ impl DynAomiTool for PlacePolymarketOrder {
         };
 
         let client = PolymarketClient::new()?;
-        client.submit_order(request)
+        ok(client.submit_order(request)?)
     }
 }
 
@@ -686,7 +732,7 @@ impl DynAomiTool for SimmerRegister {
 
     fn run(_app: &PredictionApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let result = simmer_register_agent(&args.name, args.description.as_deref())?;
-        Ok(json!({
+        ok(json!({
             "status": "registered",
             "agent_id": result.get("agent_id"),
             "api_key": result.get("api_key"),
@@ -727,7 +773,7 @@ impl DynAomiTool for SimmerStatus {
         let api_key = resolve_simmer_api_key(args.api_key.as_deref())?;
         let client = SimmerClient::new(&api_key, "sim")?;
         let status = client.get_agent_status()?;
-        Ok(json!({
+        ok(json!({
             "agent_id": status.get("agent_id"),
             "name": status.get("name"),
             "status": status.get("status"),
@@ -764,7 +810,7 @@ impl DynAomiTool for SimmerBriefing {
         let api_key = resolve_simmer_api_key(args.api_key.as_deref())?;
         let client = SimmerClient::new(&api_key, "sim")?;
         let briefing = client.get_briefing(args.since.as_deref())?;
-        Ok(json!({
+        ok(json!({
             "portfolio": briefing.get("portfolio"),
             "positions": briefing.get("positions"),
             "opportunities": briefing.get("opportunities"),
@@ -799,7 +845,7 @@ impl DynAomiTool for FetchSimmerMarketContext {
         let api_key = resolve_simmer_api_key(args.api_key.as_deref())?;
         let client = SimmerClient::new(&api_key, "sim")?;
         let context = client.get_market_context(&args.market_id)?;
-        Ok(json!({
+        ok(json!({
             "market": context.get("market"),
             "position": context.get("position"),
             "warnings": context.get("warnings"),
@@ -884,28 +930,20 @@ impl DynAomiTool for SimmerPlaceOrder {
         let api_key = resolve_simmer_api_key(args.api_key.as_deref())?;
         let client = SimmerClient::new(&api_key, &venue)?;
 
-        let mut body = json!({
-            "market_id": args.market_id,
-            "side": args.side.to_lowercase(),
-            "venue": venue,
-            "action": action,
-            "source": "sdk:aomi",
-        });
-        if let Some(amount) = args.amount {
-            body["amount"] = json!(amount);
-        }
-        if let Some(shares) = args.shares {
-            body["shares"] = json!(shares);
-        }
-        if let Some(dry_run) = args.dry_run {
-            body["dry_run"] = json!(dry_run);
-        }
-        if let Some(reasoning) = &args.reasoning {
-            body["reasoning"] = Value::String(reasoning.clone());
-        }
+        let request = SimmerTradeRequest {
+            market_id: args.market_id.clone(),
+            side: args.side.to_lowercase(),
+            amount: args.amount,
+            shares: args.shares,
+            venue: venue.clone(),
+            action: action.clone(),
+            source: "sdk:aomi".to_string(),
+            dry_run: args.dry_run,
+            reasoning: args.reasoning.clone(),
+        };
 
-        match client.trade(body) {
-            Ok(response) => Ok(json!({
+        match client.trade(&request) {
+            Ok(response) => ok(json!({
                 "status": "success",
                 "trade_id": response.get("trade_id"),
                 "market_id": response.get("market_id"),
@@ -917,7 +955,7 @@ impl DynAomiTool for SimmerPlaceOrder {
                 "reasoning": args.reasoning,
                 "dry_run": args.dry_run,
             })),
-            Err(e) => Ok(json!({
+            Err(e) => ok(json!({
                 "status": "error",
                 "message": e,
                 "order_details": {
@@ -965,18 +1003,21 @@ impl DynAomiTool for SimmerGetPositions {
         let client = SimmerClient::new(&api_key, &venue)?;
         let result = client.get_positions(Some(venue.as_str()))?;
 
-        let positions = result
-            .get("positions")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
+        let positions: Vec<Value> = result
+            .positions
+            .iter()
+            .map(|position| {
+                serde_json::to_value(position)
+                    .map_err(|e| format!("failed to serialize position: {e}"))
+            })
+            .collect::<Result<_, _>>()?;
 
         let total_pnl: f64 = positions
             .iter()
             .filter_map(|p| p.get("pnl").and_then(Value::as_f64))
             .sum();
 
-        Ok(json!({
+        ok(json!({
             "positions_count": positions.len(),
             "total_pnl": format!("${:.2}", total_pnl),
             "positions": positions,
@@ -1006,7 +1047,7 @@ impl DynAomiTool for SimmerGetPortfolio {
         let api_key = resolve_simmer_api_key(args.api_key.as_deref())?;
         let client = SimmerClient::new(&api_key, "sim")?;
         let portfolio = client.get_portfolio()?;
-        Ok(json!({
+        ok(json!({
             "balance": portfolio.get("balance"),
             "currency": portfolio.get("currency"),
             "positions_value": portfolio.get("positions_value"),
@@ -1057,13 +1098,9 @@ impl DynAomiTool for SearchSimmerMarkets {
             args.limit,
         )?;
 
-        let markets = result
-            .get("markets")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
+        let markets = result.markets.clone();
 
-        Ok(json!({
+        ok(json!({
             "markets_count": markets.len(),
             "markets": markets,
         }))

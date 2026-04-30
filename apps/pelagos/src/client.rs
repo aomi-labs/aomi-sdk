@@ -1,5 +1,7 @@
+use crate::types::{BalanceParams, RpcRequest, TransferTransaction};
 use aomi_sdk::schemars::JsonSchema;
 use serde::Deserialize;
+use serde::Serialize;
 use serde_json::{Value, json};
 use std::time::Duration;
 
@@ -55,14 +57,14 @@ impl PelagosClient {
         Ok(serde_json::from_str::<Value>(&body).unwrap_or_else(|_| json!({ "raw": body })))
     }
 
-    fn rpc(&self, method: &str, params: Value) -> Result<Value, String> {
+    fn rpc<T: Serialize>(&self, method: &str, params: T) -> Result<Value, String> {
         let url = format!("{}/rpc", self.base_url);
-        let body = json!({
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": method,
-            "params": params,
-        });
+        let body = RpcRequest {
+            jsonrpc: "2.0",
+            id: 1,
+            method,
+            params,
+        };
 
         let resp = self
             .http
@@ -89,19 +91,19 @@ impl PelagosClient {
     }
 
     pub(crate) fn get_balance(&self, user: &str, token: &str) -> Result<Value, String> {
-        self.rpc("getBalance", json!([{ "user": user, "token": token }]))
+        self.rpc("getBalance", [BalanceParams { user, token }])
     }
 
     pub(crate) fn tx_status(&self, hash: &str) -> Result<Value, String> {
-        self.rpc("getTransactionStatus", json!([hash]))
+        self.rpc("getTransactionStatus", [hash])
     }
 
     pub(crate) fn tx_receipt(&self, hash: &str) -> Result<Value, String> {
-        self.rpc("getTransactionReceipt", json!([hash]))
+        self.rpc("getTransactionReceipt", [hash])
     }
 
-    pub(crate) fn send_transaction(&self, tx: &Value) -> Result<Value, String> {
-        self.rpc("sendTransaction", json!([tx]))
+    pub(crate) fn send_transaction(&self, tx: &TransferTransaction) -> Result<Value, String> {
+        self.rpc("sendTransaction", [tx])
     }
 
     pub(crate) fn call(&self, method: &str, params: Value) -> Result<Value, String> {

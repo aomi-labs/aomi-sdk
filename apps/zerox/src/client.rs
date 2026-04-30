@@ -1,8 +1,13 @@
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde::{Deserialize, de::DeserializeOwned};
+use serde_json::Value;
 use std::time::Duration;
+
+use crate::types::{
+    GaslessStatusQuery, GaslessSubmitRequest, SourcesQuery, SwapQuoteQuery, ZeroxChainPayload,
+    ZeroxLiquiditySourcePayload, ZeroxSwapQuotePayload,
+};
 
 #[derive(Clone, Default)]
 pub(crate) struct ZeroxApp;
@@ -39,10 +44,10 @@ impl ZeroxClient {
         })
     }
 
-    pub(crate) fn send_json(
+    fn send_json<T: DeserializeOwned>(
         request: reqwest::blocking::RequestBuilder,
         operation: &str,
-    ) -> Result<Value, String> {
+    ) -> Result<T, String> {
         let response = request
             .send()
             .map_err(|e| format!("[0x] {operation} request failed: {e}"))?;
@@ -53,8 +58,17 @@ impl ZeroxClient {
             return Err(format!("[0x] {operation} request failed: {status} {body}"));
         }
 
-        serde_json::from_str::<Value>(&body)
+        serde_json::from_str::<T>(&body)
             .map_err(|e| format!("[0x] {operation} decode failed: {e}; body: {body}"))
+    }
+
+    fn authed(
+        &self,
+        request: reqwest::blocking::RequestBuilder,
+    ) -> reqwest::blocking::RequestBuilder {
+        request
+            .header("0x-api-key", &self.zerox_api_key)
+            .header("0x-version", "v2")
     }
 
     pub(crate) fn get_quote(
@@ -65,31 +79,27 @@ impl ZeroxClient {
         amount: f64,
         sender_address: Option<&str>,
         slippage: Option<f64>,
-    ) -> Result<Value, String> {
+    ) -> Result<ZeroxSwapQuotePayload, String> {
         let (chain_name, chain_id) = get_chain_info(chain)?;
         let from_addr = get_token_address(chain_name, from_token)?;
         let to_addr = get_token_address(chain_name, to_token)?;
         let decimals = get_token_decimals(chain_name, from_token);
         let amount_wei = amount_to_base_units(amount, decimals)?;
+        let query = SwapQuoteQuery {
+            chain_id,
+            sell_token: &from_addr,
+            buy_token: &to_addr,
+            sell_amount: &amount_wei,
+            slippage_percentage: slippage.unwrap_or(0.01),
+            taker: sender_address,
+        };
 
-        let mut request = self
-            .http
-            .get(format!("{}/swap/permit2/price", self.zerox_endpoint))
-            .query(&[
-                ("chainId", chain_id.to_string()),
-                ("sellToken", from_addr),
-                ("buyToken", to_addr),
-                ("sellAmount", amount_wei),
-                ("slippagePercentage", slippage.unwrap_or(0.01).to_string()),
-            ])
-            .header("0x-api-key", &self.zerox_api_key)
-            .header("0x-version", "v2");
-        if let Some(sender_address) = sender_address {
-            request = request.query(&[("taker", sender_address)]);
-        }
-
-        let value = Self::send_json(request, "quote")?;
-        Ok(with_source(value))
+        let request = self.authed(
+            self.http
+                .get(format!("{}/swap/permit2/price", self.zerox_endpoint))
+                .query(&query),
+        );
+        Self::send_json(request, "quote")
     }
 
     pub(crate) fn place_order(
@@ -100,46 +110,42 @@ impl ZeroxClient {
         amount: f64,
         sender_address: &str,
         slippage: Option<f64>,
-    ) -> Result<Value, String> {
+    ) -> Result<ZeroxSwapQuotePayload, String> {
         let (chain_name, chain_id) = get_chain_info(chain)?;
         let sell_addr = get_token_address(chain_name, sell_token)?;
         let buy_addr = get_token_address(chain_name, buy_token)?;
         let decimals = get_token_decimals(chain_name, sell_token);
         let amount_wei = amount_to_base_units(amount, decimals)?;
+        let query = SwapQuoteQuery {
+            chain_id,
+            sell_token: &sell_addr,
+            buy_token: &buy_addr,
+            sell_amount: &amount_wei,
+            slippage_percentage: slippage.unwrap_or(0.01),
+            taker: Some(sender_address),
+        };
 
-        let response = self
-            .http
-            .get(format!(
-                "{}/swap/allowance-holder/quote",
-                self.zerox_endpoint
-            ))
-            .query(&[
-                ("chainId", chain_id.to_string()),
-                ("sellToken", sell_addr),
-                ("buyToken", buy_addr),
-                ("sellAmount", amount_wei),
-                ("taker", sender_address.to_string()),
-                ("slippagePercentage", slippage.unwrap_or(0.01).to_string()),
-            ])
-            .header("0x-api-key", &self.zerox_api_key)
-            .header("0x-version", "v2");
-
-        let value = Self::send_json(response, "place order")?;
-        Ok(with_source(value))
+        let request = self.authed(
+            self.http
+                .get(format!(
+                    "{}/swap/allowance-holder/quote",
+                    self.zerox_endpoint
+                ))
+                .query(&query),
+        );
+        Self::send_json(request, "place order")
     }
 
     // ========================================================================
     // High Priority endpoints
     // ========================================================================
 
-    pub(crate) fn get_swap_chains(&self) -> Result<Value, String> {
-        let request = self
-            .http
-            .get(format!("{}/swap/chains", self.zerox_endpoint))
-            .header("0x-api-key", &self.zerox_api_key)
-            .header("0x-version", "v2");
-        let value = Self::send_json(request, "swap chains")?;
-        Ok(with_source(value))
+    pub(crate) fn get_swap_chains(&self) -> Result<Vec<ZeroxChainPayload>, String> {
+        let request = self.authed(
+            self.http
+                .get(format!("{}/swap/chains", self.zerox_endpoint)),
+        );
+        Self::send_json(request, "swap chains")
     }
 
     pub(crate) fn get_allowance_holder_price(
@@ -150,47 +156,44 @@ impl ZeroxClient {
         amount: f64,
         sender_address: Option<&str>,
         slippage: Option<f64>,
-    ) -> Result<Value, String> {
+    ) -> Result<ZeroxSwapQuotePayload, String> {
         let (chain_name, chain_id) = get_chain_info(chain)?;
         let sell_addr = get_token_address(chain_name, sell_token)?;
         let buy_addr = get_token_address(chain_name, buy_token)?;
         let decimals = get_token_decimals(chain_name, sell_token);
         let amount_wei = amount_to_base_units(amount, decimals)?;
+        let query = SwapQuoteQuery {
+            chain_id,
+            sell_token: &sell_addr,
+            buy_token: &buy_addr,
+            sell_amount: &amount_wei,
+            slippage_percentage: slippage.unwrap_or(0.01),
+            taker: sender_address,
+        };
 
-        let mut request = self
-            .http
-            .get(format!(
-                "{}/swap/allowance-holder/price",
-                self.zerox_endpoint
-            ))
-            .query(&[
-                ("chainId", chain_id.to_string()),
-                ("sellToken", sell_addr),
-                ("buyToken", buy_addr),
-                ("sellAmount", amount_wei),
-                ("slippagePercentage", slippage.unwrap_or(0.01).to_string()),
-            ])
-            .header("0x-api-key", &self.zerox_api_key)
-            .header("0x-version", "v2");
-        if let Some(sender) = sender_address {
-            request = request.query(&[("taker", sender)]);
-        }
-
-        let value = Self::send_json(request, "allowance-holder price")?;
-        Ok(with_source(value))
+        let request = self.authed(
+            self.http
+                .get(format!(
+                    "{}/swap/allowance-holder/price",
+                    self.zerox_endpoint
+                ))
+                .query(&query),
+        );
+        Self::send_json(request, "allowance-holder price")
     }
 
-    pub(crate) fn get_liquidity_sources(&self, chain: &str) -> Result<Value, String> {
+    pub(crate) fn get_liquidity_sources(
+        &self,
+        chain: &str,
+    ) -> Result<Vec<ZeroxLiquiditySourcePayload>, String> {
         let (_chain_name, chain_id) = get_chain_info(chain)?;
 
-        let request = self
-            .http
-            .get(format!("{}/sources", self.zerox_endpoint))
-            .query(&[("chainId", chain_id.to_string())])
-            .header("0x-api-key", &self.zerox_api_key)
-            .header("0x-version", "v2");
-        let value = Self::send_json(request, "liquidity sources")?;
-        Ok(with_source(value))
+        let request = self.authed(
+            self.http
+                .get(format!("{}/sources", self.zerox_endpoint))
+                .query(&SourcesQuery { chain_id }),
+        );
+        Self::send_json(request, "liquidity sources")
     }
 
     // ========================================================================
@@ -205,31 +208,27 @@ impl ZeroxClient {
         amount: f64,
         sender_address: Option<&str>,
         slippage: Option<f64>,
-    ) -> Result<Value, String> {
+    ) -> Result<ZeroxSwapQuotePayload, String> {
         let (chain_name, chain_id) = get_chain_info(chain)?;
         let sell_addr = get_token_address(chain_name, sell_token)?;
         let buy_addr = get_token_address(chain_name, buy_token)?;
         let decimals = get_token_decimals(chain_name, sell_token);
         let amount_wei = amount_to_base_units(amount, decimals)?;
+        let query = SwapQuoteQuery {
+            chain_id,
+            sell_token: &sell_addr,
+            buy_token: &buy_addr,
+            sell_amount: &amount_wei,
+            slippage_percentage: slippage.unwrap_or(0.01),
+            taker: sender_address,
+        };
 
-        let mut request = self
-            .http
-            .get(format!("{}/gasless/price", self.zerox_endpoint))
-            .query(&[
-                ("chainId", chain_id.to_string()),
-                ("sellToken", sell_addr),
-                ("buyToken", buy_addr),
-                ("sellAmount", amount_wei),
-                ("slippagePercentage", slippage.unwrap_or(0.01).to_string()),
-            ])
-            .header("0x-api-key", &self.zerox_api_key)
-            .header("0x-version", "v2");
-        if let Some(sender) = sender_address {
-            request = request.query(&[("taker", sender)]);
-        }
-
-        let value = Self::send_json(request, "gasless price")?;
-        Ok(with_source(value))
+        let request = self.authed(
+            self.http
+                .get(format!("{}/gasless/price", self.zerox_endpoint))
+                .query(&query),
+        );
+        Self::send_json(request, "gasless price")
     }
 
     pub(crate) fn get_gasless_quote(
@@ -240,29 +239,27 @@ impl ZeroxClient {
         amount: f64,
         sender_address: &str,
         slippage: Option<f64>,
-    ) -> Result<Value, String> {
+    ) -> Result<ZeroxSwapQuotePayload, String> {
         let (chain_name, chain_id) = get_chain_info(chain)?;
         let sell_addr = get_token_address(chain_name, sell_token)?;
         let buy_addr = get_token_address(chain_name, buy_token)?;
         let decimals = get_token_decimals(chain_name, sell_token);
         let amount_wei = amount_to_base_units(amount, decimals)?;
+        let query = SwapQuoteQuery {
+            chain_id,
+            sell_token: &sell_addr,
+            buy_token: &buy_addr,
+            sell_amount: &amount_wei,
+            slippage_percentage: slippage.unwrap_or(0.01),
+            taker: Some(sender_address),
+        };
 
-        let request = self
-            .http
-            .get(format!("{}/gasless/quote", self.zerox_endpoint))
-            .query(&[
-                ("chainId", chain_id.to_string()),
-                ("sellToken", sell_addr),
-                ("buyToken", buy_addr),
-                ("sellAmount", amount_wei),
-                ("taker", sender_address.to_string()),
-                ("slippagePercentage", slippage.unwrap_or(0.01).to_string()),
-            ])
-            .header("0x-api-key", &self.zerox_api_key)
-            .header("0x-version", "v2");
-
-        let value = Self::send_json(request, "gasless quote")?;
-        Ok(with_source(value))
+        let request = self.authed(
+            self.http
+                .get(format!("{}/gasless/quote", self.zerox_endpoint))
+                .query(&query),
+        );
+        Self::send_json(request, "gasless quote")
     }
 
     pub(crate) fn submit_gasless_swap(
@@ -270,70 +267,43 @@ impl ZeroxClient {
         chain_id: u64,
         trade: &Value,
         approval: Option<&Value>,
-    ) -> Result<Value, String> {
-        let mut body = json!({
-            "chainId": chain_id,
-            "trade": trade,
-        });
-        if let Some(approval) = approval {
-            body["approval"] = approval.clone();
-        }
+    ) -> Result<ZeroxSwapQuotePayload, String> {
+        let body = GaslessSubmitRequest {
+            chain_id,
+            trade,
+            approval,
+        };
 
-        let request = self
-            .http
-            .post(format!("{}/gasless/submit", self.zerox_endpoint))
-            .json(&body)
-            .header("0x-api-key", &self.zerox_api_key)
-            .header("0x-version", "v2");
-
-        let value = Self::send_json(request, "gasless submit")?;
-        Ok(with_source(value))
+        let request = self.authed(
+            self.http
+                .post(format!("{}/gasless/submit", self.zerox_endpoint))
+                .json(&body),
+        );
+        Self::send_json(request, "gasless submit")
     }
 
     pub(crate) fn get_gasless_status(
         &self,
         trade_hash: &str,
         chain_id: u64,
-    ) -> Result<Value, String> {
-        let request = self
-            .http
-            .get(format!(
-                "{}/gasless/status/{}",
-                self.zerox_endpoint, trade_hash
-            ))
-            .query(&[("chainId", chain_id.to_string())])
-            .header("0x-api-key", &self.zerox_api_key)
-            .header("0x-version", "v2");
-
-        let value = Self::send_json(request, "gasless status")?;
-        Ok(with_source(value))
+    ) -> Result<ZeroxSwapQuotePayload, String> {
+        let request = self.authed(
+            self.http
+                .get(format!(
+                    "{}/gasless/status/{}",
+                    self.zerox_endpoint, trade_hash
+                ))
+                .query(&GaslessStatusQuery { chain_id }),
+        );
+        Self::send_json(request, "gasless status")
     }
 
-    pub(crate) fn get_gasless_chains(&self) -> Result<Value, String> {
-        let request = self
-            .http
-            .get(format!("{}/gasless/chains", self.zerox_endpoint))
-            .header("0x-api-key", &self.zerox_api_key)
-            .header("0x-version", "v2");
-        let value = Self::send_json(request, "gasless chains")?;
-        Ok(with_source(value))
-    }
-}
-
-// ============================================================================
-// Shared helpers
-// ============================================================================
-
-pub(crate) fn with_source(value: Value) -> Value {
-    match value {
-        Value::Object(mut map) => {
-            map.insert("source".to_string(), Value::String("0x".to_string()));
-            Value::Object(map)
-        }
-        other => json!({
-            "source": "0x",
-            "data": other,
-        }),
+    pub(crate) fn get_gasless_chains(&self) -> Result<Vec<ZeroxChainPayload>, String> {
+        let request = self.authed(
+            self.http
+                .get(format!("{}/gasless/chains", self.zerox_endpoint)),
+        );
+        Self::send_json(request, "gasless chains")
     }
 }
 
@@ -612,8 +582,7 @@ mod tests {
         if !has_api_key() {
             return;
         }
-        let res = client().get_swap_chains().expect("should get swap chains");
-        assert_eq!(res.get("source").and_then(Value::as_str), Some("0x"));
+        let _ = client().get_swap_chains().expect("should get swap chains");
     }
 
     #[test]
@@ -621,10 +590,9 @@ mod tests {
         if !has_api_key() {
             return;
         }
-        let res = client()
+        let _ = client()
             .get_liquidity_sources("ethereum")
             .expect("should get liquidity sources");
-        assert_eq!(res.get("source").and_then(Value::as_str), Some("0x"));
     }
 
     #[test]
@@ -632,10 +600,9 @@ mod tests {
         if !has_api_key() {
             return;
         }
-        let res = client()
+        let _ = client()
             .get_gasless_chains()
             .expect("should get gasless chains");
-        assert_eq!(res.get("source").and_then(Value::as_str), Some("0x"));
     }
 
     #[test]
@@ -643,10 +610,9 @@ mod tests {
         if !has_api_key() {
             return;
         }
-        let res = client()
+        let _ = client()
             .get_quote("ethereum", "usdc", "weth", 1000.0, None, None)
             .expect("should get permit2 price for 1000 USDC -> WETH");
-        assert_eq!(res.get("source").and_then(Value::as_str), Some("0x"));
     }
 
     #[test]
@@ -654,10 +620,9 @@ mod tests {
         if !has_api_key() {
             return;
         }
-        let res = client()
+        let _ = client()
             .get_allowance_holder_price("ethereum", "usdc", "weth", 1000.0, None, None)
             .expect("should get allowance-holder price for 1000 USDC -> WETH");
-        assert_eq!(res.get("source").and_then(Value::as_str), Some("0x"));
     }
 
     // Unit tests for helpers (no API key needed)

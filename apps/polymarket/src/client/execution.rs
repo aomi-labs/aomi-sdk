@@ -1,9 +1,12 @@
 use crate::client::{
-    CLOB_API_BASE, ClobApiCredentials, ClobAuthContext, ClobL1Auth, HEADER_POLY_ADDRESS,
-    HEADER_POLY_API_KEY, HEADER_POLY_PASSPHRASE, HEADER_POLY_SIGNATURE, HEADER_POLY_TIMESTAMP,
-    Market, PolymarketClient, PolymarketOrderPlan, PreparedPolymarketExchangeOrder,
-    PreparedPolymarketOrder, SdkAuthedClobClient, TOKIO_RT, extract_outcome_token_ids,
-    extract_yes_no_prices, fetch_clob_outcome_token_ids, normalize_side, normalize_yes_no,
+    CLOB_API_BASE, ClobApiCredentials, ClobAuthContext, ClobAuthDomain, ClobAuthMessage,
+    ClobAuthTypedData, ClobAuthTypes, ClobL1Auth, Eip712TypeField, ExchangeDomain,
+    HEADER_POLY_ADDRESS, HEADER_POLY_API_KEY, HEADER_POLY_PASSPHRASE, HEADER_POLY_SIGNATURE,
+    HEADER_POLY_TIMESTAMP, Market, PolymarketClient, PolymarketOrderPlan, PreparedOrderMessage,
+    PreparedOrderTypedData, PreparedOrderTypes, PreparedPolymarketExchangeOrder,
+    PreparedPolymarketOrder, SdkAuthedClobClient, SignedOrderHttpBody, SignedOrderHttpPayload,
+    TOKIO_RT, extract_outcome_token_ids, extract_yes_no_prices, fetch_clob_outcome_token_ids,
+    normalize_side, normalize_yes_no,
 };
 use alloy::signers::{
     Error as AlloySignerError, UnsupportedSignerOperation, local::PrivateKeySigner,
@@ -505,33 +508,55 @@ pub(crate) fn build_clob_auth_context(address: &str) -> ClobAuthContext {
 }
 
 pub(crate) fn build_clob_auth_typed_data(context: &ClobAuthContext) -> Value {
-    json!({
-        "types": {
-            "EIP712Domain": [
-                {"name": "name", "type": "string"},
-                {"name": "version", "type": "string"},
-                {"name": "chainId", "type": "uint256"},
+    serde_json::to_value(ClobAuthTypedData {
+        types: ClobAuthTypes {
+            eip712_domain: vec![
+                Eip712TypeField {
+                    name: "name",
+                    kind: "string",
+                },
+                Eip712TypeField {
+                    name: "version",
+                    kind: "string",
+                },
+                Eip712TypeField {
+                    name: "chainId",
+                    kind: "uint256",
+                },
             ],
-            "ClobAuth": [
-                {"name": "address", "type": "address"},
-                {"name": "timestamp", "type": "string"},
-                {"name": "nonce", "type": "uint256"},
-                {"name": "message", "type": "string"},
-            ]
+            clob_auth: vec![
+                Eip712TypeField {
+                    name: "address",
+                    kind: "address",
+                },
+                Eip712TypeField {
+                    name: "timestamp",
+                    kind: "string",
+                },
+                Eip712TypeField {
+                    name: "nonce",
+                    kind: "uint256",
+                },
+                Eip712TypeField {
+                    name: "message",
+                    kind: "string",
+                },
+            ],
         },
-        "primaryType": "ClobAuth",
-        "domain": {
-            "name": CLOB_AUTH_EIP712_NAME,
-            "version": CLOB_AUTH_EIP712_VERSION,
-            "chainId": POLYGON,
+        primary_type: "ClobAuth",
+        domain: ClobAuthDomain {
+            name: CLOB_AUTH_EIP712_NAME,
+            version: CLOB_AUTH_EIP712_VERSION,
+            chain_id: POLYGON,
         },
-        "message": {
-            "address": context.address,
-            "timestamp": context.timestamp,
-            "nonce": context.nonce,
-            "message": CLOB_AUTH_MESSAGE,
-        }
+        message: ClobAuthMessage {
+            address: context.address.clone(),
+            timestamp: context.timestamp.clone(),
+            nonce: context.nonce.clone(),
+            message: CLOB_AUTH_MESSAGE,
+        },
     })
+    .unwrap_or(Value::Null)
 }
 
 pub(crate) fn prepare_wallet_order_signature(
@@ -551,51 +576,100 @@ pub(crate) fn prepare_wallet_order_signature(
 }
 
 pub(crate) fn build_order_typed_data(prepared_order: &PreparedPolymarketOrder) -> Value {
-    json!({
-        "types": {
-            "EIP712Domain": [
-                {"name": "name", "type": "string"},
-                {"name": "version", "type": "string"},
-                {"name": "chainId", "type": "uint256"},
-                {"name": "verifyingContract", "type": "address"},
+    serde_json::to_value(PreparedOrderTypedData {
+        types: PreparedOrderTypes {
+            eip712_domain: vec![
+                Eip712TypeField {
+                    name: "name",
+                    kind: "string",
+                },
+                Eip712TypeField {
+                    name: "version",
+                    kind: "string",
+                },
+                Eip712TypeField {
+                    name: "chainId",
+                    kind: "uint256",
+                },
+                Eip712TypeField {
+                    name: "verifyingContract",
+                    kind: "address",
+                },
             ],
-            "Order": [
-                {"name": "salt", "type": "uint256"},
-                {"name": "maker", "type": "address"},
-                {"name": "signer", "type": "address"},
-                {"name": "taker", "type": "address"},
-                {"name": "tokenId", "type": "uint256"},
-                {"name": "makerAmount", "type": "uint256"},
-                {"name": "takerAmount", "type": "uint256"},
-                {"name": "expiration", "type": "uint256"},
-                {"name": "nonce", "type": "uint256"},
-                {"name": "feeRateBps", "type": "uint256"},
-                {"name": "side", "type": "uint8"},
-                {"name": "signatureType", "type": "uint8"},
+            order: vec![
+                Eip712TypeField {
+                    name: "salt",
+                    kind: "uint256",
+                },
+                Eip712TypeField {
+                    name: "maker",
+                    kind: "address",
+                },
+                Eip712TypeField {
+                    name: "signer",
+                    kind: "address",
+                },
+                Eip712TypeField {
+                    name: "taker",
+                    kind: "address",
+                },
+                Eip712TypeField {
+                    name: "tokenId",
+                    kind: "uint256",
+                },
+                Eip712TypeField {
+                    name: "makerAmount",
+                    kind: "uint256",
+                },
+                Eip712TypeField {
+                    name: "takerAmount",
+                    kind: "uint256",
+                },
+                Eip712TypeField {
+                    name: "expiration",
+                    kind: "uint256",
+                },
+                Eip712TypeField {
+                    name: "nonce",
+                    kind: "uint256",
+                },
+                Eip712TypeField {
+                    name: "feeRateBps",
+                    kind: "uint256",
+                },
+                Eip712TypeField {
+                    name: "side",
+                    kind: "uint8",
+                },
+                Eip712TypeField {
+                    name: "signatureType",
+                    kind: "uint8",
+                },
             ],
         },
-        "primaryType": "Order",
-        "domain": {
-            "name": EXCHANGE_EIP712_NAME,
-            "version": EXCHANGE_EIP712_VERSION,
-            "chainId": POLYGON,
-            "verifyingContract": prepared_order.verifying_contract,
+        primary_type: "Order",
+        domain: ExchangeDomain {
+            name: EXCHANGE_EIP712_NAME,
+            version: EXCHANGE_EIP712_VERSION,
+            chain_id: POLYGON,
+            verifying_contract: prepared_order.verifying_contract.clone(),
         },
-        "message": {
-            "salt": prepared_order.order.salt.to_string(),
-            "maker": prepared_order.order.maker,
-            "signer": prepared_order.order.signer,
-            "taker": prepared_order.order.taker,
-            "tokenId": prepared_order.order.token_id,
-            "makerAmount": prepared_order.order.maker_amount,
-            "takerAmount": prepared_order.order.taker_amount,
-            "expiration": prepared_order.order.expiration,
-            "nonce": prepared_order.order.nonce,
-            "feeRateBps": prepared_order.order.fee_rate_bps,
-            "side": prepared_order.order.side_index,
-            "signatureType": prepared_order.order.signature_type,
-        }
+        message: PreparedOrderMessage {
+            salt: prepared_order.order.salt.to_string(),
+            maker: prepared_order.order.maker.clone(),
+            signer: prepared_order.order.signer.clone(),
+            taker: prepared_order.order.taker.clone(),
+            token_id: prepared_order.order.token_id.clone(),
+            maker_amount: prepared_order.order.maker_amount.clone(),
+            taker_amount: prepared_order.order.taker_amount.clone(),
+            expiration: prepared_order.order.expiration.clone(),
+            nonce: prepared_order.order.nonce.clone(),
+            fee_rate_bps: prepared_order.order.fee_rate_bps.clone(),
+            side: prepared_order.order.side_index,
+            signature_type: prepared_order.order.signature_type,
+        },
     })
+    .unwrap_or(Value::Null)
 }
 
 pub(crate) fn build_prepared_order_description(plan: &PolymarketOrderPlan) -> String {
@@ -893,23 +967,29 @@ fn post_signed_order_with_credentials(
         body_string.as_str(),
     )?;
 
-    let response = client
-        .http
-        .post(&url)
-        .header("Content-Type", "application/json")
-        .header(HEADER_POLY_ADDRESS, wallet_address)
-        .header(HEADER_POLY_API_KEY, credentials.key.as_str())
-        .header(HEADER_POLY_PASSPHRASE, credentials.passphrase.as_str())
-        .header(HEADER_POLY_TIMESTAMP, timestamp.as_str())
-        .header(HEADER_POLY_SIGNATURE, l2_signature.as_str())
-        .body(body_string)
-        .send()
-        .map_err(|e| format!("wallet order submission failed: {e}"))?;
+    let (status, text) = TOKIO_RT.block_on(async move {
+        let response = client
+            .http
+            .post(&url)
+            .header("Content-Type", "application/json")
+            .header(HEADER_POLY_ADDRESS, wallet_address)
+            .header(HEADER_POLY_API_KEY, credentials.key.as_str())
+            .header(HEADER_POLY_PASSPHRASE, credentials.passphrase.as_str())
+            .header(HEADER_POLY_TIMESTAMP, timestamp.as_str())
+            .header(HEADER_POLY_SIGNATURE, l2_signature.as_str())
+            .body(body_string)
+            .send()
+            .await
+            .map_err(|e| format!("wallet order submission failed: {e}"))?;
 
-    let status = response.status();
-    let text = response
-        .text()
-        .map_err(|e| format!("failed to read order submission response: {e}"))?;
+        let status = response.status();
+        let text = response
+            .text()
+            .await
+            .map_err(|e| format!("failed to read order submission response: {e}"))?;
+        Ok::<_, String>((status, text))
+    })?;
+
     if !status.is_success() {
         return Err(format!("wallet order submission failed {status}: {text}"));
     }
@@ -924,31 +1004,27 @@ pub(crate) fn build_signed_order_body(
     prepared_order: &PreparedPolymarketOrder,
     order_signature: &str,
 ) -> Value {
-    let mut body = json!({
-        "owner": credentials.key,
-        "orderType": prepared_order.order_type,
-        "order": {
-            "salt": prepared_order.order.salt,
-            "maker": prepared_order.order.maker,
-            "signer": prepared_order.order.signer,
-            "taker": prepared_order.order.taker,
-            "tokenId": prepared_order.order.token_id,
-            "makerAmount": prepared_order.order.maker_amount,
-            "takerAmount": prepared_order.order.taker_amount,
-            "expiration": prepared_order.order.expiration,
-            "nonce": prepared_order.order.nonce,
-            "feeRateBps": prepared_order.order.fee_rate_bps,
-            "side": prepared_order.order.side,
-            "signatureType": prepared_order.order.signature_type,
-            "signature": order_signature,
+    serde_json::to_value(SignedOrderHttpBody {
+        owner: credentials.key.clone(),
+        order_type: prepared_order.order_type.clone(),
+        order: SignedOrderHttpPayload {
+            salt: prepared_order.order.salt,
+            maker: prepared_order.order.maker.clone(),
+            signer: prepared_order.order.signer.clone(),
+            taker: prepared_order.order.taker.clone(),
+            token_id: prepared_order.order.token_id.clone(),
+            maker_amount: prepared_order.order.maker_amount.clone(),
+            taker_amount: prepared_order.order.taker_amount.clone(),
+            expiration: prepared_order.order.expiration.clone(),
+            nonce: prepared_order.order.nonce.clone(),
+            fee_rate_bps: prepared_order.order.fee_rate_bps.clone(),
+            side: prepared_order.order.side.clone(),
+            signature_type: prepared_order.order.signature_type,
+            signature: order_signature.to_string(),
         },
-    });
-
-    if let Some(post_only) = prepared_order.post_only {
-        body["postOnly"] = Value::Bool(post_only);
-    }
-
-    body
+        post_only: prepared_order.post_only,
+    })
+    .unwrap_or(Value::Null)
 }
 
 fn format_sdk_submit_result(

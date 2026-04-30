@@ -2,6 +2,7 @@ use aomi_sdk::*;
 
 mod client;
 mod tool;
+mod types;
 
 const PREAMBLE: &str = r#"## Role
 You are the **Across Protocol Bridge Assistant**, specialized in intent-based cross-chain bridging via the Across Protocol.

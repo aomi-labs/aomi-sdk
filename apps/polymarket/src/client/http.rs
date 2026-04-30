@@ -1,9 +1,12 @@
 use crate::client::{
-    GetMarketsParams, GetTradesParams, Market, Trade, build_market_lookup_request,
+    GetMarketsParams, GetTradesParams, Market, TOKIO_RT, Trade, build_market_lookup_request,
     classify_market_lookup_target,
 };
+use reqwest::header::{ACCEPT, CONNECTION, CONTENT_TYPE, HeaderMap, HeaderValue, USER_AGENT};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::error::Error as _;
+use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub(crate) const GAMMA_API_BASE: &str = "https://gamma-api.polymarket.com";
@@ -20,6 +23,7 @@ pub(crate) const HEADER_POLY_API_KEY: &str = "POLY_API_KEY";
 pub(crate) const HEADER_POLY_PASSPHRASE: &str = "POLY_PASSPHRASE";
 
 type HmacSha256 = hmac::Hmac<sha2::Sha256>;
+const PUBLIC_HTTP_RETRY_ATTEMPTS: usize = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct ClobApiCredentials {
@@ -38,13 +42,19 @@ pub(crate) struct ClobL1Auth {
 
 #[derive(Clone)]
 pub(crate) struct PolymarketClient {
-    pub(crate) http: reqwest::blocking::Client,
+    pub(crate) http: reqwest::Client,
 }
 
 impl PolymarketClient {
     pub(crate) fn new() -> Result<Self, String> {
-        let http = reqwest::blocking::Client::builder()
-            .no_proxy()
+        let mut headers = HeaderMap::new();
+        headers.insert(USER_AGENT, HeaderValue::from_static("rs_clob_client"));
+        headers.insert(ACCEPT, HeaderValue::from_static("*/*"));
+        headers.insert(CONNECTION, HeaderValue::from_static("keep-alive"));
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
+        let http = reqwest::Client::builder()
+            .default_headers(headers)
             .timeout(Duration::from_secs(30))
             .build()
             .map_err(|e| format!("failed to build HTTP client: {e}"))?;
@@ -73,20 +83,13 @@ impl PolymarketClient {
             query.push(("tag", tag.clone()));
         }
 
-        let response = self
-            .http
-            .get(&url)
-            .query(&query)
-            .send()
+        let (status, text) = self
+            .send_public_with_retry(|| self.http.get(&url).query(&query))
             .map_err(|e| format!("Gamma API request failed: {e}"))?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().unwrap_or_default();
+        if !status.is_success() {
             return Err(format!("Gamma API error {status}: {text}"));
         }
-
-        let text = response.text().map_err(|e| format!("read body: {e}"))?;
         serde_json::from_str::<Vec<Market>>(&text).map_err(|e| {
             let preview = if text.len() > 500 {
                 &text[..500]
@@ -102,22 +105,15 @@ impl PolymarketClient {
         let lookup = build_market_lookup_request(&target);
         let url = format!("{}{}", GAMMA_API_BASE, lookup.path);
 
-        let response = self
-            .http
-            .get(&url)
-            .query(&lookup.query)
-            .send()
+        let (status, text) = self
+            .send_public_with_retry(|| self.http.get(&url).query(&lookup.query))
             .map_err(|e| format!("Gamma API request failed: {e}"))?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().unwrap_or_default();
+        if !status.is_success() {
             return Err(format!(
                 "Failed to get market {id_or_slug}: {status} - {text}"
             ));
         }
-
-        let text = response.text().map_err(|e| format!("read body: {e}"))?;
         if matches!(target, crate::client::MarketLookupTarget::ConditionId(_)) {
             let markets = serde_json::from_str::<Vec<Market>>(&text)
                 .map_err(|e| format!("parse markets: {e}"))?;
@@ -149,20 +145,13 @@ impl PolymarketClient {
             query.push(("side", side.clone()));
         }
 
-        let response = self
-            .http
-            .get(&url)
-            .query(&query)
-            .send()
+        let (status, text) = self
+            .send_public_with_retry(|| self.http.get(&url).query(&query))
             .map_err(|e| format!("Data API request failed: {e}"))?;
 
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().unwrap_or_default();
+        if !status.is_success() {
             return Err(format!("Data API error {status}: {text}"));
         }
-
-        let text = response.text().map_err(|e| format!("read body: {e}"))?;
         serde_json::from_str::<Vec<Trade>>(&text).map_err(|e| {
             let preview = if text.len() > 500 {
                 &text[..500]
@@ -216,11 +205,10 @@ impl PolymarketClient {
         l1_auth: &ClobL1Auth,
     ) -> Result<ClobApiCredentials, String> {
         let url = format!("{CLOB_API_BASE}{CLOB_AUTH_DERIVE_API_KEY_PATH}");
-        let response = self
-            .with_l1_headers(self.http.get(&url), l1_auth)
-            .send()
+        let (status, body) = self
+            .send(self.with_l1_headers(self.http.get(&url), l1_auth))
             .map_err(|e| format!("derive-api-key request failed: {e}"))?;
-        self.parse_credentials_response("derive-api-key", response)
+        self.parse_credentials_response("derive-api-key", status, body)
     }
 
     pub(crate) fn create_api_key(
@@ -228,18 +216,17 @@ impl PolymarketClient {
         l1_auth: &ClobL1Auth,
     ) -> Result<ClobApiCredentials, String> {
         let url = format!("{CLOB_API_BASE}{CLOB_AUTH_CREATE_API_KEY_PATH}");
-        let response = self
-            .with_l1_headers(self.http.post(&url), l1_auth)
-            .send()
+        let (status, body) = self
+            .send(self.with_l1_headers(self.http.post(&url), l1_auth))
             .map_err(|e| format!("create-api-key request failed: {e}"))?;
-        self.parse_credentials_response("create-api-key", response)
+        self.parse_credentials_response("create-api-key", status, body)
     }
 
     pub(crate) fn with_l1_headers(
         &self,
-        builder: reqwest::blocking::RequestBuilder,
+        builder: reqwest::RequestBuilder,
         l1_auth: &ClobL1Auth,
-    ) -> reqwest::blocking::RequestBuilder {
+    ) -> reqwest::RequestBuilder {
         let nonce = l1_auth.nonce.clone().unwrap_or_else(|| "0".to_string());
         builder
             .header(HEADER_POLY_ADDRESS, l1_auth.address.as_str())
@@ -251,10 +238,9 @@ impl PolymarketClient {
     pub(crate) fn parse_credentials_response(
         &self,
         operation: &str,
-        response: reqwest::blocking::Response,
+        status: reqwest::StatusCode,
+        body: String,
     ) -> Result<ClobApiCredentials, String> {
-        let status = response.status();
-        let body = response.text().unwrap_or_default();
         if !status.is_success() {
             if body.to_ascii_lowercase().contains("invalid signature") {
                 return Err(format!(
@@ -412,4 +398,67 @@ impl PolymarketClient {
             .map(|d| d.as_secs().to_string())
             .unwrap_or_else(|_| "0".to_string())
     }
+
+    fn send(
+        &self,
+        builder: reqwest::RequestBuilder,
+    ) -> Result<(reqwest::StatusCode, String), String> {
+        TOKIO_RT.block_on(async move {
+            let response = builder.send().await.map_err(|e| format_reqwest_error(&e))?;
+            let status = response.status();
+            let body = response.text().await.map_err(|e| {
+                format!("failed to read response body: {}", format_reqwest_error(&e))
+            })?;
+            Ok((status, body))
+        })
+    }
+
+    fn send_public_with_retry<F>(&self, build: F) -> Result<(reqwest::StatusCode, String), String>
+    where
+        F: Fn() -> reqwest::RequestBuilder,
+    {
+        let mut last_error = None;
+
+        for attempt in 1..=PUBLIC_HTTP_RETRY_ATTEMPTS {
+            match self.send(build()) {
+                Ok(response) => return Ok(response),
+                Err(error) => {
+                    if !looks_like_retryable_transport_error(&error)
+                        || attempt == PUBLIC_HTTP_RETRY_ATTEMPTS
+                    {
+                        return Err(error);
+                    }
+                    last_error = Some(error);
+                    thread::sleep(Duration::from_millis(250 * attempt as u64));
+                }
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| "request failed after retries".to_string()))
+    }
+}
+
+fn format_reqwest_error(error: &reqwest::Error) -> String {
+    let mut message = error.to_string();
+    if let Some(url) = error.url() {
+        message.push_str(&format!(" [url: {url}]"));
+    }
+
+    let mut source = error.source();
+    while let Some(cause) = source {
+        message.push_str(&format!("; caused by: {cause}"));
+        source = cause.source();
+    }
+
+    message
+}
+
+fn looks_like_retryable_transport_error(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    lower.contains("tls handshake eof")
+        || lower.contains("client error (connect)")
+        || lower.contains("connection reset")
+        || lower.contains("connection refused")
+        || lower.contains("timed out")
+        || lower.contains("unexpected eof")
 }

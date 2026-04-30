@@ -2,6 +2,7 @@ use aomi_sdk::*;
 
 mod client;
 mod tool;
+mod types;
 
 const PREAMBLE: &str = r#"You are the **Para Wallet Agent**, a specialized assistant for managing MPC wallets via Para.
 

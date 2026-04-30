@@ -1,8 +1,24 @@
 use crate::client::*;
+use crate::types::{
+    AdvancedSearchQuery, TrendsQuery, TweetInfoQuery, UserInfoQuery, UserLastTweetsQuery,
+    XPostsView, XSearchResultsView, XTrendsView,
+};
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+fn ok<T: Serialize>(value: T) -> Result<Value, String> {
+    let value = serde_json::to_value(value)
+        .map_err(|e| format!("[x] failed to serialize response: {e}"))?;
+    Ok(match value {
+        Value::Object(mut map) => {
+            map.insert("source".to_string(), Value::String("x".to_string()));
+            Value::Object(map)
+        }
+        other => serde_json::json!({ "source": "x", "data": other }),
+    })
+}
 
 impl DynAomiTool for GetXUser {
     type App = XApp;
@@ -13,25 +29,13 @@ impl DynAomiTool for GetXUser {
     fn run(_app: &XApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = XClient::new(args.api_key.as_deref())?;
         let username = args.username.trim_start_matches('@');
-        let user: User = client.get("/twitter/user/info", &[("userName", username)])?;
-        Ok(json!({
-            "id": user.id,
-            "username": user.user_name,
-            "name": user.name,
-            "bio": user.description,
-            "location": user.location,
-            "url": user.url,
-            "profile_image": user.profile_image_url,
-            "banner_image": user.profile_banner_url,
-            "followers": user.followers_count,
-            "following": user.following_count,
-            "posts_count": user.statuses_count,
-            "likes_count": user.favourites_count,
-            "listed_count": user.listed_count,
-            "created_at": user.created_at,
-            "verified": user.verified,
-            "blue_verified": user.is_blue_verified,
-        }))
+        let user: User = client.get(
+            "/twitter/user/info",
+            &UserInfoQuery {
+                user_name: username,
+            },
+        )?;
+        ok(format_user(&user))
     }
 }
 
@@ -61,20 +65,21 @@ impl DynAomiTool for GetXUserPosts {
     fn run(_app: &XApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = XClient::new(args.api_key.as_deref())?;
         let username = args.username.trim_start_matches('@');
-        let mut query: Vec<(&str, &str)> = vec![("userName", username)];
-        let cursor_val = args.cursor.unwrap_or_default();
-        if !cursor_val.is_empty() {
-            query.push(("cursor", &cursor_val));
-        }
-        let data: PostsData = client.get("/twitter/user/last_tweets", &query)?;
+        let data: PostsData = client.get(
+            "/twitter/user/last_tweets",
+            &UserLastTweetsQuery {
+                user_name: username,
+                cursor: args.cursor.as_deref().filter(|cursor| !cursor.is_empty()),
+            },
+        )?;
         let posts = data.tweets.unwrap_or_default();
-        let formatted: Vec<Value> = posts.iter().map(format_post).collect();
-        Ok(json!({
-            "posts_count": formatted.len(),
-            "posts": formatted,
-            "cursor": data.next_cursor,
-            "has_more": data.has_next_page.unwrap_or(false),
-        }))
+        let formatted = posts.iter().map(format_post).collect::<Vec<_>>();
+        ok(XPostsView {
+            posts_count: formatted.len(),
+            posts: formatted,
+            cursor: data.next_cursor,
+            has_more: data.has_next_page.unwrap_or(false),
+        })
     }
 }
 
@@ -106,22 +111,24 @@ impl DynAomiTool for SearchX {
     fn run(_app: &XApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = XClient::new(args.api_key.as_deref())?;
         let query_type = args.query_type.as_deref().unwrap_or("Latest");
-        let mut params: Vec<(&str, &str)> = vec![("query", &args.query), ("queryType", query_type)];
-        let cursor_val = args.cursor.unwrap_or_default();
-        if !cursor_val.is_empty() {
-            params.push(("cursor", &cursor_val));
-        }
-        let data: PostsData = client.get("/twitter/tweet/advanced_search", &params)?;
+        let data: PostsData = client.get(
+            "/twitter/tweet/advanced_search",
+            &AdvancedSearchQuery {
+                query: args.query.as_str(),
+                query_type,
+                cursor: args.cursor.as_deref().filter(|cursor| !cursor.is_empty()),
+            },
+        )?;
         let posts = data.tweets.unwrap_or_default();
-        let formatted: Vec<Value> = posts.iter().map(format_post).collect();
-        Ok(json!({
-            "query": args.query,
-            "query_type": query_type,
-            "results_count": formatted.len(),
-            "posts": formatted,
-            "cursor": data.next_cursor,
-            "has_more": data.has_next_page.unwrap_or(false),
-        }))
+        let formatted = posts.iter().map(format_post).collect::<Vec<_>>();
+        ok(XSearchResultsView {
+            query: args.query,
+            query_type: query_type.to_string(),
+            results_count: formatted.len(),
+            posts: formatted,
+            cursor: data.next_cursor,
+            has_more: data.has_next_page.unwrap_or(false),
+        })
     }
 }
 
@@ -136,6 +143,12 @@ pub(crate) struct GetXTrendsArgs {
     /// Optional X API key. Falls back to X_API_KEY when omitted.
     #[serde(default)]
     api_key: Option<String>,
+    /// Optional Yahoo WOEID location ID. The twitterapi.io trends docs document this parameter.
+    #[serde(default)]
+    woeid: Option<u64>,
+    /// Optional number of trends to return.
+    #[serde(default)]
+    count: Option<u64>,
 }
 
 impl DynAomiTool for GetXTrends {
@@ -147,24 +160,19 @@ impl DynAomiTool for GetXTrends {
 
     fn run(_app: &XApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = XClient::new(args.api_key.as_deref())?;
-        let data: TrendsData = client.get("/twitter/trends", &[])?;
+        let data: TrendsData = client.get(
+            "/twitter/trends",
+            &TrendsQuery {
+                woeid: args.woeid,
+                count: args.count,
+            },
+        )?;
         let trends = data.trends.unwrap_or_default();
-        let formatted: Vec<Value> = trends
-            .iter()
-            .map(|t| {
-                json!({
-                    "name": t.name,
-                    "url": t.url,
-                    "post_count": t.tweet_count,
-                    "description": t.description,
-                    "category": t.domain_context,
-                })
-            })
-            .collect();
-        Ok(json!({
-            "trends_count": formatted.len(),
-            "trends": formatted,
-        }))
+        let formatted = trends.iter().map(format_trend).collect::<Vec<_>>();
+        ok(XTrendsView {
+            trends_count: formatted.len(),
+            trends: formatted,
+        })
     }
 }
 
@@ -191,8 +199,12 @@ impl DynAomiTool for GetXPost {
 
     fn run(_app: &XApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let client = XClient::new(args.api_key.as_deref())?;
-        let post: Post =
-            client.get("/twitter/tweet/info", &[("tweetId", args.post_id.as_str())])?;
-        Ok(format_post(&post))
+        let post: Post = client.get(
+            "/twitter/tweet/info",
+            &TweetInfoQuery {
+                tweet_id: args.post_id.as_str(),
+            },
+        )?;
+        ok(format_post(&post))
     }
 }

@@ -2,6 +2,7 @@ use aomi_sdk::*;
 
 mod client;
 mod tool;
+mod types;
 
 const PREAMBLE: &str = r#"## Role
 You are an AI assistant specialized in the Bybit cryptocurrency exchange. You can query market data and manage trading operations using the Bybit Unified V5 API.

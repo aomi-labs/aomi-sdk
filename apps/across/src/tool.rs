@@ -1,6 +1,19 @@
 use crate::client::*;
 use aomi_sdk::*;
+use serde::Serialize;
 use serde_json::Value;
+
+fn ok<T: Serialize>(value: T) -> Result<Value, String> {
+    let value = serde_json::to_value(value)
+        .map_err(|e| format!("[across] failed to serialize response: {e}"))?;
+    Ok(match value {
+        Value::Object(mut map) => {
+            map.insert("source".to_string(), Value::String("across".to_string()));
+            Value::Object(map)
+        }
+        other => serde_json::json!({ "source": "across", "data": other }),
+    })
+}
 
 impl DynAomiTool for GetAcrossBridgeQuote {
     type App = AcrossApp;
@@ -9,8 +22,7 @@ impl DynAomiTool for GetAcrossBridgeQuote {
     const DESCRIPTION: &'static str = "Get a bridge fee quote from Across Protocol. Returns suggested fees, estimated fill time, and fee breakdown for a cross-chain transfer.";
 
     fn run(_app: &AcrossApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = AcrossClient::new()?;
-        client.get_suggested_fees(
+        ok(AcrossClient::new()?.get_suggested_fees(
             &args.input_token,
             &args.output_token,
             args.origin_chain_id,
@@ -18,7 +30,7 @@ impl DynAomiTool for GetAcrossBridgeQuote {
             &args.amount,
             args.recipient.as_deref(),
             args.message.as_deref(),
-        )
+        )?)
     }
 }
 
@@ -30,13 +42,12 @@ impl DynAomiTool for GetAcrossBridgeLimits {
         "Get minimum and maximum transfer limits for a specific token route on Across Protocol.";
 
     fn run(_app: &AcrossApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = AcrossClient::new()?;
-        client.get_limits(
+        ok(AcrossClient::new()?.get_limits(
             &args.input_token,
             &args.output_token,
             args.origin_chain_id,
             args.destination_chain_id,
-        )
+        )?)
     }
 }
 
@@ -47,8 +58,7 @@ impl DynAomiTool for GetAcrossDepositStatus {
     const DESCRIPTION: &'static str = "Track the status of a bridge deposit on Across Protocol. Returns fill status and corresponding fill transaction hash if filled.";
 
     fn run(_app: &AcrossApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = AcrossClient::new()?;
-        client.get_deposit_status(args.origin_chain_id, args.deposit_id)
+        ok(AcrossClient::new()?.get_deposit_status(args.origin_chain_id, args.deposit_id)?)
     }
 }
 
@@ -59,13 +69,12 @@ impl DynAomiTool for GetAcrossAvailableRoutes {
     const DESCRIPTION: &'static str = "List available bridge routes on Across Protocol. Optionally filter by origin/destination chain ID or token address.";
 
     fn run(_app: &AcrossApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = AcrossClient::new()?;
-        client.get_available_routes(
+        ok(AcrossClient::new()?.get_available_routes(
             args.origin_chain_id,
             args.destination_chain_id,
             args.origin_token.as_deref(),
             args.destination_token.as_deref(),
-        )
+        )?)
     }
 }
 
@@ -79,7 +88,7 @@ impl DynAomiTool for GetAcrossTokenPrice {
         if args.l1_token.is_none() && args.l2_token.is_none() {
             return Err("[across] token price failed: at least one of l1_token or l2_token must be provided".to_string());
         }
-        let client = AcrossClient::new()?;
-        client.get_coingecko_price(args.l1_token.as_deref(), args.l2_token.as_deref())
+        ok(AcrossClient::new()?
+            .get_coingecko_price(args.l1_token.as_deref(), args.l2_token.as_deref())?)
     }
 }

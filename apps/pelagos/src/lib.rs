@@ -2,6 +2,7 @@ use aomi_sdk::*;
 
 mod client;
 mod tool;
+mod types;
 
 const PREAMBLE: &str = r#"## Role
 You are a Pelagos appchain assistant. You help developers and users interact with a running Pelagos appchain node over its JSON-RPC interface.

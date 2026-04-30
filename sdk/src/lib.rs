@@ -66,7 +66,7 @@
 //! crate-type = ["cdylib"]
 //!
 //! [dependencies]
-//! aomi-sdk = "^0.1.14"
+//! aomi-sdk = "^0.1.15"
 //! schemars = "1"
 //! serde = { version = "1", features = ["derive"] }
 //! serde_json = "1"
@@ -138,13 +138,16 @@
 //! without loading the full FFI plugin.
 
 mod abi;
+mod builder;
 mod ffi;
 mod handle;
+pub mod route;
 pub mod testing;
 mod types;
 
 pub use abi::*;
 pub use handle::*;
+pub use route::*;
 pub use types::*;
 
 // Re-export serde_json and schemars for convenience in plugin code.

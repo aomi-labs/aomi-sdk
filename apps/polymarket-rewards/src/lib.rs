@@ -1,5 +1,6 @@
 mod client;
 mod tool;
+mod types;
 
 use aomi_sdk::*;
 use std::sync::LazyLock;

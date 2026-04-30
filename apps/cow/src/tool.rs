@@ -1,6 +1,20 @@
 use crate::client::*;
+use crate::types::{CancelOrdersRequest, QuoteRequest};
 use aomi_sdk::*;
-use serde_json::{Value, json};
+use serde::Serialize;
+use serde_json::Value;
+
+fn ok<T: Serialize>(value: T) -> Result<Value, String> {
+    let value = serde_json::to_value(value)
+        .map_err(|e| format!("[cow] failed to serialize response: {e}"))?;
+    Ok(match value {
+        Value::Object(mut map) => {
+            map.insert("source".to_string(), Value::String("cow".to_string()));
+            Value::Object(map)
+        }
+        other => serde_json::json!({ "source": "cow", "data": other }),
+    })
+}
 
 impl DynAomiTool for GetCowSwapQuote {
     type App = CowApp;
@@ -15,31 +29,19 @@ impl DynAomiTool for GetCowSwapQuote {
         let buy_addr = get_token_address(chain_name, &args.buy_token)?;
         let decimals = get_token_decimals(chain_name, &args.sell_token);
         let amount_base = amount_to_base_units(args.amount, decimals)?;
-
-        let mut payload = json!({
-            "sellToken": sell_addr,
-            "buyToken": buy_addr,
-            "sellAmountBeforeFee": amount_base,
-            "from": args.sender_address,
-            "kind": args.order_side.clone().unwrap_or_else(|| "sell".to_string()),
-        });
-        if let Some(receiver) = args.receiver_address.clone() {
-            payload["receiver"] = Value::String(receiver);
-        }
-        if let Some(valid_to) = args.valid_to {
-            payload["validTo"] = json!(valid_to);
-        }
-        if let Some(partially_fillable) = args.partially_fillable {
-            payload["partiallyFillable"] = json!(partially_fillable);
-        }
-        if let Some(signing_scheme) = args.signing_scheme.clone() {
-            payload["signingScheme"] = Value::String(signing_scheme);
-        }
-        if let Some(slippage) = args.slippage {
-            payload["slippageBps"] = json!((slippage * 10_000.0) as u32);
-        }
-
-        client.get_quote(&args.chain, payload)
+        let payload = QuoteRequest {
+            sell_token: &sell_addr,
+            buy_token: &buy_addr,
+            sell_amount_before_fee: &amount_base,
+            from: &args.sender_address,
+            kind: args.order_side.as_deref().unwrap_or("sell"),
+            receiver: args.receiver_address.as_deref(),
+            valid_to: args.valid_to,
+            partially_fillable: args.partially_fillable,
+            signing_scheme: args.signing_scheme.as_deref(),
+            slippage_bps: args.slippage.map(|s| (s * 10_000.0) as u32),
+        };
+        ok(client.get_quote(&args.chain, &payload)?)
     }
 }
 
@@ -50,8 +52,7 @@ impl DynAomiTool for PlaceCowOrder {
     const DESCRIPTION: &'static str = "Submit a signed CoW Protocol orderbook payload to CoW /orders API on the requested chain. Use the host's wallet/signing tools for any required user approval.";
 
     fn run(_app: &CowApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = CowClient::new()?;
-        client.place_order(&args.chain, args.signed_order)
+        ok(CowClient::new()?.place_order(&args.chain, args.signed_order)?)
     }
 }
 
@@ -62,8 +63,7 @@ impl DynAomiTool for GetCowOrder {
     const DESCRIPTION: &'static str = "Get the full order object for a CoW Protocol order by UID (status, executed amounts, fees, etc.).";
 
     fn run(_app: &CowApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = CowClient::new()?;
-        client.get_order(&args.chain, &args.order_uid)
+        ok(CowClient::new()?.get_order(&args.chain, &args.order_uid)?)
     }
 }
 
@@ -74,8 +74,7 @@ impl DynAomiTool for GetCowOrderStatus {
     const DESCRIPTION: &'static str = "Get the competition status of a CoW Protocol order (open/scheduled/active/solved/executing/traded/cancelled).";
 
     fn run(_app: &CowApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = CowClient::new()?;
-        client.get_order_status(&args.chain, &args.order_uid)
+        ok(CowClient::new()?.get_order_status(&args.chain, &args.order_uid)?)
     }
 }
 
@@ -86,8 +85,12 @@ impl DynAomiTool for GetCowUserOrders {
     const DESCRIPTION: &'static str = "Get a paginated list of CoW Protocol orders for a given owner address, sorted by creation date.";
 
     fn run(_app: &CowApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = CowClient::new()?;
-        client.get_user_orders(&args.chain, &args.owner_address, args.offset, args.limit)
+        ok(CowClient::new()?.get_user_orders(
+            &args.chain,
+            &args.owner_address,
+            args.offset,
+            args.limit,
+        )?)
     }
 }
 
@@ -98,13 +101,12 @@ impl DynAomiTool for CancelCowOrders {
     const DESCRIPTION: &'static str = "Cancel one or more open CoW Protocol orders. Requires the cancellation signature from the order owner.";
 
     fn run(_app: &CowApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = CowClient::new()?;
-        let payload = json!({
-            "orderUids": args.order_uids,
-            "signature": args.signature,
-            "signingScheme": args.signing_scheme,
-        });
-        client.cancel_orders(&args.chain, payload)
+        let payload = CancelOrdersRequest {
+            order_uids: &args.order_uids,
+            signature: &args.signature,
+            signing_scheme: &args.signing_scheme,
+        };
+        ok(CowClient::new()?.cancel_orders(&args.chain, &payload)?)
     }
 }
 
@@ -127,14 +129,13 @@ impl DynAomiTool for GetCowTrades {
             }
             _ => {}
         }
-        let client = CowClient::new()?;
-        client.get_trades(
+        ok(CowClient::new()?.get_trades(
             &args.chain,
             args.owner.as_deref(),
             args.order_uid.as_deref(),
             args.offset,
             args.limit,
-        )
+        )?)
     }
 }
 
@@ -146,8 +147,7 @@ impl DynAomiTool for GetCowNativePrice {
         "Get the price of a token relative to the chain's native currency via CoW Protocol.";
 
     fn run(_app: &CowApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = CowClient::new()?;
-        client.get_native_price(&args.chain, &args.token_address)
+        ok(CowClient::new()?.get_native_price(&args.chain, &args.token_address)?)
     }
 }
 
@@ -159,8 +159,7 @@ impl DynAomiTool for GetCowOrdersByTx {
         "Get all CoW Protocol orders that were settled in a specific transaction.";
 
     fn run(_app: &CowApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = CowClient::new()?;
-        client.get_orders_by_tx(&args.chain, &args.tx_hash)
+        ok(CowClient::new()?.get_orders_by_tx(&args.chain, &args.tx_hash)?)
     }
 }
 
@@ -171,7 +170,6 @@ impl DynAomiTool for DebugCowOrder {
     const DESCRIPTION: &'static str = "Get the full lifecycle debug info for a CoW Protocol order, including events and auction participation.";
 
     fn run(_app: &CowApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = CowClient::new()?;
-        client.debug_order(&args.chain, &args.order_uid)
+        ok(CowClient::new()?.debug_order(&args.chain, &args.order_uid)?)
     }
 }
