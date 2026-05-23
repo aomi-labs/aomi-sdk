@@ -65,7 +65,7 @@ pub(crate) fn validate_confirmation(token: Option<&str>) -> Result<(), String> {
 
 /// Build a `commit_eip712` route plan: app emits the typed-data + a
 /// continuation, host wallet signs, runtime splices the signature into the
-/// `submit_*` tool args under `master_signature`.
+/// `submit_*` tool args under `signature`.
 ///
 /// Used by [`perps`] (Hyperliquid L1 actions). Solana flows use
 /// [`build_solana_signed_routes`] instead.
@@ -75,18 +75,37 @@ pub(crate) fn build_evm_signed_routes<Submit: RouteTarget>(
     description: String,
     submit_template: Value,
 ) -> Result<ToolReturn, String> {
+    let continuation = json!({
+        "tool": Submit::tool_name(),
+        "args": submit_template,
+        "artifact_field": "signature",
+    });
     ToolReturn::route(value)
         .next(|next| {
             next.add::<host::CommitEip712>(json!({
                 "typed_data": typed_data,
                 "description": description,
+                "continuation": continuation,
             }))
-            .bind_as("master_signature")
-            .note("Wait for explicit user confirmation, then sign this Hyperliquid action with the master wallet.");
+            .bind_as("signature");
         })
-        .after::<Submit>(submit_template)
-        .awaits("master_signature")
-        .note("Wallet signed — submit the action to Hyperliquid.")
+        .after::<Submit>(continuation["args"].clone())
+        .awaits("signature")
+        .note(
+            "MANDATORY: Wallet just signed. You MUST call this tool RIGHT NOW. \
+             Do NOT generate a text response. Do NOT acknowledge or summarize. \
+             Make this function call immediately. \
+             \
+             CRITICAL — copy every arg EXACTLY as shown. In particular: \
+             • `nonce` is a 13-digit millisecond timestamp string — copy it CHARACTER BY \
+             CHARACTER. NEVER substitute 0, NEVER round, NEVER regenerate, NEVER convert \
+             to a number. The EIP-712 signature was computed against this exact nonce; \
+             changing it invalidates the wallet's signature and the exchange will reject \
+             the request as coming from an unrecognized address. \
+             • `action` is opaque pre-signed JSON — copy verbatim. \
+             • `signature` is opaque — copy verbatim. \
+             Keep opaque continuation state unchanged.",
+        )
         .try_build()
         .map_err(|e| format!("[byreal] route build failed: {e}"))
 }
@@ -104,18 +123,28 @@ pub(crate) fn build_solana_signed_routes<Submit: RouteTarget>(
     description: String,
     submit_template: Value,
 ) -> Result<ToolReturn, String> {
+    let continuation = json!({
+        "tool": Submit::tool_name(),
+        "args": submit_template,
+        "artifact_field": "signed_tx",
+    });
     ToolReturn::route(value)
         .next(|next| {
             next.add::<host::SignTxSolana>(json!({
                 "unsigned_tx": unsigned_tx_b64,
                 "description": description,
+                "continuation": continuation,
             }))
-            .bind_as("signed_tx")
-            .note("Wait for explicit user confirmation, then sign this Solana transaction with the connected wallet.");
+            .bind_as("signed_tx");
         })
-        .after::<Submit>(submit_template)
+        .after::<Submit>(continuation["args"].clone())
         .awaits("signed_tx")
-        .note("Wallet signed — submit the signed transaction to byreal.")
+        .note(
+            "MANDATORY: Wallet just signed the Solana transaction. You MUST call this tool \
+             RIGHT NOW. Do NOT generate a text response. Do NOT acknowledge or summarize. \
+             Make this function call immediately. Pass all args exactly as shown. \
+             Keep opaque continuation state unchanged.",
+        )
         .try_build()
         .map_err(|e| format!("[byreal] route build failed: {e}"))
 }
