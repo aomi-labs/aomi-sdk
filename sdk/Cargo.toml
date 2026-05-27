@@ -1,10 +1,25 @@
 [package]
 name = "aomi-sdk"
-version = "0.1.19"
+version = "0.1.20"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/aomi-labs/aomi-sdk"
-description = "Lightweight SDK for building dynamic Aomi plugins (cdylib)"
+description = "Lightweight SDK for building dynamic Aomi plugins (cdylib) and the aomi-git deploy CLI"
+
+[features]
+default = []
+# Compile the `aomi-git` binary and its supporting modules. Off by default so
+# library consumers don't drag in clap/tokio/reqwest just to depend on the SDK.
+# Enable via `cargo install aomi-sdk --features cli` or
+# `cargo build -p aomi-sdk --features cli`.
+cli = [
+    "dep:anyhow",
+    "dep:clap",
+    "dep:reqwest",
+    "dep:sha2",
+    "dep:tokio",
+    "dep:toml",
+]
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
@@ -13,6 +28,19 @@ schemars = "1.0.4"
 eyre.workspace = true
 libloading = "0.8"
 tracing.workspace = true
+
+# Optional deps — pulled in only when the `cli` feature is enabled.
+anyhow = { version = "1", optional = true }
+clap = { version = "4", features = ["derive"], optional = true }
+reqwest = { workspace = true, optional = true }
+sha2 = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+toml = { version = "0.8", optional = true }
+
+[[bin]]
+name = "aomi-git"
+path = "bin/main.rs"
+required-features = ["cli"]
 
 [package.metadata.docs.rs]
 all-features = true
