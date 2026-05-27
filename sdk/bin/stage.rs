@@ -41,8 +41,7 @@ pub(crate) fn write_source_tree(
             fs::create_dir_all(parent)
                 .with_context(|| format!("failed to create {}", parent.display()))?;
         }
-        fs::write(&dest, &bytes)
-            .with_context(|| format!("failed to write {}", dest.display()))?;
+        fs::write(&dest, &bytes).with_context(|| format!("failed to write {}", dest.display()))?;
         staged.push(StagedFile {
             path: path_to_slash(&relative_path)?,
             sha256: format!("sha256:{:x}", Sha256::digest(&bytes)),
@@ -57,8 +56,7 @@ pub(crate) fn write_manifest(manifest_path: &Path, deployment: &Deployment) -> R
     let parent = manifest_path
         .parent()
         .ok_or_else(|| anyhow!("manifest path has no parent: {}", manifest_path.display()))?;
-    fs::create_dir_all(parent)
-        .with_context(|| format!("failed to create {}", parent.display()))?;
+    fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
     let json = serde_json::to_string_pretty(deployment)?;
     fs::write(manifest_path, format!("{json}\n"))
         .with_context(|| format!("failed to write {}", manifest_path.display()))

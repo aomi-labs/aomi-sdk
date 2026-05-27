@@ -65,7 +65,9 @@ impl FromStr for Platform {
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
         {
-            bail!("platform name `{s}` contains unsupported characters (ASCII alphanumeric, '-', '_' only)");
+            bail!(
+                "platform name `{s}` contains unsupported characters (ASCII alphanumeric, '-', '_' only)"
+            );
         }
         Ok(Self::new(s))
     }
@@ -97,11 +99,7 @@ impl PublishTarget {
             })?;
         let source_repo = normalize_github_repo(raw_git)?;
 
-        let app_path = format!(
-            "{}/{}",
-            DEFAULT_APP_PATH_PREFIX,
-            app.name.trim_matches('/')
-        );
+        let app_path = format!("{}/{}", DEFAULT_APP_PATH_PREFIX, app.name.trim_matches('/'));
         let release_tag = DEFAULT_RELEASE_TAG_TEMPLATE
             .replace("{app_slug}", &app.name)
             .replace("{short_commit}", &short_hash(&source.commit));
@@ -172,7 +170,11 @@ pub(crate) fn commit_message(deployment: &Deployment) -> (String, String) {
 }
 
 fn normalize_github_repo(value: &str) -> Result<String> {
-    let mut repo = value.trim().trim_end_matches('/').trim_end_matches(".git").to_string();
+    let mut repo = value
+        .trim()
+        .trim_end_matches('/')
+        .trim_end_matches(".git")
+        .to_string();
     for prefix in [
         "git@github.com:",
         "ssh://git@github.com/",

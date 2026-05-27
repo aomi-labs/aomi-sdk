@@ -143,8 +143,7 @@ pub fn write(source_repo_root: &Path, state: &DeploymentState) -> Result<PathBuf
     let parent = path
         .parent()
         .expect("deployment path always has a parent dir");
-    fs::create_dir_all(parent)
-        .with_context(|| format!("failed to create {}", parent.display()))?;
+    fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
     let json = serde_json::to_string_pretty(state)?;
     let tmp = path.with_extension("json.tmp");
     fs::write(&tmp, format!("{json}\n"))
@@ -159,8 +158,7 @@ pub fn read(source_repo_root: &Path) -> Result<Option<DeploymentState>> {
     if !path.exists() {
         return Ok(None);
     }
-    let bytes = fs::read(&path)
-        .with_context(|| format!("failed to read {}", path.display()))?;
+    let bytes = fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
     let state: DeploymentState = serde_json::from_slice(&bytes)
         .with_context(|| format!("failed to parse {}", path.display()))?;
     Ok(Some(state))

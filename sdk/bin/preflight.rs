@@ -130,7 +130,10 @@ pub async fn run(state: &mut DeploymentState, backend_url: &str) -> Result<()> {
         } else {
             state.checks.push(Check::fail(
                 "git_url_matches_platform",
-                format!("aomi.toml git={user_git} != platform.github_repo={}", remote.github_repo),
+                format!(
+                    "aomi.toml git={user_git} != platform.github_repo={}",
+                    remote.github_repo
+                ),
             ));
         }
     }
@@ -140,7 +143,11 @@ pub async fn run(state: &mut DeploymentState, backend_url: &str) -> Result<()> {
 }
 
 fn normalize_github_url(value: &str) -> String {
-    let mut repo = value.trim().trim_end_matches('/').trim_end_matches(".git").to_string();
+    let mut repo = value
+        .trim()
+        .trim_end_matches('/')
+        .trim_end_matches(".git")
+        .to_string();
     for prefix in [
         "git@github.com:",
         "ssh://git@github.com/",

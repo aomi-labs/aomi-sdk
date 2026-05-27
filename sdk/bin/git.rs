@@ -131,7 +131,10 @@ impl GitRepo {
     }
 
     pub(crate) fn remote_origin(&self) -> Result<String> {
-        Ok(self.git(["remote", "get-url", "origin"])?.trim().to_string())
+        Ok(self
+            .git(["remote", "get-url", "origin"])?
+            .trim()
+            .to_string())
     }
 
     pub(crate) fn dirty_paths(&self) -> Result<Vec<PathBuf>> {

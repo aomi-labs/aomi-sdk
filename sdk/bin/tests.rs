@@ -7,9 +7,7 @@ use tempfile::TempDir;
 
 use crate::activate::{ActivationPlan, Visibility};
 use crate::cli::{Cli, Command as CliCommand};
-use crate::deployment_state::{
-    DeploymentState, deployment_path, read as read_deployment_state,
-};
+use crate::deployment_state::{DeploymentState, deployment_path, read as read_deployment_state};
 use crate::plan::{Deployment, Mode};
 use crate::platform::Platform;
 
@@ -396,7 +394,10 @@ git = "https://github.com/aomi-labs/krexa-hosted-apps"
     assert_eq!(deployment.app.name, "alpha-trader-v2");
     assert_eq!(deployment.app.display_name, "Alpha Trader V2");
     assert_eq!(deployment.source.source_path, PathBuf::from("."));
-    assert_eq!(deployment.publish.source_repo, "aomi-labs/krexa-hosted-apps");
+    assert_eq!(
+        deployment.publish.source_repo,
+        "aomi-labs/krexa-hosted-apps"
+    );
     assert!(
         deployment
             .publish
@@ -408,7 +409,11 @@ git = "https://github.com/aomi-labs/krexa-hosted-apps"
 #[test]
 fn dry_run_plan_serializes_to_json() {
     let repo = TestRepo::new();
-    repo.write_aomi_toml("", "json-app", "https://github.com/aomi-labs/community-apps");
+    repo.write_aomi_toml(
+        "",
+        "json-app",
+        "https://github.com/aomi-labs/community-apps",
+    );
     repo.commit("initial app");
 
     let deployment =
@@ -442,8 +447,9 @@ git = "https://github.com/aomi-labs/community-apps"
     repo.write("apps/alpha/src/lib.rs", "pub fn marker() {}\n");
     repo.commit("initial app");
 
-    let deployment = Deployment::dry_run(repo.path("apps/alpha"), Platform::new("community"), false)
-        .expect("dry run plan");
+    let deployment =
+        Deployment::dry_run(repo.path("apps/alpha"), Platform::new("community"), false)
+            .expect("dry run plan");
 
     assert_eq!(
         deployment.app.config_path,
@@ -474,7 +480,11 @@ version = "0.1.0"
 #[test]
 fn dirty_tree_can_be_allowed_for_plan_only() {
     let repo = TestRepo::new();
-    repo.write_aomi_toml("", "dirty-app", "https://github.com/aomi-labs/community-apps");
+    repo.write_aomi_toml(
+        "",
+        "dirty-app",
+        "https://github.com/aomi-labs/community-apps",
+    );
     repo.commit("initial app");
     repo.write("src/lib.rs", "pub fn dirty() {}\n");
 
@@ -499,8 +509,12 @@ fn source_staging_writes_files_and_manifest() {
     fs::create_dir_all(stale.parent().unwrap()).expect("stale parent");
     fs::write(&stale, "old").expect("stale file");
 
-    let outcome = Deployment::stage(repo.path("apps/zora"), Platform::new("community"), stage.path())
-        .expect("stage app");
+    let outcome = Deployment::stage(
+        repo.path("apps/zora"),
+        Platform::new("community"),
+        stage.path(),
+    )
+    .expect("stage app");
     let stage_root = stage.path().canonicalize().expect("canonical stage root");
 
     assert_eq!(outcome.deployment.mode, Mode::Stage);
@@ -605,11 +619,7 @@ fn git_transport_commits_without_push() {
 #[test]
 fn git_transport_rejects_wrong_platform_remote() {
     let source = TestRepo::new();
-    source.write_aomi_toml(
-        "",
-        "zora",
-        "git@github.com:aomi-labs/community-apps.git",
-    );
+    source.write_aomi_toml("", "zora", "git@github.com:aomi-labs/community-apps.git");
     source.commit("initial app");
 
     let platform = TestRepo::new();
@@ -617,9 +627,13 @@ fn git_transport_rejects_wrong_platform_remote() {
     platform.write("README.md", "wrong repo\n");
     platform.commit("initial platform repo");
 
-    let error =
-        Deployment::git_transport(source.root(), Platform::new("community"), platform.root(), false)
-            .expect_err("wrong remote should fail");
+    let error = Deployment::git_transport(
+        source.root(),
+        Platform::new("community"),
+        platform.root(),
+        false,
+    )
+    .expect_err("wrong remote should fail");
     assert!(
         error
             .to_string()
@@ -630,11 +644,7 @@ fn git_transport_rejects_wrong_platform_remote() {
 #[test]
 fn git_transport_rejects_unowned_dirty_platform_files() {
     let source = TestRepo::new();
-    source.write_aomi_toml(
-        "",
-        "zora",
-        "git@github.com:aomi-labs/community-apps.git",
-    );
+    source.write_aomi_toml("", "zora", "git@github.com:aomi-labs/community-apps.git");
     source.commit("initial app");
 
     let platform = TestRepo::new();
@@ -643,9 +653,13 @@ fn git_transport_rejects_unowned_dirty_platform_files() {
     platform.commit("initial platform repo");
     platform.write("README.md", "dirty unrelated file\n");
 
-    let error =
-        Deployment::git_transport(source.root(), Platform::new("community"), platform.root(), false)
-            .expect_err("unowned dirty platform file should fail");
+    let error = Deployment::git_transport(
+        source.root(),
+        Platform::new("community"),
+        platform.root(),
+        false,
+    )
+    .expect_err("unowned dirty platform file should fail");
     assert!(
         error
             .to_string()
@@ -657,11 +671,7 @@ fn git_transport_rejects_unowned_dirty_platform_files() {
 #[test]
 fn git_transport_allows_owned_dirty_platform_files() {
     let source = TestRepo::new();
-    source.write_aomi_toml(
-        "",
-        "zora",
-        "git@github.com:aomi-labs/community-apps.git",
-    );
+    source.write_aomi_toml("", "zora", "git@github.com:aomi-labs/community-apps.git");
     source.commit("initial app");
 
     let platform = TestRepo::new();
@@ -670,9 +680,13 @@ fn git_transport_allows_owned_dirty_platform_files() {
     platform.commit("initial platform repo");
     platform.write("apps/zora/stale.txt", "owned dirty file\n");
 
-    let outcome =
-        Deployment::git_transport(source.root(), Platform::new("community"), platform.root(), false)
-            .expect("owned dirty platform file can be replaced");
+    let outcome = Deployment::git_transport(
+        source.root(),
+        Platform::new("community"),
+        platform.root(),
+        false,
+    )
+    .expect("owned dirty platform file can be replaced");
 
     assert!(outcome.commit.is_some());
     assert!(!platform.path("apps/zora/stale.txt").exists());
@@ -730,9 +744,7 @@ impl TestRepo {
         };
         self.write(
             &path,
-            &format!(
-                "[app]\nname = \"{name}\"\nplatform = \"community\"\ngit = \"{git}\"\n"
-            ),
+            &format!("[app]\nname = \"{name}\"\nplatform = \"community\"\ngit = \"{git}\"\n"),
         );
     }
 }

@@ -54,7 +54,8 @@ impl Cli {
                             if args.no_push {
                                 bail!("--no-push only applies with --platform-repo-dir");
                             }
-                            let outcome = Deployment::stage(&args.path, args.platform.clone(), stage_dir)?;
+                            let outcome =
+                                Deployment::stage(&args.path, args.platform.clone(), stage_dir)?;
                             if args.json {
                                 println!("{}", serde_json::to_string_pretty(&outcome)?);
                             } else {
@@ -121,9 +122,7 @@ impl Cli {
                                         state.state.activated = true;
                                     }
                                     Err(e) => {
-                                        state
-                                            .errors
-                                            .push(format!("auto-activation failed: {e}"));
+                                        state.errors.push(format!("auto-activation failed: {e}"));
                                     }
                                 }
                             }
@@ -138,9 +137,7 @@ impl Cli {
                                 println!("  deployment_state    : {}", state_path.display());
                                 println!(
                                     "  state               : pushed={} deployed={} activated={}",
-                                    state.state.pushed,
-                                    state.state.deployed,
-                                    state.state.activated
+                                    state.state.pushed, state.state.deployed, state.state.activated
                                 );
                             }
                         }
@@ -279,11 +276,18 @@ pub struct ActivateArgs {
 
 impl ActivateArgs {
     pub fn plan(&self) -> Result<ActivationPlan> {
-        let github_token = match self.access_token_env.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        let github_token = match self
+            .access_token_env
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
             Some(env_name) => match std::env::var(env_name) {
                 Ok(value) if !value.is_empty() => Some(value),
                 Ok(_) => anyhow::bail!("env var `{env_name}` (from --access-token-env) is empty"),
-                Err(_) => anyhow::bail!("env var `{env_name}` (from --access-token-env) is not set"),
+                Err(_) => {
+                    anyhow::bail!("env var `{env_name}` (from --access-token-env) is not set")
+                }
             },
             None => None,
         };

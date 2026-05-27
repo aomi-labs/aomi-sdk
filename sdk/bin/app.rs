@@ -46,7 +46,12 @@ impl App {
     /// - `Ok(Some(token))` when the env var is set to a non-empty value.
     /// - `Err` when the env var name is set but the env var is unset or empty.
     pub fn resolved_access_token(&self) -> Result<Option<String>> {
-        let Some(reference) = self.access_token.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
+        let Some(reference) = self
+            .access_token
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        else {
             return Ok(None);
         };
         let var_name = reference
