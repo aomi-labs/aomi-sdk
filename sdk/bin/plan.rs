@@ -29,8 +29,22 @@ impl Mode {
     }
 }
 
+/// Schema version stamped into every `.aomi-publish/manifest.json`. Platform
+/// publish workflows (e.g. `community-apps/scripts/publish_app.py`) validate
+/// this against `ci/platform.json::stage_manifest_version` before accepting
+/// the staged commit; dropping it breaks the contract end-to-end.
+pub const STAGE_MANIFEST_VERSION: &str = "aomi-git-stage-v1";
+
+fn default_stage_manifest_version() -> String {
+    STAGE_MANIFEST_VERSION.to_string()
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 pub struct Deployment {
+    /// Stage-manifest schema version. Always serialized as
+    /// `STAGE_MANIFEST_VERSION` to keep the publish-workflow contract.
+    #[serde(default = "default_stage_manifest_version")]
+    pub version: String,
     pub mode: Mode,
     pub platform: Platform,
     pub app: App,
@@ -138,6 +152,7 @@ impl Deployment {
     ) -> Result<Self> {
         let publish = PublishTarget::resolve(&platform, &app, &source)?;
         Ok(Self {
+            version: STAGE_MANIFEST_VERSION.to_string(),
             mode,
             platform,
             app,
