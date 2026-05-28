@@ -234,20 +234,22 @@ impl DynAomiTool for GetFanLeaderboard {
 
         let resp = zora_get(&path)?;
 
-        // Normalize the Zora holders response into a clean ranked list
-        let holders = resp
-            .get("holders")
+        // Response shape: { zora20Token: { tokenBalances: { edges: [{ node: { balance, ownerAddress, ownerProfile } }] } } }
+        let edges = resp
+            .get("zora20Token")
+            .and_then(|t| t.get("tokenBalances"))
+            .and_then(|tb| tb.get("edges"))
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
 
-        let entries: Vec<Value> = holders
+        let entries: Vec<Value> = edges
             .into_iter()
             .enumerate()
-            .map(|(i, h)| {
-                let wallet = h
-                    .get("user")
-                    .and_then(|u| u.get("publicKey"))
+            .map(|(i, edge)| {
+                let node = edge.get("node").unwrap_or(&edge);
+                let wallet = node
+                    .get("ownerAddress")
                     .and_then(Value::as_str)
                     .unwrap_or("unknown");
                 let wallet_short = if wallet.len() > 10 {
@@ -255,15 +257,26 @@ impl DynAomiTool for GetFanLeaderboard {
                 } else {
                     wallet.to_string()
                 };
-                let balance = h
+                let handle = node
+                    .get("ownerProfile")
+                    .and_then(|p| p.get("handle"))
+                    .and_then(Value::as_str)
+                    .unwrap_or(&wallet_short)
+                    .to_string();
+                // balance is raw (18 decimals) — convert to human-readable coins
+                let balance_coins = node
                     .get("balance")
                     .and_then(Value::as_str)
-                    .unwrap_or("0");
+                    .unwrap_or("0")
+                    .parse::<f64>()
+                    .map(|b| b / 1e18)
+                    .unwrap_or(0.0);
 
                 json!({
                     "rank": i + 1,
                     "wallet_short": wallet_short,
-                    "balance": balance,
+                    "handle": handle,
+                    "balance": format!("{:.2}", balance_coins),
                 })
             })
             .collect();
@@ -374,8 +387,11 @@ impl DynAomiTool for DistributeRewards {
             urlencode(&coin_address)
         );
         let holders_resp = zora_get(&path)?;
-        let holders = holders_resp
-            .get("holders")
+        // Response shape: { zora20Token: { tokenBalances: { edges: [{ node: { balance, ownerAddress } }] } } }
+        let edges = holders_resp
+            .get("zora20Token")
+            .and_then(|t| t.get("tokenBalances"))
+            .and_then(|tb| tb.get("edges"))
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
@@ -397,17 +413,20 @@ impl DynAomiTool for DistributeRewards {
         let mut newly_dispatched = 0u32;
         let mut eligible_count = 0u32;
 
-        for holder in &holders {
-            let wallet = holder
-                .get("user")
-                .and_then(|u| u.get("publicKey"))
+        for edge in &edges {
+            let node = edge.get("node").unwrap_or(edge);
+            let wallet = node
+                .get("ownerAddress")
                 .and_then(Value::as_str)
                 .unwrap_or("");
-            let balance_str = holder
+            // balance is raw (18 decimals) — convert to coins for threshold comparison
+            let balance: f64 = node
                 .get("balance")
                 .and_then(Value::as_str)
-                .unwrap_or("0");
-            let balance: f64 = balance_str.parse().unwrap_or(0.0);
+                .unwrap_or("0")
+                .parse::<f64>()
+                .map(|b| b / 1e18)
+                .unwrap_or(0.0);
 
             if balance < threshold {
                 continue;
@@ -418,7 +437,6 @@ impl DynAomiTool for DistributeRewards {
                 continue;
             }
 
-            // Record the distribution (idempotent — DB has UNIQUE constraint)
             let dist_row = json!({
                 "mission_id": args.mission_id,
                 "recipient_wallet": wallet,
@@ -462,23 +480,29 @@ impl DynAomiTool for GetCreatorRecap {
         );
         let coin_data = zora_get(&coin_path)?;
 
-        let coin_name = coin_data
+        // Response shape: { zora20Token: { name, symbol, uniqueHolders, marketCap, volume24h, ... } }
+        let token = coin_data
+            .get("zora20Token")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({}));
+
+        let coin_name = token
             .get("name")
             .and_then(Value::as_str)
             .unwrap_or("your coin");
-        let ticker = coin_data
+        let ticker = token
             .get("symbol")
             .and_then(Value::as_str)
             .unwrap_or("");
-        let holders = coin_data
+        let holders = token
             .get("uniqueHolders")
             .and_then(Value::as_u64)
             .unwrap_or(0);
-        let market_cap = coin_data
+        let market_cap = token
             .get("marketCap")
             .and_then(Value::as_str)
             .unwrap_or("0");
-        let volume_24h = coin_data
+        let volume_24h = token
             .get("volume24h")
             .and_then(Value::as_str)
             .unwrap_or("0");
