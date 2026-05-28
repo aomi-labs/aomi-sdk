@@ -27,7 +27,8 @@
 use crate::auth;
 use crate::client::Client as GenClient;
 use crate::client::types::{
-    PayshBudgetUpdate, PayshCallRequest, PayshDiscoverRequest, RequestCreditRequest,
+    DeployAgentRequest, InviteChallengeRequest, PayshBudgetUpdate, PayshCallRequest,
+    PayshDiscoverRequest, PayshProxyQuoteRequest, RedeemInviteRequest, RequestCreditRequest,
     SignCreditRequest,
 };
 use aomi_sdk::schemars::JsonSchema;
@@ -172,11 +173,11 @@ pub(crate) struct RequestCreditArgs {
     /// Requested credit level (1–4). Capped by the agent's Krexit Score.
     pub credit_level: u8,
     /// Optional override for `ownerSignature` when the caller signs
-    /// externally. If omitted, the tool signs the challenge using the
-    /// secret key in `KREXA_OWNER_SECRET_KEY` (base58-encoded 64-byte
-    /// Solana keypair). Hidden from the LLM tool schema — the LLM never
-    /// has a valid signature to pass; this slot is for operator/test
-    /// injection only.
+    /// externally. If omitted, the tool signs internally — the **owner
+    /// keypair** (KREXA_OWNER_SECRET_KEY) signs the raw 32 bytes of the
+    /// **agent** pubkey, and the result is base64-encoded. Hidden from
+    /// the LLM tool schema — the LLM never has a valid signature to
+    /// pass; this slot is for operator/test injection only.
     #[schemars(skip)]
     pub owner_signature: Option<String>,
 }
@@ -185,7 +186,7 @@ impl DynAomiTool for RequestCredit {
     type App = KrexaApp;
     type Args = RequestCreditArgs;
     const NAME: &'static str = "krexa_request_credit";
-    const DESCRIPTION: &'static str = "Submit a credit request for oracle review. This is the first step of borrowing — the oracle must see an approved credit request before it will co-sign a draw. The owner wallet's Ed25519 signature over `Krexa credit request for <owner_pubkey>` proves ownership; pass `owner_signature` explicitly or set `KREXA_OWNER_SECRET_KEY` for the tool to sign internally. After this returns success, call `borrow_usdc` with the same amount + level.";
+    const DESCRIPTION: &'static str = "Submit a credit request for oracle review. This is the first step of borrowing — the oracle must see an approved credit request before it will co-sign a draw. The owner keypair Ed25519-signs the raw 32 bytes of the agent's pubkey (NOT a challenge string), and the base64 signature goes into `ownerSignature`. The tool signs internally when `KREXA_OWNER_SECRET_KEY` is set. After this returns success, call `borrow_usdc` with the same amount + level.";
 
     fn run(_app: &KrexaApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
         let api_key = auth::api_key(&ctx)?;
@@ -194,7 +195,7 @@ impl DynAomiTool for RequestCredit {
         }
         let owner_signature = match args.owner_signature {
             Some(sig) => sig,
-            None => auth::sign_credit_request(&ctx, &args.owner_pubkey)?,
+            None => auth::sign_credit_request(&ctx, &args.agent)?,
         };
         let body = RequestCreditRequest {
             amount: args.amount,
@@ -480,5 +481,224 @@ impl DynAomiTool for LookupAgent {
             .block_on(async move { client().get_kya_quick(args.input.as_str()).await })
             .map_err(|e| format!("[krexa] lookup_agent: {e}"))?;
         ok(result.into_inner())
+    }
+}
+
+// ============================================================================
+// ONBOARD
+// ============================================================================
+
+pub(crate) struct RedeemInvite;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct RedeemInviteArgs {
+    /// Invite code in `KREXA-XXXX-XXXX` format. One code per wallet; the
+    /// binding is permanent after redemption.
+    pub code: String,
+    /// Agent wallet pubkey (base58) being activated. The same wallet's
+    /// keypair (`KREXA_AGENT_SECRET_KEY`) must sign the challenge — the
+    /// tool fetches the challenge from `/access/challenge` and signs it
+    /// internally before posting `/access/redeem`.
+    pub wallet: String,
+}
+
+impl DynAomiTool for RedeemInvite {
+    type App = KrexaApp;
+    type Args = RedeemInviteArgs;
+    const NAME: &'static str = "krexa_redeem_invite";
+    const DESCRIPTION: &'static str = "Activate a wallet on Krexa by redeeming an invite code. Composite: fetches the challenge string from `/access/challenge`, signs it with the agent keypair (KREXA_AGENT_SECRET_KEY, base58), then posts `/access/redeem`. Returns `{ activated: true }` on success. Required before any gated endpoint (borrow, Pay.sh writes) will accept the wallet. One code per wallet — the binding is permanent.";
+
+    fn run(_app: &KrexaApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
+        let runtime = rt()?;
+        // Two-step composite: ask the server for the canonical challenge,
+        // then sign+submit. We could format the challenge locally (it's
+        // deterministic), but the server is the source of truth and the
+        // round-trip catches typos before signing.
+        let signature = auth::sign_invite_challenge(&ctx, &args.code, &args.wallet)?;
+        let challenge_body = InviteChallengeRequest {
+            code: args.code.clone(),
+            wallet: args.wallet.clone(),
+        };
+        let redeem_body = RedeemInviteRequest {
+            code: args.code,
+            wallet: args.wallet,
+            signature,
+        };
+        let result = runtime
+            .block_on(async move {
+                let c = client();
+                // Touch /access/challenge so a code-typo surfaces here
+                // (clearer 4xx) rather than as an opaque signature error
+                // at /access/redeem.
+                let _challenge = c.get_invite_challenge(&challenge_body).await?;
+                c.redeem_invite(&redeem_body).await
+            })
+            .map_err(|e| format!("[krexa] redeem_invite: {e}"))?;
+        ok(result.into_inner())
+    }
+}
+
+pub(crate) struct DeployAgent;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct DeployAgentArgs {
+    /// Agent's Solana pubkey (base58).
+    pub agent: String,
+    /// Owner wallet pubkey (base58). Same as `agent` for self-custodied
+    /// agents.
+    pub owner: String,
+    /// Display name. Defaults to `aomi-agent` if omitted.
+    pub name: Option<String>,
+    /// 0 = Trader, 1 = Service, 2 = Hybrid. Defaults to Trader.
+    pub agent_type: Option<u8>,
+}
+
+impl DynAomiTool for DeployAgent {
+    type App = KrexaApp;
+    type Args = DeployAgentArgs;
+    const NAME: &'static str = "krexa_deploy_agent";
+    const DESCRIPTION: &'static str = "Build the on-chain agent-deploy transaction. Idempotent: returns `{ status: \"exists\" }` if the agent is already deployed, otherwise `{ status: \"ready\", transaction: \"<base64 partial-signed tx>\" }`. The oracle's KYA signature is already attached; the host adds the agent + owner signatures (typically the same keypair) and submits to Solana RPC. Required after `redeem_invite` and BEFORE `request_credit` — credit endpoints 404 until the on-chain deploy lands. Needs ~0.01 SOL on the agent wallet for rent.";
+
+    fn run(_app: &KrexaApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
+        let body = DeployAgentRequest {
+            agent: args.agent,
+            owner: args.owner,
+            name: Some(args.name.unwrap_or_else(|| "aomi-agent".to_string())),
+            agent_type: args.agent_type.map(|n| n as i64),
+        };
+        let runtime = rt()?;
+        let result = runtime
+            .block_on(async move { client().deploy_agent(&body).await })
+            .map_err(|e| format!("[krexa] deploy_agent: {e}"))?;
+        ok(result.into_inner())
+    }
+}
+
+// ============================================================================
+// PAY.SH PROXY (provider-managed paid API calls)
+// ============================================================================
+
+pub(crate) struct ListProxyProviders;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct ListProxyProvidersArgs {}
+
+impl DynAomiTool for ListProxyProviders {
+    type App = KrexaApp;
+    type Args = ListProxyProvidersArgs;
+    const NAME: &'static str = "krexa_list_proxy_providers";
+    const DESCRIPTION: &'static str = "List the Pay.sh proxy providers (OpenAI, Anthropic, etc.) with their available routes and per-route USDC pricing. Each entry carries a `proxyAvailable: true` flag. Replaces the legacy `paysh_catalog` whose URLs were placeholders. Call this first when you don't already know which provider/route you want.";
+
+    fn run(_app: &KrexaApp, _args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
+        let runtime = rt()?;
+        let result = runtime
+            .block_on(async move { client().paysh_proxy_list_providers().await })
+            .map_err(|e| format!("[krexa] list_proxy_providers: {e}"))?;
+        ok(result.into_inner())
+    }
+}
+
+pub(crate) struct GetProxyQuote;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct GetProxyQuoteArgs {
+    /// Provider id from `list_proxy_providers` (e.g. `openai`,
+    /// `anthropic`).
+    pub provider: String,
+    /// Upstream route to call, including leading slash (e.g.
+    /// `/v1/chat/completions`).
+    pub route: String,
+}
+
+impl DynAomiTool for GetProxyQuote {
+    type App = KrexaApp;
+    type Args = GetProxyQuoteArgs;
+    const NAME: &'static str = "krexa_get_proxy_quote";
+    const DESCRIPTION: &'static str = "Get the USDC price + gateway wallet (`payTo`) for a single proxy call. Returns `{ priceUsdc, payTo, priceBaseUnits }`. After this, the agent transfers `priceBaseUnits` USDC to `payTo` on Solana, captures the tx signature, and calls `proxy_call` with `X-PAYMENT` set to that signature.";
+
+    fn run(_app: &KrexaApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
+        let api_key = auth::api_key(&ctx)?;
+        let body = PayshProxyQuoteRequest {
+            provider: args.provider,
+            route: args.route,
+        };
+        let runtime = rt()?;
+        let result = runtime
+            .block_on(async move { client().paysh_proxy_quote(api_key.as_str(), &body).await })
+            .map_err(|e| format!("[krexa] get_proxy_quote: {e}"))?;
+        ok(result.into_inner())
+    }
+}
+
+pub(crate) struct ProxyCall;
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub(crate) struct ProxyCallArgs {
+    /// Provider id from `list_proxy_providers` (e.g. `openai`).
+    pub provider: String,
+    /// Upstream route, including leading slash (e.g. `/v1/chat/completions`).
+    pub route: String,
+    /// Solana transaction signature of the agent's USDC payment to the
+    /// gateway `payTo` returned by `get_proxy_quote`. Goes into
+    /// `X-PAYMENT`.
+    pub payment_tx_signature: String,
+    /// Agent's Solana pubkey (base58). Goes into `X-AGENT-PUBKEY`.
+    pub agent_pubkey: String,
+    /// Upstream request body in the provider's native format (e.g.
+    /// `{ model, messages, ... }` for OpenAI chat completions).
+    pub body: serde_json::Map<String, Value>,
+}
+
+impl DynAomiTool for ProxyCall {
+    type App = KrexaApp;
+    type Args = ProxyCallArgs;
+    const NAME: &'static str = "krexa_proxy_call";
+    const DESCRIPTION: &'static str = "Make a Pay.sh proxy call after the USDC payment has landed on-chain. Body is the provider's native request shape (OpenAI / Anthropic / etc.); response is the raw upstream reply. The agent's USDC transfer must precede this call — pass the resulting tx signature as `payment_tx_signature`. Wildcard route path is constructed at runtime, so this tool is hand-rolled with reqwest rather than going through the generated client.";
+
+    fn run(_app: &KrexaApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
+        // Hand-rolled because the upstream route is a wildcard
+        // path component progenitor doesn't model cleanly.
+        let api_key = auth::api_key(&ctx)?;
+        let route = if args.route.starts_with('/') {
+            args.route
+        } else {
+            format!("/{}", args.route)
+        };
+        let url = format!(
+            "{}/solana/paysh/proxy/{}{}",
+            base_url(),
+            args.provider,
+            route
+        );
+        let body_value = Value::Object(args.body);
+
+        let runtime = rt()?;
+        let result = runtime
+            .block_on(async move {
+                let http = reqwest::Client::new();
+                let response = http
+                    .post(&url)
+                    .header("X-API-Key", api_key)
+                    .header("X-PAYMENT", &args.payment_tx_signature)
+                    .header("X-AGENT-PUBKEY", &args.agent_pubkey)
+                    .json(&body_value)
+                    .send()
+                    .await
+                    .map_err(|e| format!("send: {e}"))?;
+                let status = response.status();
+                let text = response
+                    .text()
+                    .await
+                    .map_err(|e| format!("read body: {e}"))?;
+                if !status.is_success() {
+                    return Err(format!("upstream {status}: {text}"));
+                }
+                // Pass the upstream JSON through. Fall back to a
+                // string-shaped value if the body isn't JSON.
+                let parsed: Value = serde_json::from_str(&text).unwrap_or(Value::String(text));
+                Ok(parsed)
+            })
+            .map_err(|e: String| format!("[krexa] proxy_call: {e}"))?;
+        ok(result)
     }
 }

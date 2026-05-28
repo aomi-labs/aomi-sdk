@@ -250,6 +250,137 @@ pub mod types {
             }
         }
     }
+    ///`DeployAgentRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "agent",
+    ///    "owner"
+    ///  ],
+    ///  "properties": {
+    ///    "agent": {
+    ///      "description": "Agent's Solana pubkey (base58).",
+    ///      "type": "string"
+    ///    },
+    ///    "agentType": {
+    ///      "description": "0 = Trader, 1 = Service, 2 = Hybrid.",
+    ///      "type": "integer",
+    ///      "maximum": 2.0,
+    ///      "minimum": 0.0
+    ///    },
+    ///    "name": {
+    ///      "description": "Display name (1-32 chars). Defaults to \"krexa-agent\".",
+    ///      "type": "string"
+    ///    },
+    ///    "owner": {
+    ///      "description": "Owner wallet pubkey (base58) — fee payer and authority. May\nbe the same as `agent` for self-custodied agents.\n",
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct DeployAgentRequest {
+        ///Agent's Solana pubkey (base58).
+        pub agent: ::std::string::String,
+        ///0 = Trader, 1 = Service, 2 = Hybrid.
+        #[serde(
+            rename = "agentType",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub agent_type: ::std::option::Option<i64>,
+        ///Display name (1-32 chars). Defaults to "krexa-agent".
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub name: ::std::option::Option<::std::string::String>,
+        /**Owner wallet pubkey (base58) — fee payer and authority. May
+        be the same as `agent` for self-custodied agents.
+        */
+        pub owner: ::std::string::String,
+    }
+    ///`DeployAgentResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "properties": {
+    ///    "agentPubkey": {
+    ///      "type": "string"
+    ///    },
+    ///    "encoding": {
+    ///      "description": "Encoding of `transaction`. Always `\"base64\"` when present.",
+    ///      "type": "string"
+    ///    },
+    ///    "message": {
+    ///      "type": "string"
+    ///    },
+    ///    "status": {
+    ///      "description": "`ready` if a new deploy tx is returned; `exists` if the agent is already deployed.",
+    ///      "type": "string"
+    ///    },
+    ///    "steps": {
+    ///      "description": "The on-chain steps the tx performs (informational).",
+    ///      "type": "array",
+    ///      "items": {
+    ///        "type": "string"
+    ///      }
+    ///    },
+    ///    "transaction": {
+    ///      "description": "Base64-encoded transaction with the oracle's KYA signature\nalready attached. Null when `status == \"exists\"`. Caller\nadds the agent/owner signature(s) and submits.\n",
+    ///      "type": [
+    ///        "string",
+    ///        "null"
+    ///      ]
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct DeployAgentResponse {
+        #[serde(
+            rename = "agentPubkey",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub agent_pubkey: ::std::option::Option<::std::string::String>,
+        ///Encoding of `transaction`. Always `"base64"` when present.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub encoding: ::std::option::Option<::std::string::String>,
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub message: ::std::option::Option<::std::string::String>,
+        ///`ready` if a new deploy tx is returned; `exists` if the agent is already deployed.
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub status: ::std::option::Option<::std::string::String>,
+        ///The on-chain steps the tx performs (informational).
+        #[serde(default, skip_serializing_if = "::std::vec::Vec::is_empty")]
+        pub steps: ::std::vec::Vec<::std::string::String>,
+        /**Base64-encoded transaction with the oracle's KYA signature
+        already attached. Null when `status == "exists"`. Caller
+        adds the agent/owner signature(s) and submits.
+        */
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub transaction: ::std::option::Option<::std::string::String>,
+    }
+    impl ::std::default::Default for DeployAgentResponse {
+        fn default() -> Self {
+            Self {
+                agent_pubkey: Default::default(),
+                encoding: Default::default(),
+                message: Default::default(),
+                status: Default::default(),
+                steps: Default::default(),
+                transaction: Default::default(),
+            }
+        }
+    }
     ///`FaucetRequest`
     ///
     /// <details><summary>JSON schema</summary>
@@ -719,6 +850,63 @@ pub mod types {
         pub daily_limit_usd: i64,
         #[serde(rename = "maxTransactionUsd")]
         pub max_transaction_usd: i64,
+    }
+    ///`InviteChallengeRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "code",
+    ///    "wallet"
+    ///  ],
+    ///  "properties": {
+    ///    "code": {
+    ///      "description": "Invite code in `KREXA-XXXX-XXXX` format.",
+    ///      "type": "string"
+    ///    },
+    ///    "wallet": {
+    ///      "description": "Agent wallet pubkey (base58) that will be activated.",
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct InviteChallengeRequest {
+        ///Invite code in `KREXA-XXXX-XXXX` format.
+        pub code: ::std::string::String,
+        ///Agent wallet pubkey (base58) that will be activated.
+        pub wallet: ::std::string::String,
+    }
+    ///`InviteChallengeResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "challenge"
+    ///  ],
+    ///  "properties": {
+    ///    "challenge": {
+    ///      "description": "UTF-8 string to sign with the agent's Ed25519 keypair. Format\nis `\"Krexa invite redemption: <code> for <wallet>\"`.\n",
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct InviteChallengeResponse {
+        /**UTF-8 string to sign with the agent's Ed25519 keypair. Format
+        is `"Krexa invite redemption: <code> for <wallet>"`.
+        */
+        pub challenge: ::std::string::String,
     }
     /**Signed KYA credential with 7 sections. Inner shape is documented
     on the platform but not fully reified here — treat as a loose
@@ -2885,6 +3073,98 @@ pub mod types {
             }
         }
     }
+    ///`PayshProxyQuoteRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "provider",
+    ///    "route"
+    ///  ],
+    ///  "properties": {
+    ///    "provider": {
+    ///      "description": "Provider id (e.g. `openai`, `anthropic`).",
+    ///      "type": "string"
+    ///    },
+    ///    "route": {
+    ///      "description": "Upstream route to quote against, including leading slash\n(e.g. `/v1/chat/completions`).\n",
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PayshProxyQuoteRequest {
+        ///Provider id (e.g. `openai`, `anthropic`).
+        pub provider: ::std::string::String,
+        /**Upstream route to quote against, including leading slash
+        (e.g. `/v1/chat/completions`).
+        */
+        pub route: ::std::string::String,
+    }
+    ///`PayshProxyQuoteResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "properties": {
+    ///    "payTo": {
+    ///      "description": "Gateway wallet pubkey (base58) the agent must pay to.",
+    ///      "type": "string"
+    ///    },
+    ///    "priceBaseUnits": {
+    ///      "description": "Quoted price in USDC base units (6 decimals) as a string of\ndigits — matches the format `borrow_usdc.amount` expects.\n",
+    ///      "type": "string"
+    ///    },
+    ///    "priceUsdc": {
+    ///      "description": "Quoted price in human-readable USDC.",
+    ///      "type": "number"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct PayshProxyQuoteResponse {
+        ///Gateway wallet pubkey (base58) the agent must pay to.
+        #[serde(
+            rename = "payTo",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub pay_to: ::std::option::Option<::std::string::String>,
+        /**Quoted price in USDC base units (6 decimals) as a string of
+        digits — matches the format `borrow_usdc.amount` expects.
+        */
+        #[serde(
+            rename = "priceBaseUnits",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub price_base_units: ::std::option::Option<::std::string::String>,
+        ///Quoted price in human-readable USDC.
+        #[serde(
+            rename = "priceUsdc",
+            default,
+            skip_serializing_if = "::std::option::Option::is_none"
+        )]
+        pub price_usdc: ::std::option::Option<f64>,
+    }
+    impl ::std::default::Default for PayshProxyQuoteResponse {
+        fn default() -> Self {
+            Self {
+                pay_to: Default::default(),
+                price_base_units: Default::default(),
+                price_usdc: Default::default(),
+            }
+        }
+    }
     ///`PayshTier`
     ///
     /// <details><summary>JSON schema</summary>
@@ -3103,6 +3383,69 @@ pub mod types {
             }
         }
     }
+    ///`RedeemInviteRequest`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "required": [
+    ///    "code",
+    ///    "signature",
+    ///    "wallet"
+    ///  ],
+    ///  "properties": {
+    ///    "code": {
+    ///      "type": "string"
+    ///    },
+    ///    "signature": {
+    ///      "description": "Base58-encoded Ed25519 signature over the challenge string\nfrom `/access/challenge`, signed with the agent's keypair.\n",
+    ///      "type": "string"
+    ///    },
+    ///    "wallet": {
+    ///      "type": "string"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct RedeemInviteRequest {
+        pub code: ::std::string::String,
+        /**Base58-encoded Ed25519 signature over the challenge string
+        from `/access/challenge`, signed with the agent's keypair.
+        */
+        pub signature: ::std::string::String,
+        pub wallet: ::std::string::String,
+    }
+    ///`RedeemInviteResponse`
+    ///
+    /// <details><summary>JSON schema</summary>
+    ///
+    /// ```json
+    ///{
+    ///  "type": "object",
+    ///  "properties": {
+    ///    "activated": {
+    ///      "type": "boolean"
+    ///    }
+    ///  }
+    ///}
+    /// ```
+    /// </details>
+    #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
+    pub struct RedeemInviteResponse {
+        #[serde(default, skip_serializing_if = "::std::option::Option::is_none")]
+        pub activated: ::std::option::Option<bool>,
+    }
+    impl ::std::default::Default for RedeemInviteResponse {
+        fn default() -> Self {
+            Self {
+                activated: Default::default(),
+            }
+        }
+    }
     ///`RequestCreditRequest`
     ///
     /// <details><summary>JSON schema</summary>
@@ -3132,7 +3475,7 @@ pub mod types {
     ///      "type": "string"
     ///    },
     ///    "ownerSignature": {
-    ///      "description": "Base58-encoded Ed25519 signature over the literal challenge\n`Krexa credit request for <ownerPubkey>` made with the\nowner's keypair. Same shape as `/access/provision-key`.\n",
+    ///      "description": "Base64-encoded Ed25519 signature of the **raw 32 bytes** of\nthe agent's pubkey, signed with the owner's keypair.\nReference: `nacl.sign.detached(agentPubkey.toBytes(),\nownerKeypair.secretKey)` → base64.\nNOTE: not a challenge string, and base64 (not base58).\n",
     ///      "type": "string"
     ///    }
     ///  }
@@ -3154,9 +3497,11 @@ pub mod types {
         */
         #[serde(rename = "ownerPubkey")]
         pub owner_pubkey: ::std::string::String,
-        /**Base58-encoded Ed25519 signature over the literal challenge
-        `Krexa credit request for <ownerPubkey>` made with the
-        owner's keypair. Same shape as `/access/provision-key`.
+        /**Base64-encoded Ed25519 signature of the **raw 32 bytes** of
+        the agent's pubkey, signed with the owner's keypair.
+        Reference: `nacl.sign.detached(agentPubkey.toBytes(),
+        ownerKeypair.secretKey)` → base64.
+        NOTE: not a challenge string, and base64 (not base58).
         */
         #[serde(rename = "ownerSignature")]
         pub owner_signature: ::std::string::String,
@@ -4135,20 +4480,13 @@ impl Client {
     /**Submit a credit request for oracle review
 
     Creates a credit request that the oracle reviews before signing a
-    borrow transaction. The request body carries an Ed25519 signature
-    from the owner wallet over the challenge
-    `Krexa credit request for <ownerPubkey>` — the same shape as
-    `/access/provision-key`.
+    borrow transaction. Confirmed by the Krexa team: the
+    `ownerSignature` is the **base64 Ed25519 signature of the raw 32
+    bytes of the agent's pubkey**, signed with the owner's keypair
+    (NOT a challenge string, NOT base58).
 
     Once the oracle approves (synchronously for level-appropriate
     scores), call `/solana/oracle/sign-credit` to draw the line.
-
-    Endpoint surface inferred from a `403 No approved credit request`
-    error on `/solana/oracle/sign-credit` and a `400` validation pass
-    on `/solana/credit/<agent>/request` listing `ownerPubkey` and
-    `ownerSignature` as required. The exact challenge format is a
-    best-guess until the Krexa team confirms — see
-    `apps/krexa/openapi.meta.json`.
 
 
     Sends a `POST` request to `/solana/credit/{agent}/request`
@@ -4370,6 +4708,155 @@ impl Client {
             .build()?;
         let info = OperationInfo {
             operation_id: "request_faucet_usdc",
+        };
+        self.pre(&mut request, &info).await?;
+        let result = self.exec(request, &info).await;
+        self.post(&result, &info).await?;
+        let response = result?;
+        match response.status().as_u16() {
+            200u16 => ResponseValue::from_response(response).await,
+            _ => Err(Error::UnexpectedResponse(response)),
+        }
+    }
+    /**Fetch the literal challenge string for invite redemption
+
+    Returns the exact UTF-8 string the caller must sign with their
+    **agent** keypair before submitting `POST /access/redeem`. The
+    string is fully determined by `code` and `wallet`
+    (`"Krexa invite redemption: <code> for <wallet>"`), but the
+    backend is the source of truth — always fetch it rather than
+    building locally.
+
+
+    Sends a `POST` request to `/access/challenge`
+
+    */
+    pub async fn get_invite_challenge<'a>(
+        &'a self,
+        body: &'a types::InviteChallengeRequest,
+    ) -> Result<ResponseValue<types::InviteChallengeResponse>, Error<()>> {
+        let url = format!("{}/access/challenge", self.baseurl,);
+        let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+        header_map.append(
+            ::reqwest::header::HeaderName::from_static("api-version"),
+            ::reqwest::header::HeaderValue::from_static(Self::api_version()),
+        );
+        #[allow(unused_mut)]
+        let mut request = self
+            .client
+            .post(url)
+            .header(
+                ::reqwest::header::ACCEPT,
+                ::reqwest::header::HeaderValue::from_static("application/json"),
+            )
+            .json(&body)
+            .headers(header_map)
+            .build()?;
+        let info = OperationInfo {
+            operation_id: "get_invite_challenge",
+        };
+        self.pre(&mut request, &info).await?;
+        let result = self.exec(request, &info).await;
+        self.post(&result, &info).await?;
+        let response = result?;
+        match response.status().as_u16() {
+            200u16 => ResponseValue::from_response(response).await,
+            _ => Err(Error::UnexpectedResponse(response)),
+        }
+    }
+    /**Redeem an invite code with an agent-signed challenge
+
+    Permanently binds an invite code to a Solana wallet (agent).
+    One code per wallet. Once redeemed, the wallet is activated for
+    all gated endpoints.
+
+    `signature` is the base58-encoded Ed25519 signature of the
+    challenge returned by `/access/challenge`, signed with the
+    agent's keypair.
+
+
+    Sends a `POST` request to `/access/redeem`
+
+    */
+    pub async fn redeem_invite<'a>(
+        &'a self,
+        body: &'a types::RedeemInviteRequest,
+    ) -> Result<ResponseValue<types::RedeemInviteResponse>, Error<()>> {
+        let url = format!("{}/access/redeem", self.baseurl,);
+        let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+        header_map.append(
+            ::reqwest::header::HeaderName::from_static("api-version"),
+            ::reqwest::header::HeaderValue::from_static(Self::api_version()),
+        );
+        #[allow(unused_mut)]
+        let mut request = self
+            .client
+            .post(url)
+            .header(
+                ::reqwest::header::ACCEPT,
+                ::reqwest::header::HeaderValue::from_static("application/json"),
+            )
+            .json(&body)
+            .headers(header_map)
+            .build()?;
+        let info = OperationInfo {
+            operation_id: "redeem_invite",
+        };
+        self.pre(&mut request, &info).await?;
+        let result = self.exec(request, &info).await;
+        self.post(&result, &info).await?;
+        let response = result?;
+        match response.status().as_u16() {
+            200u16 => ResponseValue::from_response(response).await,
+            _ => Err(Error::UnexpectedResponse(response)),
+        }
+    }
+    /**Build the on-chain agent-deploy transaction
+
+    Builds an unsigned-by-caller transaction that performs three
+    on-chain steps as one atomic submit:
+      1. `register_agent` on the registry program
+      2. `update_kya` at tier 1 (pre-signed by the oracle)
+      3. `create_wallet` (PDA wallet + USDC ATA)
+
+    Idempotent: if the agent is already deployed, returns
+    `{ "status": "exists" }` and `transaction: null`. Otherwise
+    returns `{ "status": "ready", "transaction": "<base64 partial
+    signed tx>" }` — the caller adds the agent + owner signatures
+    (often the same keypair for self-custodied agents) and submits
+    to Solana RPC.
+
+    Requires the wallet to be funded with SOL (~0.01 SOL for rent on
+    the three new accounts) and previously activated via
+    `/access/redeem`.
+
+
+    Sends a `POST` request to `/agents/deploy`
+
+    */
+    pub async fn deploy_agent<'a>(
+        &'a self,
+        body: &'a types::DeployAgentRequest,
+    ) -> Result<ResponseValue<types::DeployAgentResponse>, Error<()>> {
+        let url = format!("{}/agents/deploy", self.baseurl,);
+        let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+        header_map.append(
+            ::reqwest::header::HeaderName::from_static("api-version"),
+            ::reqwest::header::HeaderValue::from_static(Self::api_version()),
+        );
+        #[allow(unused_mut)]
+        let mut request = self
+            .client
+            .post(url)
+            .header(
+                ::reqwest::header::ACCEPT,
+                ::reqwest::header::HeaderValue::from_static("application/json"),
+            )
+            .json(&body)
+            .headers(header_map)
+            .build()?;
+        let info = OperationInfo {
+            operation_id: "deploy_agent",
         };
         self.pre(&mut request, &info).await?;
         let result = self.exec(request, &info).await;
@@ -4912,6 +5399,106 @@ impl Client {
             .build()?;
         let info = OperationInfo {
             operation_id: "paysh_tier",
+        };
+        self.pre(&mut request, &info).await?;
+        let result = self.exec(request, &info).await;
+        self.post(&result, &info).await?;
+        let response = result?;
+        match response.status().as_u16() {
+            200u16 => ResponseValue::from_response(response).await,
+            _ => Err(Error::UnexpectedResponse(response)),
+        }
+    }
+    /**List Pay.sh proxy providers with live pricing
+
+    Returns the providers the Pay.sh proxy gateway can route to (e.g.
+    OpenAI, Anthropic) along with per-route pricing and a
+    `proxyAvailable: true` flag. Replaces the legacy `/paysh/catalog`
+    endpoint, whose URLs were placeholders.
+
+
+    Sends a `GET` request to `/solana/paysh/proxy/providers`
+
+    */
+    pub async fn paysh_proxy_list_providers<'a>(
+        &'a self,
+    ) -> Result<
+        ResponseValue<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
+        Error<()>,
+    > {
+        let url = format!("{}/solana/paysh/proxy/providers", self.baseurl,);
+        let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
+        header_map.append(
+            ::reqwest::header::HeaderName::from_static("api-version"),
+            ::reqwest::header::HeaderValue::from_static(Self::api_version()),
+        );
+        #[allow(unused_mut)]
+        let mut request = self
+            .client
+            .get(url)
+            .header(
+                ::reqwest::header::ACCEPT,
+                ::reqwest::header::HeaderValue::from_static("application/json"),
+            )
+            .headers(header_map)
+            .build()?;
+        let info = OperationInfo {
+            operation_id: "paysh_proxy_list_providers",
+        };
+        self.pre(&mut request, &info).await?;
+        let result = self.exec(request, &info).await;
+        self.post(&result, &info).await?;
+        let response = result?;
+        match response.status().as_u16() {
+            200u16 => ResponseValue::from_response(response).await,
+            _ => Err(Error::UnexpectedResponse(response)),
+        }
+    }
+    /**Quote a proxy call (price + gateway wallet)
+
+    Quote the USDC price for a `(provider, route)` pair, plus the
+    gateway wallet the agent must transfer USDC to before the proxy
+    call. Three-step flow:
+
+    1. `payshProxyQuote` → `{ priceUsdc, payTo, priceBaseUnits }`
+    2. Agent sends USDC to `payTo` on Solana, captures the tx signature
+    3. `payshProxyCall` with `X-PAYMENT: <tx-sig>` + `X-AGENT-PUBKEY`
+
+
+    Sends a `POST` request to `/solana/paysh/proxy/quote`
+
+    Arguments:
+    - `x_api_key`: `kx_`-prefixed key from `POST /access/provision-key` or
+    `POST /solana/paysh/onboard`. Required on Pay.sh authenticated
+    endpoints.
+
+    - `body`
+    */
+    pub async fn paysh_proxy_quote<'a>(
+        &'a self,
+        x_api_key: &'a str,
+        body: &'a types::PayshProxyQuoteRequest,
+    ) -> Result<ResponseValue<types::PayshProxyQuoteResponse>, Error<()>> {
+        let url = format!("{}/solana/paysh/proxy/quote", self.baseurl,);
+        let mut header_map = ::reqwest::header::HeaderMap::with_capacity(2usize);
+        header_map.append(
+            ::reqwest::header::HeaderName::from_static("api-version"),
+            ::reqwest::header::HeaderValue::from_static(Self::api_version()),
+        );
+        header_map.append("X-API-Key", x_api_key.to_string().try_into()?);
+        #[allow(unused_mut)]
+        let mut request = self
+            .client
+            .post(url)
+            .header(
+                ::reqwest::header::ACCEPT,
+                ::reqwest::header::HeaderValue::from_static("application/json"),
+            )
+            .json(&body)
+            .headers(header_map)
+            .build()?;
+        let info = OperationInfo {
+            operation_id: "paysh_proxy_quote",
         };
         self.pre(&mut request, &info).await?;
         let result = self.exec(request, &info).await;

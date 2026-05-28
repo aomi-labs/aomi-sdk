@@ -8,11 +8,13 @@ crate-type = ["cdylib"]
 
 [dependencies]
 aomi-sdk = { path = "../../sdk" }
-# Solana owner-wallet signing for credit-request: Ed25519 over a fixed
-# challenge string, base58-encoded on the wire (matches Solana keypair
-# conventions and the `/access/provision-key` flow).
+# Solana owner-/agent-wallet signing for credit-request, KYA owner
+# proof, and invite redemption. Krexa uses two encodings depending on
+# the endpoint: base58 for invite signatures (matches Solana keypair
+# conventions) and base64 for the KYA `ownerSignature` body field.
 ed25519-dalek = "2"
 bs58 = "0.5"
+base64 = "0.22"
 progenitor-client = "0.14"
 chrono = { version = "0.4", features = ["serde"] }
 # Match progenitor-client's reqwest version so curated tool layers can wrap

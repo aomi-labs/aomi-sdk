@@ -331,20 +331,13 @@ paths:
       summary: Submit a credit request for oracle review
       description: |
         Creates a credit request that the oracle reviews before signing a
-        borrow transaction. The request body carries an Ed25519 signature
-        from the owner wallet over the challenge
-        `Krexa credit request for <ownerPubkey>` — the same shape as
-        `/access/provision-key`.
+        borrow transaction. Confirmed by the Krexa team: the
+        `ownerSignature` is the **base64 Ed25519 signature of the raw 32
+        bytes of the agent's pubkey**, signed with the owner's keypair
+        (NOT a challenge string, NOT base58).
 
         Once the oracle approves (synchronously for level-appropriate
         scores), call `/solana/oracle/sign-credit` to draw the line.
-
-        Endpoint surface inferred from a `403 No approved credit request`
-        error on `/solana/oracle/sign-credit` and a `400` validation pass
-        on `/solana/credit/<agent>/request` listing `ownerPubkey` and
-        `ownerSignature` as required. The exact challenge format is a
-        best-guess until the Krexa team confirms — see
-        `apps/krexa/openapi.meta.json`.
       operationId: requestCredit
       parameters:
       - $ref: '#/components/parameters/AgentPath'
@@ -455,6 +448,98 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/FaucetResponse'
+  /access/challenge:
+    post:
+      tags:
+      - access
+      summary: Fetch the literal challenge string for invite redemption
+      description: |
+        Returns the exact UTF-8 string the caller must sign with their
+        **agent** keypair before submitting `POST /access/redeem`. The
+        string is fully determined by `code` and `wallet`
+        (`"Krexa invite redemption: <code> for <wallet>"`), but the
+        backend is the source of truth — always fetch it rather than
+        building locally.
+      operationId: getInviteChallenge
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InviteChallengeRequest'
+        required: true
+      responses:
+        '200':
+          description: Challenge string the agent must sign
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InviteChallengeResponse'
+      security: []
+  /access/redeem:
+    post:
+      tags:
+      - access
+      summary: Redeem an invite code with an agent-signed challenge
+      description: |
+        Permanently binds an invite code to a Solana wallet (agent).
+        One code per wallet. Once redeemed, the wallet is activated for
+        all gated endpoints.
+
+        `signature` is the base58-encoded Ed25519 signature of the
+        challenge returned by `/access/challenge`, signed with the
+        agent's keypair.
+      operationId: redeemInvite
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RedeemInviteRequest'
+        required: true
+      responses:
+        '200':
+          description: Activation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RedeemInviteResponse'
+      security: []
+  /agents/deploy:
+    post:
+      tags:
+      - access
+      summary: Build the on-chain agent-deploy transaction
+      description: |
+        Builds an unsigned-by-caller transaction that performs three
+        on-chain steps as one atomic submit:
+          1. `register_agent` on the registry program
+          2. `update_kya` at tier 1 (pre-signed by the oracle)
+          3. `create_wallet` (PDA wallet + USDC ATA)
+
+        Idempotent: if the agent is already deployed, returns
+        `{ "status": "exists" }` and `transaction: null`. Otherwise
+        returns `{ "status": "ready", "transaction": "<base64 partial
+        signed tx>" }` — the caller adds the agent + owner signatures
+        (often the same keypair for self-custodied agents) and submits
+        to Solana RPC.
+
+        Requires the wallet to be funded with SOL (~0.01 SOL for rent on
+        the three new accounts) and previously activated via
+        `/access/redeem`.
+      operationId: deployAgent
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DeployAgentRequest'
+        required: true
+      responses:
+        '200':
+          description: Partial-signed deploy tx, or "exists" if already deployed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeployAgentResponse'
+      security: []
   /access/provision-key:
     post:
       tags:
@@ -820,6 +905,55 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/PayshTier'
+  /solana/paysh/proxy/providers:
+    get:
+      tags:
+      - paysh
+      summary: List Pay.sh proxy providers with live pricing
+      description: |
+        Returns the providers the Pay.sh proxy gateway can route to (e.g.
+        OpenAI, Anthropic) along with per-route pricing and a
+        `proxyAvailable: true` flag. Replaces the legacy `/paysh/catalog`
+        endpoint, whose URLs were placeholders.
+      operationId: payshProxyListProviders
+      responses:
+        '200':
+          description: Provider list with pricing
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+      security: []
+  /solana/paysh/proxy/quote:
+    post:
+      tags:
+      - paysh
+      summary: Quote a proxy call (price + gateway wallet)
+      description: |
+        Quote the USDC price for a `(provider, route)` pair, plus the
+        gateway wallet the agent must transfer USDC to before the proxy
+        call. Three-step flow:
+
+        1. `payshProxyQuote` → `{ priceUsdc, payTo, priceBaseUnits }`
+        2. Agent sends USDC to `payTo` on Solana, captures the tx signature
+        3. `payshProxyCall` with `X-PAYMENT: <tx-sig>` + `X-AGENT-PUBKEY`
+      operationId: payshProxyQuote
+      parameters:
+      - $ref: '#/components/parameters/ApiKeyHeader'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PayshProxyQuoteRequest'
+        required: true
+      responses:
+        '200':
+          description: Quote
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PayshProxyQuoteResponse'
   /solana/paysh/catalog:
     get:
       tags:
@@ -1082,9 +1216,11 @@ components:
           type: string
         ownerSignature:
           description: |
-            Base58-encoded Ed25519 signature over the literal challenge
-            `Krexa credit request for <ownerPubkey>` made with the
-            owner's keypair. Same shape as `/access/provision-key`.
+            Base64-encoded Ed25519 signature of the **raw 32 bytes** of
+            the agent's pubkey, signed with the owner's keypair.
+            Reference: `nacl.sign.detached(agentPubkey.toBytes(),
+            ownerKeypair.secretKey)` → base64.
+            NOTE: not a challenge string, and base64 (not base58).
           type: string
         amount:
           description: |
@@ -1189,6 +1325,96 @@ components:
           type: number
         recipient:
           type: string
+    DeployAgentRequest:
+      type: object
+      properties:
+        agent:
+          description: Agent's Solana pubkey (base58).
+          type: string
+        owner:
+          description: |
+            Owner wallet pubkey (base58) — fee payer and authority. May
+            be the same as `agent` for self-custodied agents.
+          type: string
+        name:
+          description: Display name (1-32 chars). Defaults to "krexa-agent".
+          type: string
+        agentType:
+          description: 0 = Trader, 1 = Service, 2 = Hybrid.
+          type: integer
+          minimum: 0
+          maximum: 2
+      required:
+      - agent
+      - owner
+    DeployAgentResponse:
+      type: object
+      properties:
+        status:
+          description: '`ready` if a new deploy tx is returned; `exists` if the agent is already deployed.'
+          type: string
+        transaction:
+          nullable: true
+          description: |
+            Base64-encoded transaction with the oracle's KYA signature
+            already attached. Null when `status == "exists"`. Caller
+            adds the agent/owner signature(s) and submits.
+          type: string
+        encoding:
+          description: Encoding of `transaction`. Always `"base64"` when present.
+          type: string
+        agentPubkey:
+          type: string
+        steps:
+          description: The on-chain steps the tx performs (informational).
+          type: array
+          items:
+            type: string
+        message:
+          type: string
+    InviteChallengeRequest:
+      type: object
+      properties:
+        code:
+          description: Invite code in `KREXA-XXXX-XXXX` format.
+          type: string
+        wallet:
+          description: Agent wallet pubkey (base58) that will be activated.
+          type: string
+      required:
+      - code
+      - wallet
+    InviteChallengeResponse:
+      type: object
+      properties:
+        challenge:
+          description: |
+            UTF-8 string to sign with the agent's Ed25519 keypair. Format
+            is `"Krexa invite redemption: <code> for <wallet>"`.
+          type: string
+      required:
+      - challenge
+    RedeemInviteRequest:
+      type: object
+      properties:
+        code:
+          type: string
+        wallet:
+          type: string
+        signature:
+          description: |
+            Base58-encoded Ed25519 signature over the challenge string
+            from `/access/challenge`, signed with the agent's keypair.
+          type: string
+      required:
+      - code
+      - wallet
+      - signature
+    RedeemInviteResponse:
+      type: object
+      properties:
+        activated:
+          type: boolean
     ProvisionKeyRequest:
       type: object
       properties:
@@ -1530,6 +1756,34 @@ components:
               type: number
             monthlySpent:
               type: number
+    PayshProxyQuoteRequest:
+      type: object
+      properties:
+        provider:
+          description: Provider id (e.g. `openai`, `anthropic`).
+          type: string
+        route:
+          description: |
+            Upstream route to quote against, including leading slash
+            (e.g. `/v1/chat/completions`).
+          type: string
+      required:
+      - provider
+      - route
+    PayshProxyQuoteResponse:
+      type: object
+      properties:
+        priceUsdc:
+          description: Quoted price in human-readable USDC.
+          type: number
+        payTo:
+          description: Gateway wallet pubkey (base58) the agent must pay to.
+          type: string
+        priceBaseUnits:
+          description: |
+            Quoted price in USDC base units (6 decimals) as a string of
+            digits — matches the format `borrow_usdc.amount` expects.
+          type: string
     PayshCatalog:
       type: object
       properties:

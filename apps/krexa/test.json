@@ -1,33 +1,27 @@
 {
-  "user_story": "Self-assess as an autonomous agent on Krexa: pull the Krexit Score, check credit eligibility, inspect the active credit line, and view the Pay.sh balance for a known registered agent. Read-only flow against api.krexa.xyz; no wallet writes, no API key needed.",
+  "user_story": "Drive the full Krexa onboarding-and-borrow loop for a freshly registered Solana agent: verify the agent is deployed on-chain via krexa_deploy_agent (idempotent, returns 'exists' for our wallet), submit a $1 L1 credit request, then call the oracle to get a partial-signed borrow tx. The borrow tx itself is NOT broadcast in this test (Phase A) — that step is gated behind a later host::SignTxSolana wallet handoff.",
   "turns": [
     {
-      "prompt": "Using Krexa's score tool, show me the Krexit Score for agent 9QP9JDV8EbruUKwgL8SfMRv7ZWKjE9ckBB4bLgZt72Uy. Report only what the score tool returns.",
+      "prompt": "Confirm the Krexa agent at 6ihjJiFMrn8VM1HLX8EMqAt8Ym8JxZCqxBai2bYHviZG is deployed on-chain by calling deploy_agent (self-custodied: owner pubkey is the same as the agent). The endpoint is idempotent — for an already-deployed agent it should return status 'exists'.",
       "expected_tools": {
-        "must_call": ["krexa_get_score"]
+        "must_call": ["krexa_deploy_agent"]
       }
     },
     {
-      "prompt": "Now check the credit eligibility for the same agent using the eligibility tool.",
+      "prompt": "Now submit a credit request for that agent. owner_pubkey is the same (self-custodied), amount is 1000000 (one USDC in 6-decimal base units), credit_level is 1.",
       "expected_tools": {
-        "must_call": ["krexa_check_credit_eligibility"]
+        "must_call": ["krexa_request_credit"]
       }
     },
     {
-      "prompt": "Inspect the active credit line for the same agent using the credit-line tool.",
+      "prompt": "Call the oracle to draw $1 against the credit line: agent_pubkey and agent_or_owner_pubkey are both 6ihjJiFMrn8VM1HLX8EMqAt8Ym8JxZCqxBai2bYHviZG, amount 1000000, credit_level 1. Report what the tool returns. Do not attempt to broadcast.",
       "expected_tools": {
-        "must_call": ["krexa_get_credit_line"]
-      }
-    },
-    {
-      "prompt": "Show me the Pay.sh wallet balance for the same agent.",
-      "expected_tools": {
-        "must_call": ["krexa_get_balance"]
+        "must_call": ["krexa_borrow_usdc"]
       }
     }
   ],
   "final_assertion": {
-    "no_errors": false,
-    "max_turns": 16
+    "no_errors": true,
+    "max_turns": 12
   }
 }
