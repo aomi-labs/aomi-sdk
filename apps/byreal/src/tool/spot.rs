@@ -246,7 +246,7 @@ impl DynAomiTool for BuildSwap {
     type App = ByrealApp;
     type Args = BuildSwapArgs;
     const NAME: &'static str = "byreal_spot_build_swap";
-    const DESCRIPTION: &'static str = "Build (do not submit) a byreal swap. Internally fetches a router quote and returns a preview + a routed `sign_tx_solana` step the host wallet signs. The matched `byreal_spot_submit_swap` continuation runs after the wallet returns the signed bytes. Always emit a one-screen confirmation summary (in/out amount, slippage, router type) and stop the turn before calling this.";
+    const DESCRIPTION: &'static str = "Build and immediately execute a byreal swap. Fetches a router quote, returns a preview, and routes directly to `sign_tx_solana` for the host wallet to sign. The matched `byreal_spot_submit_swap` continuation runs after the wallet returns the signed bytes.";
 
     fn run_with_routes(
         _app: &Self::App,
@@ -321,8 +321,6 @@ impl DynAomiTool for BuildSwap {
                 "router_type": router_type,
                 "wallet": wallet,
             },
-            "requires_user_confirmation": true,
-            "confirmation_phrase": "confirm",
             "submit_args_template": submit_template.clone(),
         });
 

@@ -8,8 +8,117 @@ use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::collections::VecDeque;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 const DEFAULT_MARKET_SLIPPAGE_PCT: f64 = 5.0;
+
+// ---------------------------------------------------------------------------
+// Server-side payload handle cache
+// ---------------------------------------------------------------------------
+//
+// Problem: even with a checksum-protected hex+JSON blob, LLMs occasionally
+// duplicate or drop single characters when copying long opaque strings
+// between tool calls (build → submit). The checksum catches the corruption
+// cleanly, but the model often gives up after one retry instead of forwarding
+// the original string verbatim. The result is a dead-ended order flow.
+//
+// Fix: the `build_*` tools stash the real `SubmissionPayload` in a
+// process-local cache keyed by a short handle (`hpl_<hex>`) and emit only
+// the handle into the route plan. The LLM only has to forward ~16 chars
+// instead of ~600, and even if it corrupts those, the symptom is a clean
+// "unknown payload handle" error rather than a silent signature mismatch.
+//
+// The full hex blob is still accepted by `resolve_payload` as a fallback —
+// useful when an op manually invokes a `submit_*` tool or when the cache
+// has expired (e.g. process restart between build and submit).
+
+const PAYLOAD_HANDLE_PREFIX: &str = "hpl_";
+/// Hard cap on cached entries. FIFO eviction once exceeded. 128 is plenty for
+/// any realistic interactive session — a build → sign → submit cycle is
+/// seconds long, and cross-session contamination isn't a concern (the cache
+/// is process-local and handles are unguessable monotonic ids).
+const PAYLOAD_CACHE_MAX: usize = 128;
+/// Entries older than this are dropped on insert. Hyperliquid signatures are
+/// nonce-stamped, so a 30-minute-old handle would never be valid anyway.
+const PAYLOAD_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
+
+struct CachedPayload {
+    id: u64,
+    payload: SubmissionPayload,
+    inserted_at: Instant,
+}
+
+fn payload_cache() -> &'static Mutex<VecDeque<CachedPayload>> {
+    static CACHE: std::sync::OnceLock<Mutex<VecDeque<CachedPayload>>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(VecDeque::with_capacity(PAYLOAD_CACHE_MAX)))
+}
+
+fn next_payload_id() -> u64 {
+    static SEQ: AtomicU64 = AtomicU64::new(1);
+    SEQ.fetch_add(1, Ordering::SeqCst)
+}
+
+/// Stash `payload` in the cache and return a short handle the LLM can
+/// safely forward verbatim.
+fn store_payload(payload: SubmissionPayload) -> String {
+    let id = next_payload_id();
+    let entry = CachedPayload {
+        id,
+        payload,
+        inserted_at: Instant::now(),
+    };
+    let mut guard = payload_cache().lock().expect("payload cache poisoned");
+    let now = Instant::now();
+    // Expire stale entries opportunistically on insert. Cheap because the
+    // queue is bounded.
+    while let Some(front) = guard.front() {
+        if now.duration_since(front.inserted_at) > PAYLOAD_CACHE_TTL {
+            guard.pop_front();
+        } else {
+            break;
+        }
+    }
+    while guard.len() >= PAYLOAD_CACHE_MAX {
+        guard.pop_front();
+    }
+    guard.push_back(entry);
+    format!("{PAYLOAD_HANDLE_PREFIX}{id:x}")
+}
+
+fn lookup_payload(handle_body: &str) -> Result<SubmissionPayload, String> {
+    let id = u64::from_str_radix(handle_body, 16).map_err(|_| {
+        format!(
+            "[byreal] invalid payload handle `{PAYLOAD_HANDLE_PREFIX}{handle_body}` — \
+             forward the value from the build_* preview verbatim"
+        )
+    })?;
+    let guard = payload_cache().lock().expect("payload cache poisoned");
+    guard
+        .iter()
+        .find(|entry| entry.id == id)
+        .map(|entry| entry.payload.clone())
+        .ok_or_else(|| {
+            format!(
+                "[byreal] payload handle `{PAYLOAD_HANDLE_PREFIX}{handle_body}` not found \
+                 (expired, evicted, or never issued). Re-run the matching `byreal_perps_build_*` \
+                 tool to mint a fresh build → sign → submit chain."
+            )
+        })
+}
+
+/// Accept either a server-issued handle (`hpl_<hex>`) or a raw hex+checksum
+/// blob. The handle path is the fast, corruption-resistant default; the hex
+/// path is a fallback for backward compatibility and manual invocations.
+fn resolve_payload(input: &str) -> Result<SubmissionPayload, String> {
+    let trimmed = input.trim().trim_matches('"');
+    if let Some(rest) = trimmed.strip_prefix(PAYLOAD_HANDLE_PREFIX) {
+        return lookup_payload(rest);
+    }
+    SubmissionPayload::decode(trimmed)
+}
 
 // ---------------------------------------------------------------------------
 // build_order / submit_order
@@ -108,7 +217,14 @@ impl DynAomiTool for BuildOrder {
         // can't accidentally rewrite the 13-digit nonce or corrupt the
         // pre-signed action JSON between build and submit. The submit-side
         // tool decodes this verbatim.
-        let payload = SubmissionPayload::encode(action_json.clone(), nonce, None)?;
+        // Stash the real payload server-side and emit only a short handle.
+        // The LLM never has to copy the full hex+JSON blob, which removes the
+        // single-char-corruption failure mode that plagued the raw hex path.
+        let payload = store_payload(SubmissionPayload {
+            action: action_json.clone(),
+            nonce,
+            vault_address: None,
+        });
         let submit_template = serde_json::to_value(&SubmitOrderArgs {
             confirmation: Some("confirm".to_string()),
             payload,
@@ -176,6 +292,7 @@ impl SubmissionPayload {
     /// instead of letting a corrupted action through to the exchange where
     /// it'd surface as an opaque 422 or a "User does not exist" (signature
     /// recovers to a wrong address).
+    #[cfg_attr(not(test), allow(dead_code))]
     fn encode(action: Value, nonce: u64, vault_address: Option<String>) -> Result<String, String> {
         let payload = Self {
             action,
@@ -234,11 +351,11 @@ fn payload_checksum_hex(bytes: &[u8]) -> String {
 pub(crate) struct SubmitOrderArgs {
     /// Must be the literal string "confirm". Forwarded from the build_* preview.
     pub confirmation: Option<String>,
-    /// OPAQUE pre-signed submission payload. Hex-encoded JSON blob from the
-    /// `build_*` preview's `submit_args_template.payload`. Forward CHARACTER
-    /// BY CHARACTER — DO NOT modify, decode, regenerate, or trim. The EIP-712
-    /// signature was computed against the exact bytes inside; mutating this
-    /// invalidates the wallet's signature.
+    /// OPAQUE pre-signed submission handle (`hpl_<hex>`, ~16 chars) from the
+    /// `build_*` preview's `submit_args_template.payload`. Forward verbatim —
+    /// the host resolves it back to the full pre-signed action. Do not modify
+    /// or regenerate. A raw hex+checksum blob is also accepted for backward
+    /// compatibility, but the handle is what `build_*` emits today.
     pub payload: String,
     /// EIP-712 signature (65-byte hex). Filled in by the host wallet via `commit_eip712`.
     pub signature: Option<String>,
@@ -258,7 +375,7 @@ impl DynAomiTool for SubmitOrder {
             "[byreal] signature missing — wait for commit_eip712 callback".to_string()
         })?;
         let sig = parse_signature(sig_hex)?;
-        let decoded = SubmissionPayload::decode(&args.payload)?;
+        let decoded = resolve_payload(&args.payload)?;
         let body = build_exchange_body(
             decoded.action,
             decoded.nonce,
@@ -299,7 +416,14 @@ impl DynAomiTool for BuildCancel {
         let action = build_cancel_action(asset_index, args.oid);
         let (action_json, nonce, typed_data) = prepare_l1_action(action, None)?;
 
-        let payload = SubmissionPayload::encode(action_json.clone(), nonce, None)?;
+        // Stash the real payload server-side and emit only a short handle.
+        // The LLM never has to copy the full hex+JSON blob, which removes the
+        // single-char-corruption failure mode that plagued the raw hex path.
+        let payload = store_payload(SubmissionPayload {
+            action: action_json.clone(),
+            nonce,
+            vault_address: None,
+        });
         let submit_template = serde_json::to_value(&SubmitCancelArgs {
             confirmation: Some("confirm".to_string()),
             payload,
@@ -327,7 +451,7 @@ impl DynAomiTool for BuildCancel {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct SubmitCancelArgs {
     pub confirmation: Option<String>,
-    /// OPAQUE pre-signed submission payload. Forward verbatim — see
+    /// OPAQUE pre-signed submission handle. Forward verbatim — see
     /// [`SubmitOrderArgs::payload`] for the contract.
     pub payload: String,
     pub signature: Option<String>,
@@ -348,7 +472,7 @@ impl DynAomiTool for SubmitCancel {
             .as_deref()
             .ok_or_else(|| "[byreal] signature missing".to_string())?;
         let sig = parse_signature(sig_hex)?;
-        let decoded = SubmissionPayload::decode(&args.payload)?;
+        let decoded = resolve_payload(&args.payload)?;
         let body = build_exchange_body(
             decoded.action,
             decoded.nonce,
@@ -394,7 +518,14 @@ impl DynAomiTool for BuildUpdateLeverage {
         let action = build_update_leverage_action(asset_index, args.is_cross, args.leverage);
         let (action_json, nonce, typed_data) = prepare_l1_action(action, None)?;
 
-        let payload = SubmissionPayload::encode(action_json.clone(), nonce, None)?;
+        // Stash the real payload server-side and emit only a short handle.
+        // The LLM never has to copy the full hex+JSON blob, which removes the
+        // single-char-corruption failure mode that plagued the raw hex path.
+        let payload = store_payload(SubmissionPayload {
+            action: action_json.clone(),
+            nonce,
+            vault_address: None,
+        });
         let submit_template = serde_json::to_value(&SubmitUpdateLeverageArgs {
             confirmation: Some("confirm".to_string()),
             payload,
@@ -433,7 +564,7 @@ impl DynAomiTool for BuildUpdateLeverage {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct SubmitUpdateLeverageArgs {
     pub confirmation: Option<String>,
-    /// OPAQUE pre-signed submission payload. Forward verbatim — see
+    /// OPAQUE pre-signed submission handle. Forward verbatim — see
     /// [`SubmitOrderArgs::payload`] for the contract.
     pub payload: String,
     pub signature: Option<String>,
@@ -454,7 +585,7 @@ impl DynAomiTool for SubmitUpdateLeverage {
             .as_deref()
             .ok_or_else(|| "[byreal] signature missing".to_string())?;
         let sig = parse_signature(sig_hex)?;
-        let decoded = SubmissionPayload::decode(&args.payload)?;
+        let decoded = resolve_payload(&args.payload)?;
         let body = build_exchange_body(
             decoded.action,
             decoded.nonce,
@@ -741,5 +872,32 @@ mod tests {
         let back: SubmitOrderArgs = serde_json::from_value(v).unwrap();
         let decoded = SubmissionPayload::decode(&back.payload).unwrap();
         assert_eq!(decoded.nonce, 12345);
+    }
+
+    #[test]
+    fn handle_round_trip_and_unknown_handle_errors_cleanly() {
+        let handle = store_payload(SubmissionPayload {
+            action: json!({"type": "order", "asset": 99}),
+            nonce: 1779600000000_u64,
+            vault_address: None,
+        });
+        assert!(handle.starts_with("hpl_"), "got {handle}");
+        // resolve_payload should follow the handle
+        let resolved = resolve_payload(&handle).expect("resolve handle");
+        assert_eq!(resolved.nonce, 1779600000000_u64);
+        // Whitespace + stray quoting that an LLM might add must not break it
+        let noisy = format!(" \"{handle}\"\n");
+        let resolved2 = resolve_payload(&noisy).expect("resolve noisy handle");
+        assert_eq!(resolved2.nonce, 1779600000000_u64);
+        // Unknown handle id surfaces a clear error, not a panic
+        let err = resolve_payload("hpl_deadbeefdeadbeef").unwrap_err();
+        assert!(err.contains("not found"), "got {err}");
+        // Malformed handle body errors with a clear message
+        let err2 = resolve_payload("hpl_NOTHEX").unwrap_err();
+        assert!(err2.contains("invalid payload handle"), "got {err2}");
+        // Raw hex fallback still works
+        let raw = SubmissionPayload::encode(json!({"type": "x"}), 1, None).unwrap();
+        let decoded_raw = resolve_payload(&raw).expect("hex fallback");
+        assert_eq!(decoded_raw.nonce, 1);
     }
 }

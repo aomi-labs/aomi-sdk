@@ -236,8 +236,6 @@ impl DynAomiTool for BuildClaimRewards {
                 "order_code": order_code,
                 "encode_items": items,
             },
-            "requires_user_confirmation": true,
-            "confirmation_phrase": "confirm",
             "submit_args_template": submit_template.clone(),
         });
 

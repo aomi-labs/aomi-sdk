@@ -97,13 +97,11 @@ pub(crate) fn build_evm_signed_routes<Submit: RouteTarget>(
              Make this function call immediately. \
              \
              CRITICAL — copy every arg EXACTLY as shown. In particular: \
-             • `nonce` is a 13-digit millisecond timestamp string — copy it CHARACTER BY \
-             CHARACTER. NEVER substitute 0, NEVER round, NEVER regenerate, NEVER convert \
-             to a number. The EIP-712 signature was computed against this exact nonce; \
-             changing it invalidates the wallet's signature and the exchange will reject \
-             the request as coming from an unrecognized address. \
-             • `action` is opaque pre-signed JSON — copy verbatim. \
+             • `payload` is a short server-issued handle of the form `hpl_<hex>` — \
+             copy it verbatim. The host resolves it to the real pre-signed action; \
+             a mistyped handle will fail to resolve and the order will not place. \
              • `signature` is opaque — copy verbatim. \
+             • `confirmation` must remain the literal string `confirm`. \
              Keep opaque continuation state unchanged.",
         )
         .try_build()

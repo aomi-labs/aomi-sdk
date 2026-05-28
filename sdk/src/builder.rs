@@ -50,7 +50,7 @@ pub mod host {
     host_target!(BraveSearch, "brave_search");
     host_target!(CommitTx, "commit_tx");
     host_target!(CommitTxs, "commit_txs");
-    host_target!(CommitEip712, "commit_eip712");
+    host_target!(CommitEip712, "commit_message");
     host_target!(StageTx, "stage_tx");
     host_target!(SimulateBatch, "simulate_batch");
     host_target!(ViewState, "view_state");

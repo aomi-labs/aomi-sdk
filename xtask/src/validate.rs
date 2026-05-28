@@ -17,7 +17,7 @@ fn namespace_tools() -> HashMap<&'static str, Vec<&'static str>> {
         vec![
             "brave_search",
             "commit_tx",
-            "commit_eip712",
+            "commit_message",
             "stage_tx",
             "simulate_batch",
             "view_state",
