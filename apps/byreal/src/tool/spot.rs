@@ -1,18 +1,18 @@
 //! `byreal_spot_*` tools — byreal CLMM / RFQ swap surface on Solana.
 //!
 //! Reads hit byreal's HTTP API directly, no signing. The single write pair
-//! (`build_swap` / `submit_swap`) routes through `host::SignTxSolana`: the
+//! (`build_swap` / `submit_swap`) routes through `host::SvmSignTx`: the
 //! quote response carries the unsigned base64 versioned tx, the host wallet
 //! signs it, and `submit_swap` forwards the signed bytes to byreal's
 //! AMM-or-RFQ submission endpoint depending on the quote's `routerType`.
 
-use crate::client::ByrealApp;
 use crate::client::spot::spot_client;
-use crate::tool::{build_solana_signed_routes, ok, resolve_address, validate_confirmation};
+use crate::client::ByrealApp;
+use crate::tool::{build_svm_sign_tx_routes, ok, resolve_address, validate_confirmation};
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const DEFAULT_PAGE_SIZE: u32 = 20;
 const DEFAULT_SLIPPAGE_BPS: u32 = 100; // 1% — matches byreal's frontend default
@@ -224,7 +224,7 @@ impl DynAomiTool for GetSwapQuote {
 }
 
 // ===========================================================================
-// WRITE TOOLS — build/submit pair routed via host::SignTxSolana
+// WRITE TOOLS — build/submit pair routed via host::SvmSignTx
 // ===========================================================================
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -246,7 +246,7 @@ impl DynAomiTool for BuildSwap {
     type App = ByrealApp;
     type Args = BuildSwapArgs;
     const NAME: &'static str = "byreal_spot_build_swap";
-    const DESCRIPTION: &'static str = "Build and immediately execute a byreal swap. Fetches a router quote, returns a preview, and routes directly to `sign_tx_solana` for the host wallet to sign. The matched `byreal_spot_submit_swap` continuation runs after the wallet returns the signed bytes.";
+    const DESCRIPTION: &'static str = "Build and immediately execute a byreal swap. Fetches a router quote, returns a preview, and routes directly to `svm_sign_tx` for the host wallet to sign. The matched `byreal_spot_submit_swap` continuation runs after the wallet returns the signed bytes.";
 
     fn run_with_routes(
         _app: &Self::App,
@@ -330,7 +330,7 @@ impl DynAomiTool for BuildSwap {
             short_mint(&args.output_mint),
         );
 
-        build_solana_signed_routes::<SubmitSwap>(preview, unsigned_tx, description, submit_template)
+        build_svm_sign_tx_routes::<SubmitSwap>(preview, unsigned_tx, description, submit_template)
     }
 }
 
@@ -348,7 +348,7 @@ pub(crate) struct SubmitSwapArgs {
     /// RFQ-only: the `orderId` from the quote, sent back as `requestId`.
     pub request_id: Option<String>,
     /// Base64 signed versioned Solana tx. Filled in by the host wallet via
-    /// `sign_tx_solana` — never invent one.
+    /// `svm_sign_tx` — never invent one.
     pub signed_tx: Option<String>,
 }
 
@@ -358,12 +358,12 @@ impl DynAomiTool for SubmitSwap {
     type App = ByrealApp;
     type Args = SubmitSwapArgs;
     const NAME: &'static str = "byreal_spot_submit_swap";
-    const DESCRIPTION: &'static str = "Submit a byreal swap that was previously prepared by `byreal_spot_build_swap` and signed via `sign_tx_solana`. Routes to the AMM or RFQ submission endpoint based on `router_type`. The `signed_tx` field is filled in automatically by the runtime.";
+    const DESCRIPTION: &'static str = "Submit a byreal swap that was previously prepared by `byreal_spot_build_swap` and signed via `svm_sign_tx`. Routes to the AMM or RFQ submission endpoint based on `router_type`. The `signed_tx` field is filled in automatically by the runtime.";
 
     fn run(_app: &Self::App, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         validate_confirmation(args.confirmation.as_deref())?;
         let signed = args.signed_tx.as_deref().ok_or_else(|| {
-            "[byreal] signed_tx missing — wait for sign_tx_solana callback".to_string()
+            "[byreal] signed_tx missing — wait for svm_sign_tx callback".to_string()
         })?;
         let client = spot_client()?;
         let resp = match args.router_type.as_str() {

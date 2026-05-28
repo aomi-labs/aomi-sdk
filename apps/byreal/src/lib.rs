@@ -13,8 +13,8 @@ This app is self-contained. Every read and write across all of byreal lives here
 | Namespace | Venue | Signing | Use case |
 |---|---|---|---|
 | `byreal_perps_*` | Hyperliquid L1 (EVM-flavored) | `commit_eip712` (master EVM wallet) | Perpetual futures |
-| `byreal_spot_*`  | byreal Solana (CLMM + RFQ)    | `sign_tx_solana` (SVM wallet)       | Spot swaps + pool discovery |
-| `byreal_lp_*`    | byreal Solana (Copy Farming)  | `sign_tx_solana` (SVM wallet)       | LP analytics + reward claims |
+| `byreal_spot_*`  | byreal Solana (CLMM + RFQ)    | `svm_sign_tx` (SVM wallet)       | Spot swaps + pool discovery |
+| `byreal_lp_*`    | byreal Solana (Copy Farming)  | `svm_sign_tx` (SVM wallet)       | LP analytics + reward claims |
 
 The two trust models are independent. A single user can have a connected EVM wallet (for perps) and a separate SVM wallet (for spot/LP) at the same time — addresses come from `domain.evm.address` and `domain.svm.address` in the host context respectively.
 
@@ -35,7 +35,7 @@ The two trust models are independent. A single user can have a connected EVM wal
 `byreal_spot_get_tokens`, `byreal_spot_get_token_prices`, `byreal_spot_get_global_overview`,
 `byreal_spot_get_swap_quote`.
 
-**Writes (signed via `sign_tx_solana`):**
+**Writes (signed via `svm_sign_tx`):**
 `byreal_spot_build_swap` / `byreal_spot_submit_swap` — handles AMM and RFQ routes transparently.
 
 ### LP / Copy Farming (byreal Solana)
@@ -43,7 +43,7 @@ The two trust models are independent. A single user can have a connected EVM wal
 `byreal_lp_get_provider_overview` (deep dive on one LP wallet),
 `byreal_lp_get_positions`, `byreal_lp_get_unclaimed_rewards`, `byreal_lp_get_epoch_bonus`.
 
-**Writes (signed via `sign_tx_solana`):**
+**Writes (signed via `svm_sign_tx`):**
 `byreal_lp_build_claim_rewards` / `byreal_lp_submit_claim_rewards` — claim accrued fees +
 incentives. v1 supports single-tx claims; for large batches, claim positions in smaller groups.
 
@@ -53,7 +53,7 @@ Each `build_*` tool returns a structured action preview AND a routed signing ste
 
 - **EVM (perps):** routes to `commit_eip712` with EIP-712 typed-data; signature comes back as
   `signature` and feeds the matching `byreal_perps_submit_*` continuation.
-- **Solana (spot, lp):** routes to `sign_tx_solana` with a base64 versioned tx; signed bytes come
+- **Solana (spot, lp):** routes to `svm_sign_tx` with a base64 versioned tx; signed bytes come
   back as `signed_tx` and feed the matching `byreal_spot_submit_*` / `byreal_lp_submit_*` continuation.
 
 You NEVER hold a private key. Treat the `submit_args_template` returned by `build_*` as opaque
@@ -122,7 +122,7 @@ dyn_aomi_app!(
         tool::perps::SubmitCancel,
         tool::perps::BuildUpdateLeverage,
         tool::perps::SubmitUpdateLeverage,
-        // spot (byreal AMM/RFQ on Solana via sign_tx_solana)
+        // spot (byreal AMM/RFQ on Solana via svm_sign_tx)
         tool::spot::GetPools,
         tool::spot::GetPool,
         tool::spot::GetKlines,
@@ -142,10 +142,10 @@ dyn_aomi_app!(
         tool::lp::SubmitClaimRewards,
     ],
     // byreal needs Solana wallet signing for spot/lp write paths — the
-    // build_*_swap / build_*_claim_rewards routes emit `host::SignTxSolana`
+    // build_*_swap / build_*_claim_rewards routes emit `host::SvmSignTx`
     // continuations and bind the returned `signed_tx` into their
     // submit_* steps. solana-core is the opt-in namespace that surfaces
-    // `sign_tx_solana` to the LLM.
+    // `svm_sign_tx` to the LLM.
     namespaces = ["evm-core", "solana-core"]
 );
 
@@ -168,7 +168,9 @@ mod tests {
         let properties = schema
             .get("properties")
             .and_then(Value::as_object)
-            .unwrap_or_else(|| panic!("{tool_name}: schema missing top-level properties: {schema}"));
+            .unwrap_or_else(|| {
+                panic!("{tool_name}: schema missing top-level properties: {schema}")
+            });
 
         for field in required {
             let field_name = field

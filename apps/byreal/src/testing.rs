@@ -8,19 +8,19 @@
 
 use crate::client::lp::lp_client;
 use crate::client::perps::{
-    OrderInputs, build_cancel_action, build_exchange_body, build_order_action, parse_signature,
-    perps_client, prepare_l1_action,
+    build_cancel_action, build_exchange_body, build_order_action, parse_signature, perps_client,
+    prepare_l1_action, OrderInputs,
 };
 use crate::client::spot::spot_client;
 use ethers::signers::{LocalWallet, Signer};
 use ethers::types::H256;
 use ethers::utils::keccak256;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::env;
 
 const SAFE_NOTIONAL_USD: f64 = 11.0; // just over the ~$10 exchange minimum
-// 15% below mid: deep enough an Alo (post-only) buy never fills, shallow enough
-// to clear Hyperliquid's price-deviation limit (~80% from mid) and the 5-sig-fig rule.
+                                     // 15% below mid: deep enough an Alo (post-only) buy never fills, shallow enough
+                                     // to clear Hyperliquid's price-deviation limit (~80% from mid) and the 5-sig-fig rule.
 const FAR_OTM_FACTOR: f64 = 0.85;
 
 /// Compute the EIP-712 digest for a Hyperliquid L1 Agent payload. Mirrors what
@@ -212,7 +212,7 @@ fn extract_resting_oid(response: &Value) -> Option<u64> {
 //
 // These hit the live `api2.byreal.io` API. No keys, no signing, no funds —
 // just verifies our envelope unwrap, URL construction, and response shape
-// work end-to-end. Useful before the runtime side of `sign_tx_solana` lands.
+// work end-to-end. Useful before the runtime side of `svm_sign_tx` lands.
 // ===========================================================================
 
 /// Hit the spot reads we'll exercise most: global overview, top-TVL pools,

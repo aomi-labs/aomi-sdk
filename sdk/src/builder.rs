@@ -62,7 +62,7 @@ pub mod host {
 
     // SVM (Solana) primitives.
     //
-    // `SignTxSolana` is the singular sign-only counterpart to `CommitEip712`:
+    // `SvmSignTx` is the singular sign-only counterpart to `CommitEip712`:
     // takes a fully-built unsigned Solana transaction (base64 versioned/legacy
     // bytes) and returns the signed transaction bytes. The host wallet decodes
     // the tx, prompts the user for approval, signs with the connected SVM
@@ -77,8 +77,8 @@ pub mod host {
     //
     // Note: there is intentionally no `SignTxsSolana` (plural) — Solana
     // wallets sign one tx per user prompt. Apps that need multiple signed txs
-    // should issue separate `SignTxSolana` route steps.
-    host_target!(SignTxSolana, "sign_tx_solana");
+    // should issue separate `SvmSignTx` route steps.
+    host_target!(SvmSignTx, "svm_sign_tx");
 }
 
 #[derive(Debug, Clone)]
@@ -316,7 +316,7 @@ impl<'a> NextStepBuilder<'a> {
     ///
     /// Aliases must be unique within a route plan, but the *tool name* does not
     /// have to be — a single plan may have multiple `commit_eip712` / `stage_tx`
-    /// / `sign_tx_solana` steps each binding to a distinct alias. The runtime
+    /// / `svm_sign_tx` steps each binding to a distinct alias. The runtime
     /// consumes aliases in FIFO order per tool name, so list the steps in the
     /// order you expect the LLM/user to drive them (use `.note(...)` to
     /// reinforce the order in the suggested-action prompt).
@@ -451,7 +451,7 @@ impl AfterStepBuilder {
 mod tests {
     use crate::route::{EnforcementPolicy, RouteStep, ToolReturn};
     use crate::{DynAomiApp, DynAomiTool, DynToolCallCtx};
-    use serde_json::{Value, json};
+    use serde_json::{json, Value};
 
     use super::*;
 
@@ -627,11 +627,11 @@ mod tests {
     fn route_builder_serializes_solana_sign_plan() {
         // Mirror of `route_builder_serializes_bound_artifact_plan` but for
         // the SVM (Solana) sign-only flow: app builds an unsigned tx, host
-        // signs via SignTxSolana, the bound `signed_tx` artifact then feeds
+        // signs via SvmSignTx, the bound `signed_tx` artifact then feeds
         // into the submit step which forwards the signed bytes upstream.
         let tool_return = ToolReturn::route(json!({"status": "awaiting_wallet"}))
             .next(|next| {
-                next.add::<host::SignTxSolana>(json!({
+                next.add::<host::SvmSignTx>(json!({
                     "unsigned_tx": "AgAB...base64...",
                     "description": "Swap 1 USDC for 0.005 SOL via byreal RFQ",
                 }))
@@ -651,7 +651,7 @@ mod tests {
                 "__aomi_tool_value": {"status": "awaiting_wallet"},
                 "__aomi_tool_routes": [
                     {
-                        "tool": "sign_tx_solana",
+                        "tool": "svm_sign_tx",
                         "args": {
                             "unsigned_tx": "AgAB...base64...",
                             "description": "Swap 1 USDC for 0.005 SOL via byreal RFQ",

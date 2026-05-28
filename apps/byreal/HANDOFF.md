@@ -15,9 +15,9 @@ what to pick up.
   (order/cancel/leverage) — verified with a real $11 ETH order on Hyperliquid.
 - **What's blocked:** spot swaps + LP reward claims. The app side is complete
   (build/submit pairs, route plans, smoke tests) but the host can't service the
-  `sign_tx_solana` route step because the runtime primitive isn't implemented.
+  `svm_sign_tx` route step because the runtime primitive isn't implemented.
 - **What's left for you:**
-  1. Implement `host::SignTxSolana` in the runtime (see
+  1. Implement `host::SvmSignTx` in the runtime (see
      [`docs/sign-tx-solana-runtime.md`](../../docs/sign-tx-solana-runtime.md)).
   2. Get `byreal` listed by the backend in `aomi app list`.
   3. Run the Solana write smoke once (1) is live.
@@ -39,7 +39,7 @@ apps/byreal/
 │   │   ├── mod.rs                   # shared helpers (ok, resolve_address,
 │   │   │                            #   validate_confirmation,
 │   │   │                            #   build_evm_signed_routes,
-│   │   │                            #   build_solana_signed_routes)
+│   │   │                            #   build_svm_sign_tx_routes)
 │   │   ├── perps.rs                 # 14 tools (8 read + 3 build/submit pairs)
 │   │   ├── spot.rs                  # 9 tools (7 read + 1 build/submit pair)
 │   │   └── lp.rs                    # 7 tools (5 read + 1 build/submit pair)
@@ -51,7 +51,7 @@ apps/byreal/
 
 Also relevant:
 
-- [`sdk/src/builder.rs`](../../sdk/src/builder.rs) — `host_target!(SignTxSolana, "sign_tx_solana")` lives here (search "SignTxSolana"). The marker is in; only the runtime side is missing.
+- [`sdk/src/builder.rs`](../../sdk/src/builder.rs) — `host_target!(SvmSignTx, "svm_sign_tx")` lives here (search "SvmSignTx"). The marker is in; only the runtime side is missing.
 - [`docs/sign-tx-solana-runtime.md`](../../docs/sign-tx-solana-runtime.md) — the runtime-impl spec (read this first if you're picking up the Solana piece).
 - [`plugins/manifest.json`](../../plugins/manifest.json) and `aomi/plugins/manifest.json` — `byreal.dylib` is registered in both.
 
@@ -63,7 +63,7 @@ its own client (`client/{perps,spot,lp}.rs`) and tool module
 `build_*` returns a preview value + a routed signing step; the host wallet
 signs; the runtime splices the signature into the matching `submit_*` step.
 Perps routes through `host::CommitEip712` (already supported); spot and lp
-route through `host::SignTxSolana` (not yet supported).
+route through `host::SvmSignTx` (not yet supported).
 
 App never holds a key. Wallet addresses come from host context — `domain.evm.address`
 for perps, `domain.svm.address` for spot/lp. A user can have both wallets
@@ -110,7 +110,7 @@ cargo test --manifest-path apps/byreal/Cargo.toml \
 
 ## What's blocked
 
-### 1. `host::SignTxSolana` runtime impl — the main thing
+### 1. `host::SvmSignTx` runtime impl — the main thing
 
 The SDK marker exists and the app emits the route step. The runtime needs to
 handle it. **Full spec is in [`docs/sign-tx-solana-runtime.md`](../../docs/sign-tx-solana-runtime.md)** —
@@ -122,7 +122,7 @@ handle it. **Full spec is in [`docs/sign-tx-solana-runtime.md`](../../docs/sign-
 
 Key points the runtime impl must hit (lifted from the spec doc):
 
-- Tool name **must** be `sign_tx_solana` verbatim.
+- Tool name **must** be `svm_sign_tx` verbatim.
 - Args: `{ unsigned_tx: <base64 versioned tx bytes>, description: <string> }`.
 - Bound artifact: `<base64 signed tx bytes>` — full re-serialized tx, **not**
   just the 64-byte signature (byreal's submit endpoints take the whole tx).
@@ -194,7 +194,7 @@ Bare minimum to declare spot/lp writes working end-to-end:
 1. **Manual smoke via Aomi CLI.** Start a session with an SVM wallet connected,
    ask for a small USDC → SOL swap. Watch for the sequence:
    `byreal_spot_get_swap_quote` → `byreal_spot_build_swap` →
-   wallet prompt (`sign_tx_solana`) → `byreal_spot_submit_swap` → tx confirmed
+   wallet prompt (`svm_sign_tx`) → `byreal_spot_submit_swap` → tx confirmed
    on Solana. The `routerType` in the quote response determines which submit
    path runs.
 2. **Automated smoke.** Mirror `place_live_smoke_order` in `testing.rs` for the
@@ -214,7 +214,7 @@ Bare minimum to declare spot/lp writes working end-to-end:
 2. [`BYREAL_CLI_FLOWS.md`](BYREAL_CLI_FLOWS.md) — the mermaid diagrams. Easier
    to absorb than reading 1500 lines of Rust.
 3. [`src/tool/mod.rs`](src/tool/mod.rs) — `build_evm_signed_routes` /
-   `build_solana_signed_routes`. Once you grok these, every write tool reads
+   `build_svm_sign_tx_routes`. Once you grok these, every write tool reads
    the same way.
 4. [`docs/sign-tx-solana-runtime.md`](../../docs/sign-tx-solana-runtime.md) — if
    you're picking up the runtime piece.

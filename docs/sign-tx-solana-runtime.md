@@ -1,6 +1,6 @@
-# `sign_tx_solana` — runtime implementation guide
+# `svm_sign_tx` — runtime implementation guide
 
-The SDK marker for this host primitive landed in [sdk/src/builder.rs](../sdk/src/builder.rs) (look for `host_target!(SignTxSolana, "sign_tx_solana")`). The runtime side is not yet wired up. This doc tells a fresh implementer just enough to ship it.
+The SDK marker for this host primitive landed in [sdk/src/builder.rs](../sdk/src/builder.rs) (look for `host_target!(SvmSignTx, "svm_sign_tx")`). The runtime side is not yet wired up. This doc tells a fresh implementer just enough to ship it.
 
 ## Why this primitive exists
 
@@ -8,7 +8,7 @@ All existing host signing primitives (`commit_tx`, `commit_eip712`) are EVM-only
 
 ## Tool contract
 
-**Name:** `sign_tx_solana` (verbatim — must match the SDK marker).
+**Name:** `svm_sign_tx` (verbatim — must match the SDK marker).
 
 **Args (LLM-facing):**
 ```json
@@ -32,7 +32,7 @@ Do not return the transaction signature (the 64-byte sigblob) instead — apps n
 
 ## Implementation outline
 
-1. Register the tool in the host runtime's tool catalog under the exact name `sign_tx_solana`.
+1. Register the tool in the host runtime's tool catalog under the exact name `svm_sign_tx`.
 2. Validate args: `unsigned_tx` must be a non-empty string parseable as base64; `description` is required.
 3. Decode → `VersionedTransaction::deserialize(&base64::decode(unsigned_tx)?)`. If that fails, fall back to legacy `Transaction::deserialize`. Reject if neither parses.
 4. Resolve the connected SVM wallet from session state. The convention used by app code ([apps/byreal/src/tool/mod.rs](../apps/byreal/src/tool/mod.rs) `resolve_address(_, ctx, "svm")`) is `domain.svm.address` in the user_state attributes — make sure the wallet adapter populates that on connect.
@@ -44,8 +44,8 @@ Do not return the transaction signature (the 64-byte sigblob) instead — apps n
 
 ## Reference files
 
-- **SDK marker + unit test:** [sdk/src/builder.rs](../sdk/src/builder.rs) — search for `SignTxSolana` and `route_builder_serializes_solana_sign_plan`.
-- **App-side route builder:** [apps/byreal/src/tool/mod.rs](../apps/byreal/src/tool/mod.rs) — `build_solana_signed_routes` shows exactly what shape the runtime will see in `args` for the `sign_tx_solana` step.
+- **SDK marker + unit test:** [sdk/src/builder.rs](../sdk/src/builder.rs) — search for `SvmSignTx` and `route_builder_serializes_solana_sign_plan`.
+- **App-side route builder:** [apps/byreal/src/tool/mod.rs](../apps/byreal/src/tool/mod.rs) — `build_svm_sign_tx_routes` shows exactly what shape the runtime will see in `args` for the `svm_sign_tx` step.
 - **App-side consumers:** [apps/byreal/src/tool/spot.rs](../apps/byreal/src/tool/spot.rs) `BuildSwap` + `SubmitSwap`, and [apps/byreal/src/tool/lp.rs](../apps/byreal/src/tool/lp.rs) `BuildClaimRewards` + `SubmitClaimRewards`.
 - **Mirror primitive (EVM):** existing `commit_eip712` in the host runtime — copy the wallet-adapter integration pattern from there.
 - **Wire-format reference:** [byreal-cli/src/core/transaction.ts](https://github.com/byreal-git/byreal-cli/blob/main/src/core/transaction.ts) shows the exact `deserialize / sign / serialize` flow we expect.
@@ -54,11 +54,11 @@ Do not return the transaction signature (the 64-byte sigblob) instead — apps n
 
 After implementing, the byreal app's spot/lp write tools become exercisable end-to-end. Useful smoke tests:
 
-1. **Manual:** in a chat session, ask the LLM to swap $0.50 USDC for SOL on byreal. Watch the LLM call `byreal_spot_build_swap`, the runtime invoke `sign_tx_solana`, the wallet prompt, then `byreal_spot_submit_swap`. Verify the tx lands on Solana.
+1. **Manual:** in a chat session, ask the LLM to swap $0.50 USDC for SOL on byreal. Watch the LLM call `byreal_spot_build_swap`, the runtime invoke `svm_sign_tx`, the wallet prompt, then `byreal_spot_submit_swap`. Verify the tx lands on Solana.
 2. **Automated:** see the scaffolded gate at [apps/byreal/tests/byreal_solana_smoke.rs](../apps/byreal/tests/byreal_solana_smoke.rs). Read smokes already pass (3/3); a write smoke can be added by mirroring the perps `place_live_smoke_order` in [apps/byreal/src/testing.rs](../apps/byreal/src/testing.rs) — sign locally with `solana-sdk` Keypair gated on `BANANA_SOLANA_PRIVATE_KEY`, but route through `byreal::testing::*` helpers so the byreal HTTP client paths are exercised.
 
 ## Conventions to match
 
 - **Domain attribute:** `domain.svm.address` — use this key when the wallet adapter publishes the connected pubkey. Apps look it up via `resolve_address(_, ctx, "svm")`.
 - **Chain-id convention:** Solana doesn't use EVM-style numeric chain IDs. If the host needs one for routing, use the string `"solana:mainnet"` / `"solana:devnet"` (Solana CAIP-2). Don't repurpose `--chain` flags from the EVM path.
-- **Single sign per call:** keep it singular. Wallets prompt once per tx; batch flows must issue separate `SignTxSolana` route steps. There is intentionally no plural form.
+- **Single sign per call:** keep it singular. Wallets prompt once per tx; batch flows must issue separate `SvmSignTx` route steps. There is intentionally no plural form.

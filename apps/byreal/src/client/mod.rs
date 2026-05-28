@@ -159,10 +159,7 @@ mod tests {
         let env: ByrealEnvelope = serde_json::from_str(body)
             .map_err(|e| format!("envelope decode failed: {e}; body: {body}"))?;
         if env.ret_code != 0 {
-            return Err(format!(
-                "retCode={} retMsg={}",
-                env.ret_code, env.ret_msg
-            ));
+            return Err(format!("retCode={} retMsg={}", env.ret_code, env.ret_msg));
         }
         match env.result {
             Some(r) => {
@@ -185,7 +182,8 @@ mod tests {
     #[test]
     fn happy_path_with_inner_success_true() {
         // /send-swap-tx success: outer retCode=0, inner success=true, data=[sig]
-        let body = r#"{"retCode":0,"retMsg":"","result":{"success":true,"data":["5gq9signaturebase58"]}}"#;
+        let body =
+            r#"{"retCode":0,"retMsg":"","result":{"success":true,"data":["5gq9signaturebase58"]}}"#;
         let value = decode(body).expect("happy path should be Ok");
         assert_eq!(
             value,
@@ -205,7 +203,10 @@ mod tests {
             err.contains("inner status failed"),
             "err message must flag inner status: {err}"
         );
-        assert!(err.contains("500"), "err should include inner ret_code: {err}");
+        assert!(
+            err.contains("500"),
+            "err should include inner ret_code: {err}"
+        );
         assert!(
             err.contains("Internal Server Error"),
             "err should include inner ret_msg: {err}"

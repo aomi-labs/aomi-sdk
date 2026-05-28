@@ -7,15 +7,15 @@
 //!      `routerType` ("AMM" or "RFQ") + opaque continuation fields
 //!      (quoteId/orderId).
 //!   2. The `build_swap` tool routes the unsigned tx through
-//!      `host::SignTxSolana`.
+//!      `host::SvmSignTx`.
 //!   3. Once signed, `submit_swap` calls either [`SpotClient::execute_swap_amm`]
 //!      or [`SpotClient::execute_swap_rfq`] depending on the routerType.
 //!
 //! The byreal envelope (retCode / retMsg / result.data) is unwrapped here;
 //! tool layer sees plain JSON.
 
-use crate::client::{BYREAL_API_BASE, byreal_get, byreal_post, http_client};
-use serde_json::{Value, json};
+use crate::client::{byreal_get, byreal_post, http_client, BYREAL_API_BASE};
+use serde_json::{json, Value};
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
