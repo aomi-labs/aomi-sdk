@@ -4,12 +4,12 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use crate::app::App;
-use crate::deployment_state::{Check, DeploymentState, StateFlags, TargetSpec};
+use crate::deployment_state::{Check, DeploymentState, StagedFile, StateFlags, TargetSpec};
 use crate::git::{GitRepo, Source};
 use crate::platform::{
     Platform, PublishTarget, commit_message, ensure_dirty_scope, verify_remote_origin,
 };
-use crate::stage::{StagedFile, manifest_path_in, write_manifest, write_source_tree};
+use crate::stage::{manifest_path_in, write_manifest, write_source_tree};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]

@@ -627,19 +627,21 @@ fn source_staging_writes_files_and_manifest() {
     assert_eq!(outcome.app_dir, stage_root.join("apps/zora"));
     assert_eq!(
         outcome.manifest_path,
-        stage_root.join("apps/zora/.aomi-publish/manifest.json")
+        stage_root.join("apps/zora/.aomi/deployment.json")
     );
     assert!(stage.path().join("apps/zora/aomi.toml").is_file());
     assert!(stage.path().join("apps/zora/src/lib.rs").is_file());
     assert!(!stale.exists(), "stale target files should be pruned");
 
-    let manifest: Deployment =
+    let manifest: DeploymentState =
         serde_json::from_slice(&fs::read(&outcome.manifest_path).expect("manifest bytes"))
             .expect("manifest json");
-    assert_eq!(manifest.mode, Mode::Stage);
-    assert_eq!(manifest.platform, Platform::new("community"));
+    assert_eq!(manifest.platform.name.as_deref(), Some("community"));
     assert_eq!(manifest.app.name, "zora");
-    assert_eq!(manifest.publish.source_repo, "aomi-labs/community-apps");
+    assert_eq!(
+        manifest.platform.github_repo.as_deref(),
+        Some("https://github.com/aomi-labs/community-apps")
+    );
     let paths: Vec<&str> = manifest.files.iter().map(|f| f.path.as_str()).collect();
     assert!(paths.contains(&"aomi.toml"));
     assert!(paths.contains(&"src/lib.rs"));
@@ -705,7 +707,7 @@ fn git_transport_commits_without_push() {
     assert!(platform.path("apps/zora/aomi.toml").is_file());
     assert!(
         platform
-            .path("apps/zora/.aomi-publish/manifest.json")
+            .path("apps/zora/.aomi/deployment.json")
             .is_file()
     );
 

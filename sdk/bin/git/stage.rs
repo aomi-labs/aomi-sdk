@@ -2,21 +2,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, anyhow};
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::deployment_state::StagedFile;
 use crate::git::GitRepo;
 use crate::plan::Deployment;
 
-#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
-pub struct StagedFile {
-    pub path: String,
-    pub sha256: String,
-    pub bytes: u64,
-}
-
 pub(crate) fn manifest_path_in(app_dir: &Path) -> PathBuf {
-    app_dir.join(".aomi-publish").join("manifest.json")
+    app_dir.join(".aomi").join("deployment.json")
 }
 
 pub(crate) fn write_source_tree(
@@ -57,7 +50,9 @@ pub(crate) fn write_manifest(manifest_path: &Path, deployment: &Deployment) -> R
         .parent()
         .ok_or_else(|| anyhow!("manifest path has no parent: {}", manifest_path.display()))?;
     fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
-    let json = serde_json::to_string_pretty(deployment)?;
+    let mut state = deployment.to_state();
+    state.files = deployment.files.clone();
+    let json = serde_json::to_string_pretty(&state)?;
     fs::write(manifest_path, format!("{json}\n"))
         .with_context(|| format!("failed to write {}", manifest_path.display()))
 }
