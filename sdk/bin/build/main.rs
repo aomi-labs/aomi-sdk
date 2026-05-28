@@ -2,6 +2,8 @@ use clap::{Parser, Subcommand};
 use eyre::Result;
 
 mod client;
+mod compile;
+mod init;
 mod new_app;
 mod spec_load;
 mod specs;
@@ -34,6 +36,12 @@ enum Cmd {
     /// Tighten a spec's `additionalProperties: true` response bodies by inferring
     /// schemas from real captured JSON samples in `ext/specs/<platform>.samples/`.
     TightenSpec(tighten::TightenSpecArgs),
+    /// Scaffold a bare app skeleton under `apps/<NAME>/`. Greenfield counterpart
+    /// to `new-app` (which is OpenAPI-driven).
+    Init(init::InitArgs),
+    /// Build every app's cdylib, copy validated plugins into `plugins/`,
+    /// codesign on macOS.
+    Compile(compile::CompileArgs),
 }
 
 fn main() -> Result<()> {
@@ -45,5 +53,7 @@ fn main() -> Result<()> {
         Cmd::TestSchema(args) => test_schema::run(args),
         Cmd::NewApp(args) => new_app::run(args),
         Cmd::TightenSpec(args) => tighten::run(args),
+        Cmd::Init(args) => init::run(args),
+        Cmd::Compile(args) => compile::run(args),
     }
 }

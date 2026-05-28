@@ -320,6 +320,101 @@ name = "lonely-app"
 }
 
 #[test]
+fn server_tags_default_to_staging_when_aomi_toml_omits_them() {
+    // Missing field → defaulted to ["staging"] and surfaced in deployment.json
+    // checks so an operator can see at a glance that the deploy is staging-only.
+    let repo = TestRepo::new();
+    repo.write(
+        "aomi.toml",
+        r#"
+[app]
+name = "no-tags"
+platform = "community"
+git = "https://github.com/aomi-labs/community-apps"
+"#,
+    );
+    repo.write("src/lib.rs", "pub fn marker() {}\n");
+    repo.commit("initial app");
+
+    let deployment =
+        Deployment::dry_run(repo.root(), Platform::new("community"), false).expect("dry run");
+    assert!(deployment.app.server_tags_defaulted);
+    assert_eq!(deployment.app.server_tags, vec!["staging"]);
+
+    let state = deployment.to_state();
+    assert_eq!(state.target.server_tags, vec!["staging"]);
+    let server_tags_check = state
+        .checks
+        .iter()
+        .find(|c| c.name == "server_tags")
+        .expect("plan should record a server_tags check");
+    assert!(server_tags_check.passed);
+    let detail = server_tags_check.detail.as_deref().unwrap_or("");
+    assert!(
+        detail.contains("defaulted") && detail.contains("staging"),
+        "default should be visible in the check detail: {detail}"
+    );
+}
+
+#[test]
+fn server_tags_default_applied_when_aomi_toml_sets_empty_array() {
+    // Explicit `server_tags = []` is treated the same as missing — operators
+    // should not be able to opt out of the safe default by writing `[]`.
+    let repo = TestRepo::new();
+    repo.write(
+        "aomi.toml",
+        r#"
+[app]
+name = "empty-tags"
+platform = "community"
+git = "https://github.com/aomi-labs/community-apps"
+server_tags = []
+"#,
+    );
+    repo.write("src/lib.rs", "pub fn marker() {}\n");
+    repo.commit("initial app");
+
+    let deployment =
+        Deployment::dry_run(repo.root(), Platform::new("community"), false).expect("dry run");
+    assert!(deployment.app.server_tags_defaulted);
+    assert_eq!(deployment.app.server_tags, vec!["staging"]);
+}
+
+#[test]
+fn explicit_server_tags_are_not_overridden_by_default() {
+    let repo = TestRepo::new();
+    repo.write(
+        "aomi.toml",
+        r#"
+[app]
+name = "explicit-tags"
+platform = "community"
+git = "https://github.com/aomi-labs/community-apps"
+server_tags = ["Prod", "community"]
+"#,
+    );
+    repo.write("src/lib.rs", "pub fn marker() {}\n");
+    repo.commit("initial app");
+
+    let deployment =
+        Deployment::dry_run(repo.root(), Platform::new("community"), false).expect("dry run");
+    assert!(!deployment.app.server_tags_defaulted);
+    assert_eq!(deployment.app.server_tags, vec!["prod", "community"]);
+
+    let state = deployment.to_state();
+    let server_tags_check = state
+        .checks
+        .iter()
+        .find(|c| c.name == "server_tags")
+        .expect("plan should record a server_tags check");
+    let detail = server_tags_check.detail.as_deref().unwrap_or("");
+    assert!(
+        detail.contains("from aomi.toml") && !detail.contains("defaulted"),
+        "explicit value should not be reported as defaulted: {detail}"
+    );
+}
+
+#[test]
 fn deployment_state_round_trips_with_offline_checks() {
     let repo = TestRepo::new();
     repo.write(

@@ -35,13 +35,25 @@ pub struct App {
     pub access_token: Option<String>,
     /// Required server tags for activation/load targeting. The backend loads
     /// only when these tags are a subset of its configured AOMI_SERVER_TAGS.
+    /// When `aomi.toml` omits this field (or sets it to `[]`), `App::discover`
+    /// fills in `[DEFAULT_SERVER_TAG]` so unconfigured deploys land on staging
+    /// rather than every server class. The defaulting is recorded on
+    /// `server_tags_defaulted` and surfaced as a check in deployment.json.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub server_tags: Vec<String>,
+    /// `true` when `server_tags` was filled in by the implicit default rather
+    /// than the user. Not serialized — the marker is only useful at plan time.
+    #[serde(skip)]
+    pub server_tags_defaulted: bool,
     #[serde(default)]
     pub config_path: PathBuf,
     #[serde(default)]
     pub source_path: PathBuf,
 }
+
+/// Default `server_tags` injected when `aomi.toml` does not declare any.
+/// Chosen to fail safe: unconfigured deploys reach the staging class only.
+pub const DEFAULT_SERVER_TAG: &str = "staging";
 
 impl App {
     /// Resolve `[app].access_token` to a real token string by reading the
@@ -129,6 +141,10 @@ impl App {
         app.branch = trim_opt(app.branch);
         app.access_token = trim_opt(app.access_token);
         app.server_tags = normalize_tags(app.server_tags, "server_tags", path)?;
+        if app.server_tags.is_empty() {
+            app.server_tags = vec![DEFAULT_SERVER_TAG.to_string()];
+            app.server_tags_defaulted = true;
+        }
 
         // Reject access_token values that look like raw secrets (no `$`
         // prefix). This protects users from accidentally committing a
@@ -166,6 +182,8 @@ impl App {
         let mut app = App {
             name,
             display_name,
+            server_tags: vec![DEFAULT_SERVER_TAG.to_string()],
+            server_tags_defaulted: true,
             ..App::default()
         };
         app.fill_paths(path, git_root)?;

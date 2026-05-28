@@ -48,4 +48,4 @@ When changing the SDK compatibility contract:
 2. Merge that SDK bump through `main` so crates.io and host builds align.
 3. Rebuild plugins from `publish` so released bundles carry the new SDK version.
 4. Run the SDK test suite: `cargo test -p aomi-sdk`.
-5. Run plugin validation: `cargo xtask build-aomi --release`.
+5. Run plugin validation: `aomi-build compile --release`.

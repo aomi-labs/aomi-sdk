@@ -4,13 +4,14 @@ version = "0.1.20"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/aomi-labs/aomi-sdk"
-description = "Lightweight SDK for building dynamic Aomi plugins (cdylib) and the aomi-git deploy CLI"
+description = "Lightweight SDK for building dynamic Aomi plugins (cdylib), the aomi-git deploy CLI, and the aomi-build scaffolding CLI"
 
 [features]
 default = []
-# Compile the `aomi-git` binary and its supporting modules. Off by default so
-# library consumers don't drag in clap/tokio/reqwest just to depend on the SDK.
-# Enable via `cargo install aomi-sdk --features cli` or
+# Compile the `aomi-git` and `aomi-build` binaries and their supporting
+# modules. Off by default so library consumers don't drag in
+# clap/tokio/reqwest/progenitor/syn just to depend on the SDK. Enable via
+# `cargo install aomi-sdk --features cli` or
 # `cargo build -p aomi-sdk --features cli`.
 cli = [
     "dep:anyhow",
@@ -19,6 +20,32 @@ cli = [
     "dep:sha2",
     "dep:tokio",
     "dep:toml",
+    "dep:inquire",
+    "dep:serde_yaml",
+    "dep:chrono",
+    "dep:progenitor",
+    "dep:openapiv3",
+    "dep:indexmap",
+    "dep:prettyplease",
+    "dep:syn",
+    "dep:proc-macro2",
+    "dep:toml_edit",
+]
+# Compile the `aomi-run` binary: a minimal local runtime that loads a
+# plugin cdylib, wires its tools into a rig Agent, and runs an interactive
+# REPL so developers can exercise their agent without deploying. Pulls in
+# rig-core and the relevant LLM provider clients.
+dev-runtime = [
+    "dep:anyhow",
+    "dep:clap",
+    "dep:tokio",
+    "dep:rig-core",
+    "dep:uuid",
+    "dep:dotenvy",
+    "dep:rustyline",
+    "dep:tracing-subscriber",
+    "dep:thiserror",
+    "dep:futures",
 ]
 
 [dependencies]
@@ -36,11 +63,40 @@ reqwest = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true }
 toml = { version = "0.8", optional = true }
+inquire = { version = "0.7", optional = true }
+serde_yaml = { version = "0.9", optional = true }
+chrono = { workspace = true, features = ["serde"], optional = true }
+progenitor = { version = "0.14", optional = true }
+openapiv3 = { version = "2.2", optional = true }
+indexmap = { version = "2", optional = true }
+prettyplease = { version = "0.2", optional = true }
+syn = { version = "2", features = ["full"], optional = true }
+proc-macro2 = { version = "1", optional = true }
+toml_edit = { version = "0.22", optional = true }
+
+# dev-runtime deps — pulled in only when the `dev-runtime` feature is enabled.
+rig-core = { version = "0.35.0", optional = true }
+uuid = { workspace = true, optional = true }
+dotenvy = { version = "0.15", optional = true }
+rustyline = { version = "14", optional = true }
+tracing-subscriber = { version = "0.3", optional = true, features = ["env-filter"] }
+thiserror = { version = "2", optional = true }
+futures = { version = "0.3", optional = true }
 
 [[bin]]
 name = "aomi-git"
-path = "bin/main.rs"
+path = "bin/git/main.rs"
 required-features = ["cli"]
+
+[[bin]]
+name = "aomi-build"
+path = "bin/build/main.rs"
+required-features = ["cli"]
+
+[[bin]]
+name = "aomi-run"
+path = "bin/run/main.rs"
+required-features = ["dev-runtime"]
 
 [package.metadata.docs.rs]
 all-features = true

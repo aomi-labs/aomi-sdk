@@ -71,5 +71,8 @@ jobs:
           done
           exit $failed
 
+      - name: Build CLI binaries (aomi-git, aomi-build)
+        run: cargo build -p aomi-sdk --features cli --bins
+
       - name: Build all plugins
-        run: cargo xtask build-aomi
+        run: cargo run -p aomi-sdk --features cli --bin aomi-build -- compile

@@ -81,7 +81,7 @@ jobs:
           key: release-${{ matrix.target }}
 
       - name: Build all plugins
-        run: cargo xtask build-aomi --release --target ${{ matrix.target }}
+        run: cargo run -p aomi-sdk --features cli --bin aomi-build -- compile --release --target ${{ matrix.target }}
 
       - name: Generate manifest.json
         run: |

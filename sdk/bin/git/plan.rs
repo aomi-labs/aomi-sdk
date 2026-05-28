@@ -194,6 +194,24 @@ impl Deployment {
                 "aomi.toml is missing [app].git — preflight cannot verify push access",
             )
         });
+        // Surface server_tags in the plan so deployment.json shows the
+        // effective value, and flag when we filled in the default — operators
+        // looking at a deploy can see at a glance whether their aomi.toml
+        // pinned a target or whether we silently picked staging.
+        state.checks.push(if self.app.server_tags_defaulted {
+            Check::pass(
+                "server_tags",
+                format!(
+                    "defaulted to [{}] (aomi.toml did not declare server_tags)",
+                    self.app.server_tags.join(",")
+                ),
+            )
+        } else {
+            Check::pass(
+                "server_tags",
+                format!("[{}] (from aomi.toml)", self.app.server_tags.join(",")),
+            )
+        });
 
         // State flags start false; preflight + deploy flip them.
         state.state = StateFlags::default();

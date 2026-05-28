@@ -106,7 +106,7 @@ fn validate_manifest(manifest: &DynManifest) -> Vec<String> {
                 .any(|private_ns| private_ns == &ns.as_str())
             {
                 errors.push(format!(
-                    "{}: namespace '{}' is private to the host and not allowed in aomi-apps",
+                    "{}: namespace '{}' is private to the host and not allowed in aomi-sdk",
                     manifest.name, ns
                 ));
             }
@@ -163,6 +163,7 @@ mod tests {
                 namespace: None,
             }],
             namespaces: Some(vec!["database".to_string()]),
+            secrets: None,
         };
 
         let errors = super::validate_manifest(&manifest);

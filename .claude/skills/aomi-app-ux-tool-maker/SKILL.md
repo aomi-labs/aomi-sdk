@@ -393,6 +393,20 @@ If it fails:
 - Second most likely: missing `&` / `.as_str()` / `.as_deref()` for string args, since progenitor's API takes `&'a str` not `String`.
 - Fix and re-run. Iterate until clean.
 
+Optional smoke-chat with the curated tools before formalising the e2e test:
+
+```
+aomi-run target/debug/lib<platform>.dylib
+```
+
+`aomi-run` loads the cdylib, registers every tool from the manifest, and
+opens a local REPL against the LLM (provider via `--provider`, key from
+env). Worth doing at least once per app — you'll catch obvious naming /
+description issues and unclear PREAMBLE wording faster than via the
+formal e2e harness. Wallet-bound tools (`commit_tx`, `commit_eip712`,
+`stage_tx`, etc.) are stubbed in `aomi-run`, so route-driven flows still
+need the e2e test or the deployed backend.
+
 ### 6.5. Seed the e2e test
 
 Write `apps/<platform>/test.json` with **just** the `user_story` portion. **One test per app** — the harness runs a single test; pick the highest-value happy path.
