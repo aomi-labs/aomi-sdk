@@ -106,7 +106,6 @@ jobs:
               }
 
           manifest = {
-              "version": "${{ needs.resolve.outputs.version }}",
               "app_release_tag": "${{ needs.resolve.outputs.tag }}",
               "sdk_version": sdk_version,
               "target": "${{ matrix.target }}",
