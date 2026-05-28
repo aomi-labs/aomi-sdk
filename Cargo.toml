@@ -40,6 +40,7 @@ exclude = [
     "apps/zerox",
     "apps/polymarket-rewards",
     "apps/limitless",
+    "apps/gambit",
     "apps/zora",
     "apps/krexa",
 ]
