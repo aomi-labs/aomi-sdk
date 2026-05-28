@@ -19,14 +19,35 @@ This repository contains public dynamic app crates, the public SDK they build ag
 
 ## What Lives Here
 
-- `apps/*`: public app crates that compile to dynamic plugins
+- `apps/*`: official app crates that compile to dynamic plugins
 - `sdk`: the public plugin SDK used by those apps
-- `sdk/bin/build`: the `aomi-build` CLI — scaffold apps from OpenAPI specs, compile and validate plugins (formerly the `xtask` crate)
+- `sdk/bin/build`: the **`aomi-build`** CLI — scaffold apps from OpenAPI specs, compile and validate plugins (formerly the `xtask` crate)
+- `sdk/bin/git`: the **`aomi-git`** CLI — `deploy` and `activate` for shipping apps to a platform hosting repo (community-apps, krexa-hosted-apps, etc.)
 - `sdk/examples/app-template-http`: reference app showing the recommended file layout for a new plugin
 - `docs/host-interop.md`: the public host capability contract used by execution-oriented apps
 - `docs/repo-structure.md`: how to structure a new app crate in this repo
 
-## Included Apps
+## Where do new apps go?
+
+Three distinct paths depending on who you are. Pick the right one before
+you start authoring.
+
+| If you're… | Publish to | Read first |
+|---|---|---|
+| A **community contributor** building a public app | [`aomi-labs/community-apps`](https://github.com/aomi-labs/community-apps) | [community-apps/CONTRIBUTING.md](https://github.com/aomi-labs/community-apps/blob/publish/CONTRIBUTING.md) |
+| A **Krexa platform partner** | [`aomi-labs/krexa-hosted-apps`](https://github.com/aomi-labs/krexa-hosted-apps) (invite-only) | [krexa-hosted-apps/CONTRIBUTING.md](https://github.com/aomi-labs/krexa-hosted-apps/blob/publish/CONTRIBUTING.md) |
+| **Maintaining an official Aomi app** | this repo's `apps/` | [`docs/repo-structure.md`](./docs/repo-structure.md) + "Publication Pipeline" below |
+
+The first two paths use **`aomi-git deploy`** to stage your source into the
+target platform repo. You don't open a PR against this SDK repo — you
+author your app in your own source repo and let `aomi-git` push it through
+the platform's CI. The third path is for Aomi-team-maintained official apps
+that ship from this repo as part of the `apps-v0.x.y` SDK releases.
+
+If you're new and unsure which is yours: it's probably the **community
+contributor** row.
+
+## Official Apps
 
 - `defi`
 - `delta`
@@ -102,9 +123,14 @@ aomi-build compile --target aarch64-apple-darwin
 (Without installing, you can also run it ad-hoc:
 `cargo run -p aomi-sdk --features cli --bin aomi-build -- compile`.)
 
-## Publication Pipeline
+## Publication Pipeline (official apps)
 
-Apps are developed via PR, built by CI, and delivered to the runtime as pre-built dynamic plugins.
+> This section describes how **official Aomi apps** (the ones in `apps/` of
+> this repo) get to the runtime. Community apps and Krexa apps follow a
+> different path via `aomi-git deploy` against their own platform repos —
+> see "Where do new apps go?" above.
+
+Official apps are developed via PR, built by CI, and delivered to the runtime as pre-built dynamic plugins.
 
 ### Workflow
 
