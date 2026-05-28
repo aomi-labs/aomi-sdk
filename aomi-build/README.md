@@ -313,7 +313,7 @@ Use the [`aomi-app-e2e-tester`](../.claude/skills/aomi-app-e2e-tester/SKILL.md) 
 
 ### Limitations of the v1 spec format
 
-1. **`expected_tools` matches by topic, which equals the tool name only for app-defined tools.** Host tools (`stage_tx`, `simulate_batch`, `commit_txs`) carry an LLM-set `topic` arg, so listing them in `must_call` won't work — the runtime fires those internally as part of routed enforcement anyway.
+1. **`expected_tools` matches visible tool-result topics, not always raw tool names.** App-defined tools normally surface their tool name. Host tools (`stage_tx`, `simulate_batch`, `commit_txs`) may carry an LLM-set `topic` arg, and routed enforcement can fire them internally, so prefer asserting app tools unless you have verified the visible topic in a transcript.
 2. **`callback_after` consumes pending_txs.** A terminal `wallet:tx_complete` callback discards `pending_txs`, so `final_assertion.user_state.pending_txs.min_count: 1` after a callback fires will always fail. For wallet-bridge scenarios use `max_count: 0` (assert the callback consumed them) or split into two specs.
 3. **No mid-turn topic assertions.** If you want to assert a tool fired *after* a callback, drive the LLM in a subsequent turn and observe via `expected_tools` on that turn's diff.
 4. **No regex.** Topic and body matching is substring + exact only.
@@ -353,4 +353,4 @@ aomi-build new-app <platform>             # 2 + 3 + 4 + cargo build
 | `test.json` fails on `pending_txs.min_count` after a callback | Callback consumed pending_txs | Set `max_count: 0` instead, or remove `callback_after` from that scenario |
 | Runner says "no test.json discovered" | Dylib path not under `apps/<p>/` | Set `AOMI_E2E_SPEC` to the explicit JSON path |
 
-For deeper runtime issues (routed enforcement not firing, alias binding, namespace mismatches), see the runtime test fixtures and the routed-action plan store in `product-mono/aomi/crates/tools/src/route.rs`.
+For deeper runtime issues (routed enforcement not firing, alias binding, namespace mismatches), see the runtime test fixtures and route handling in `product-mono/aomi/crates/core/src/internal_action.rs` and `product-mono/aomi/crates/runtime/src/pending.rs`.
