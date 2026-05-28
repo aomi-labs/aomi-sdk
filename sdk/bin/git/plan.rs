@@ -164,6 +164,7 @@ impl Deployment {
             branch: user_branch,
             app_path: self.publish.app_path.clone(),
             release_tag: self.publish.release_tag.clone(),
+            server_tags: self.app.server_tags.clone(),
         };
         let mut state = DeploymentState::new(self.app.clone(), self.source.clone(), target);
 
@@ -218,6 +219,7 @@ Publish plan ({mode:?})
   publish_branch  : {publish_branch}
   publish_path    : {app_path}
   release_tag     : {release_tag}
+  server_tags     : {server_tags}
   stages_files    : {stages_files}
   pushes          : {pushes}
   staged_files    : {file_count}",
@@ -237,6 +239,11 @@ Publish plan ({mode:?})
             publish_branch = self.publish.publish_branch,
             app_path = self.publish.app_path,
             release_tag = self.publish.release_tag,
+            server_tags = if self.app.server_tags.is_empty() {
+                "<none>".to_string()
+            } else {
+                self.app.server_tags.join(",")
+            },
             stages_files = self.mode.stages_files(),
             pushes = self.mode.pushes(),
             file_count = self.files.len(),

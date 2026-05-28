@@ -33,6 +33,10 @@ pub struct App {
     /// platforms (community).
     #[serde(default)]
     pub access_token: Option<String>,
+    /// Required server tags for activation/load targeting. The backend loads
+    /// only when these tags are a subset of its configured AOMI_SERVER_TAGS.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub server_tags: Vec<String>,
     #[serde(default)]
     pub config_path: PathBuf,
     #[serde(default)]
@@ -124,6 +128,7 @@ impl App {
         app.git = trim_opt(app.git);
         app.branch = trim_opt(app.branch);
         app.access_token = trim_opt(app.access_token);
+        app.server_tags = normalize_tags(app.server_tags, "server_tags", path)?;
 
         // Reject access_token values that look like raw secrets (no `$`
         // prefix). This protects users from accidentally committing a
@@ -226,6 +231,30 @@ fn trim_opt(value: Option<String>) -> Option<String> {
     value
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+}
+
+fn normalize_tags(values: Vec<String>, field: &str, source: &Path) -> Result<Vec<String>> {
+    let mut tags = Vec::new();
+    for raw in values {
+        let tag = raw.trim().to_ascii_lowercase();
+        if tag.is_empty() {
+            continue;
+        }
+        if !tag
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+        {
+            bail!(
+                "{} defines invalid {field} tag `{}`; use ASCII letters, numbers, '-' or '_'",
+                source.display(),
+                raw
+            );
+        }
+        if !tags.contains(&tag) {
+            tags.push(tag);
+        }
+    }
+    Ok(tags)
 }
 
 fn normalize_slug(raw: &str, source: &Path) -> Result<String> {

@@ -170,6 +170,10 @@ fn activate_command_builds_activate_app_request() {
         "tree123",
         "--source-digest",
         "sha256:source",
+        "--target-tag",
+        "Prod",
+        "--target-tag",
+        "platform-x",
     ])
     .expect("parse activate command");
     let CliCommand::Activate(args) = cli.command else {
@@ -194,6 +198,7 @@ fn activate_command_builds_activate_app_request() {
     );
     assert_eq!(plan.request.source_tree.as_deref(), Some("tree123"));
     assert_eq!(plan.request.source_digest.as_deref(), Some("sha256:source"));
+    assert_eq!(plan.request.target_tags, vec!["prod", "platform-x"]);
     assert!(plan.request.is_active);
     assert!(plan.request.is_public);
     assert_eq!(plan.request.metadata["requested_by"], "aomi-git");
@@ -227,6 +232,7 @@ fn activation_plan_requires_apps_release_tag() {
         Visibility::Private,
         "aomi-labs/community-apps".to_string(),
         None,
+        Vec::new(),
         None,
         None,
         None,
@@ -326,6 +332,7 @@ platform = "community"
 git = "https://github.com/aomi-labs/community-apps"
 branch = "experiment"
 public = true
+server_tags = ["Prod", "community", "prod"]
 "#,
     );
     repo.write("src/lib.rs", "pub fn marker() {}\n");
@@ -343,6 +350,7 @@ public = true
     );
     assert_eq!(deployment.app.branch.as_deref(), Some("experiment"));
     assert_eq!(deployment.app.public, Some(true));
+    assert_eq!(deployment.app.server_tags, vec!["prod", "community"]);
 
     // to_state produces a coherent artifact with all three flags false.
     let state = deployment.to_state();
@@ -351,6 +359,7 @@ public = true
     assert!(!state.state.activated);
     assert_eq!(state.target.branch, "experiment");
     assert!(state.target.release_tag.starts_with("apps-alice-bot-"));
+    assert_eq!(state.target.server_tags, vec!["prod", "community"]);
     assert_eq!(state.platform.name.as_deref(), Some("community"));
     assert_eq!(state.platform.resolved_deploy_branch, None);
 

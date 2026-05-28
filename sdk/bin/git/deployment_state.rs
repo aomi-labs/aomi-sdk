@@ -95,6 +95,9 @@ pub struct TargetSpec {
     pub app_path: String,
     /// The release tag this deploy will create (`apps-{name}-{shortcommit}`).
     pub release_tag: String,
+    /// Required backend server tags for activation/load targeting.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub server_tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Eq, PartialEq, Deserialize, Serialize)]
