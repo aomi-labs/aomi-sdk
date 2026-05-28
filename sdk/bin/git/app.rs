@@ -33,11 +33,27 @@ pub struct App {
     /// platforms (community).
     #[serde(default)]
     pub access_token: Option<String>,
+    /// Required server tags for activation/load targeting. The backend loads
+    /// only when these tags are a subset of its configured AOMI_SERVER_TAGS.
+    /// When `aomi.toml` omits this field (or sets it to `[]`), `App::discover`
+    /// fills in `[DEFAULT_SERVER_TAG]` so unconfigured deploys land on staging
+    /// rather than every server class. The defaulting is recorded on
+    /// `server_tags_defaulted` and surfaced as a check in deployment.json.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub server_tags: Vec<String>,
+    /// `true` when `server_tags` was filled in by the implicit default rather
+    /// than the user. Not serialized — the marker is only useful at plan time.
+    #[serde(skip)]
+    pub server_tags_defaulted: bool,
     #[serde(default)]
     pub config_path: PathBuf,
     #[serde(default)]
     pub source_path: PathBuf,
 }
+
+/// Default `server_tags` injected when `aomi.toml` does not declare any.
+/// Chosen to fail safe: unconfigured deploys reach the staging class only.
+pub const DEFAULT_SERVER_TAG: &str = "staging";
 
 impl App {
     /// Resolve `[app].access_token` to a real token string by reading the
@@ -124,6 +140,11 @@ impl App {
         app.git = trim_opt(app.git);
         app.branch = trim_opt(app.branch);
         app.access_token = trim_opt(app.access_token);
+        app.server_tags = normalize_tags(app.server_tags, "server_tags", path)?;
+        if app.server_tags.is_empty() {
+            app.server_tags = vec![DEFAULT_SERVER_TAG.to_string()];
+            app.server_tags_defaulted = true;
+        }
 
         // Reject access_token values that look like raw secrets (no `$`
         // prefix). This protects users from accidentally committing a
@@ -161,6 +182,8 @@ impl App {
         let mut app = App {
             name,
             display_name,
+            server_tags: vec![DEFAULT_SERVER_TAG.to_string()],
+            server_tags_defaulted: true,
             ..App::default()
         };
         app.fill_paths(path, git_root)?;
@@ -226,6 +249,30 @@ fn trim_opt(value: Option<String>) -> Option<String> {
     value
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
+}
+
+fn normalize_tags(values: Vec<String>, field: &str, source: &Path) -> Result<Vec<String>> {
+    let mut tags = Vec::new();
+    for raw in values {
+        let tag = raw.trim().to_ascii_lowercase();
+        if tag.is_empty() {
+            continue;
+        }
+        if !tag
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+        {
+            bail!(
+                "{} defines invalid {field} tag `{}`; use ASCII letters, numbers, '-' or '_'",
+                source.display(),
+                raw
+            );
+        }
+        if !tags.contains(&tag) {
+            tags.push(tag);
+        }
+    }
+    Ok(tags)
 }
 
 fn normalize_slug(raw: &str, source: &Path) -> Result<String> {

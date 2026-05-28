@@ -170,6 +170,10 @@ fn activate_command_builds_activate_app_request() {
         "tree123",
         "--source-digest",
         "sha256:source",
+        "--target-tag",
+        "Prod",
+        "--target-tag",
+        "platform-x",
     ])
     .expect("parse activate command");
     let CliCommand::Activate(args) = cli.command else {
@@ -194,6 +198,7 @@ fn activate_command_builds_activate_app_request() {
     );
     assert_eq!(plan.request.source_tree.as_deref(), Some("tree123"));
     assert_eq!(plan.request.source_digest.as_deref(), Some("sha256:source"));
+    assert_eq!(plan.request.target_tags, vec!["prod", "platform-x"]);
     assert!(plan.request.is_active);
     assert!(plan.request.is_public);
     assert_eq!(plan.request.metadata["requested_by"], "aomi-git");
@@ -227,6 +232,7 @@ fn activation_plan_requires_apps_release_tag() {
         Visibility::Private,
         "aomi-labs/community-apps".to_string(),
         None,
+        Vec::new(),
         None,
         None,
         None,
@@ -314,6 +320,101 @@ name = "lonely-app"
 }
 
 #[test]
+fn server_tags_default_to_staging_when_aomi_toml_omits_them() {
+    // Missing field → defaulted to ["staging"] and surfaced in deployment.json
+    // checks so an operator can see at a glance that the deploy is staging-only.
+    let repo = TestRepo::new();
+    repo.write(
+        "aomi.toml",
+        r#"
+[app]
+name = "no-tags"
+platform = "community"
+git = "https://github.com/aomi-labs/community-apps"
+"#,
+    );
+    repo.write("src/lib.rs", "pub fn marker() {}\n");
+    repo.commit("initial app");
+
+    let deployment =
+        Deployment::dry_run(repo.root(), Platform::new("community"), false).expect("dry run");
+    assert!(deployment.app.server_tags_defaulted);
+    assert_eq!(deployment.app.server_tags, vec!["staging"]);
+
+    let state = deployment.to_state();
+    assert_eq!(state.target.server_tags, vec!["staging"]);
+    let server_tags_check = state
+        .checks
+        .iter()
+        .find(|c| c.name == "server_tags")
+        .expect("plan should record a server_tags check");
+    assert!(server_tags_check.passed);
+    let detail = server_tags_check.detail.as_deref().unwrap_or("");
+    assert!(
+        detail.contains("defaulted") && detail.contains("staging"),
+        "default should be visible in the check detail: {detail}"
+    );
+}
+
+#[test]
+fn server_tags_default_applied_when_aomi_toml_sets_empty_array() {
+    // Explicit `server_tags = []` is treated the same as missing — operators
+    // should not be able to opt out of the safe default by writing `[]`.
+    let repo = TestRepo::new();
+    repo.write(
+        "aomi.toml",
+        r#"
+[app]
+name = "empty-tags"
+platform = "community"
+git = "https://github.com/aomi-labs/community-apps"
+server_tags = []
+"#,
+    );
+    repo.write("src/lib.rs", "pub fn marker() {}\n");
+    repo.commit("initial app");
+
+    let deployment =
+        Deployment::dry_run(repo.root(), Platform::new("community"), false).expect("dry run");
+    assert!(deployment.app.server_tags_defaulted);
+    assert_eq!(deployment.app.server_tags, vec!["staging"]);
+}
+
+#[test]
+fn explicit_server_tags_are_not_overridden_by_default() {
+    let repo = TestRepo::new();
+    repo.write(
+        "aomi.toml",
+        r#"
+[app]
+name = "explicit-tags"
+platform = "community"
+git = "https://github.com/aomi-labs/community-apps"
+server_tags = ["Prod", "community"]
+"#,
+    );
+    repo.write("src/lib.rs", "pub fn marker() {}\n");
+    repo.commit("initial app");
+
+    let deployment =
+        Deployment::dry_run(repo.root(), Platform::new("community"), false).expect("dry run");
+    assert!(!deployment.app.server_tags_defaulted);
+    assert_eq!(deployment.app.server_tags, vec!["prod", "community"]);
+
+    let state = deployment.to_state();
+    let server_tags_check = state
+        .checks
+        .iter()
+        .find(|c| c.name == "server_tags")
+        .expect("plan should record a server_tags check");
+    let detail = server_tags_check.detail.as_deref().unwrap_or("");
+    assert!(
+        detail.contains("from aomi.toml") && !detail.contains("defaulted"),
+        "explicit value should not be reported as defaulted: {detail}"
+    );
+}
+
+#[test]
 fn deployment_state_round_trips_with_offline_checks() {
     let repo = TestRepo::new();
     repo.write(
@@ -326,6 +427,7 @@ platform = "community"
 git = "https://github.com/aomi-labs/community-apps"
 branch = "experiment"
 public = true
+server_tags = ["Prod", "community", "prod"]
 "#,
     );
     repo.write("src/lib.rs", "pub fn marker() {}\n");
@@ -343,6 +445,7 @@ public = true
     );
     assert_eq!(deployment.app.branch.as_deref(), Some("experiment"));
     assert_eq!(deployment.app.public, Some(true));
+    assert_eq!(deployment.app.server_tags, vec!["prod", "community"]);
 
     // to_state produces a coherent artifact with all three flags false.
     let state = deployment.to_state();
@@ -351,6 +454,7 @@ public = true
     assert!(!state.state.activated);
     assert_eq!(state.target.branch, "experiment");
     assert!(state.target.release_tag.starts_with("apps-alice-bot-"));
+    assert_eq!(state.target.server_tags, vec!["prod", "community"]);
     assert_eq!(state.platform.name.as_deref(), Some("community"));
     assert_eq!(state.platform.resolved_deploy_branch, None);
 
@@ -523,19 +627,21 @@ fn source_staging_writes_files_and_manifest() {
     assert_eq!(outcome.app_dir, stage_root.join("apps/zora"));
     assert_eq!(
         outcome.manifest_path,
-        stage_root.join("apps/zora/.aomi-publish/manifest.json")
+        stage_root.join("apps/zora/.aomi/deployment.json")
     );
     assert!(stage.path().join("apps/zora/aomi.toml").is_file());
     assert!(stage.path().join("apps/zora/src/lib.rs").is_file());
     assert!(!stale.exists(), "stale target files should be pruned");
 
-    let manifest: Deployment =
+    let manifest: DeploymentState =
         serde_json::from_slice(&fs::read(&outcome.manifest_path).expect("manifest bytes"))
             .expect("manifest json");
-    assert_eq!(manifest.mode, Mode::Stage);
-    assert_eq!(manifest.platform, Platform::new("community"));
+    assert_eq!(manifest.platform.name.as_deref(), Some("community"));
     assert_eq!(manifest.app.name, "zora");
-    assert_eq!(manifest.publish.source_repo, "aomi-labs/community-apps");
+    assert_eq!(
+        manifest.platform.github_repo.as_deref(),
+        Some("https://github.com/aomi-labs/community-apps")
+    );
     let paths: Vec<&str> = manifest.files.iter().map(|f| f.path.as_str()).collect();
     assert!(paths.contains(&"aomi.toml"));
     assert!(paths.contains(&"src/lib.rs"));
@@ -577,6 +683,7 @@ fn git_transport_commits_without_push() {
         "git@github.com:aomi-labs/community-apps.git",
     );
     source.write("apps/zora/src/lib.rs", "pub fn marker() {}\n");
+    source.write("apps/zora/.gitignore", "/.aomi/\n");
     source.commit("initial app");
 
     let platform = TestRepo::new();
@@ -599,11 +706,8 @@ fn git_transport_commits_without_push() {
     assert!(outcome.commit.is_some());
     assert!(!outcome.pushed);
     assert!(platform.path("apps/zora/aomi.toml").is_file());
-    assert!(
-        platform
-            .path("apps/zora/.aomi-publish/manifest.json")
-            .is_file()
-    );
+    assert!(platform.path("apps/zora/.gitignore").is_file());
+    assert!(platform.path("apps/zora/.aomi/deployment.json").is_file());
 
     let message = test_git_output(platform.root(), ["log", "-1", "--pretty=%B"]);
     assert!(message.contains("zora"));

@@ -233,7 +233,7 @@ The spec describes a real-LLM scenario: wallet seed, user prompts, expected tool
 cd apps/khalani && cargo build
 
 cd ~/Code/product-mono/aomi
-AOMI_E2E_APP_PATH=~/Code/aomi-apps/apps/khalani/target/debug/libkhalani.dylib \
+AOMI_E2E_APP_PATH=~/Code/aomi-sdk/apps/khalani/target/debug/libkhalani.dylib \
   cargo test -p aomi-runtime --test local-app-e2e app_e2e_specs -- --nocapture
 ```
 

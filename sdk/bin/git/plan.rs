@@ -4,12 +4,12 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 
 use crate::app::App;
-use crate::deployment_state::{Check, DeploymentState, StateFlags, TargetSpec};
+use crate::deployment_state::{Check, DeploymentState, StagedFile, StateFlags, TargetSpec};
 use crate::git::{GitRepo, Source};
 use crate::platform::{
     Platform, PublishTarget, commit_message, ensure_dirty_scope, verify_remote_origin,
 };
-use crate::stage::{StagedFile, manifest_path_in, write_manifest, write_source_tree};
+use crate::stage::{manifest_path_in, write_manifest, write_source_tree};
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -164,6 +164,7 @@ impl Deployment {
             branch: user_branch,
             app_path: self.publish.app_path.clone(),
             release_tag: self.publish.release_tag.clone(),
+            server_tags: self.app.server_tags.clone(),
         };
         let mut state = DeploymentState::new(self.app.clone(), self.source.clone(), target);
 
@@ -193,6 +194,24 @@ impl Deployment {
                 "aomi.toml is missing [app].git — preflight cannot verify push access",
             )
         });
+        // Surface server_tags in the plan so deployment.json shows the
+        // effective value, and flag when we filled in the default — operators
+        // looking at a deploy can see at a glance whether their aomi.toml
+        // pinned a target or whether we silently picked staging.
+        state.checks.push(if self.app.server_tags_defaulted {
+            Check::pass(
+                "server_tags",
+                format!(
+                    "defaulted to [{}] (aomi.toml did not declare server_tags)",
+                    self.app.server_tags.join(",")
+                ),
+            )
+        } else {
+            Check::pass(
+                "server_tags",
+                format!("[{}] (from aomi.toml)", self.app.server_tags.join(",")),
+            )
+        });
 
         // State flags start false; preflight + deploy flip them.
         state.state = StateFlags::default();
@@ -218,6 +237,7 @@ Publish plan ({mode:?})
   publish_branch  : {publish_branch}
   publish_path    : {app_path}
   release_tag     : {release_tag}
+  server_tags     : {server_tags}
   stages_files    : {stages_files}
   pushes          : {pushes}
   staged_files    : {file_count}",
@@ -237,6 +257,11 @@ Publish plan ({mode:?})
             publish_branch = self.publish.publish_branch,
             app_path = self.publish.app_path,
             release_tag = self.publish.release_tag,
+            server_tags = if self.app.server_tags.is_empty() {
+                "<none>".to_string()
+            } else {
+                self.app.server_tags.join(",")
+            },
             stages_files = self.mode.stages_files(),
             pushes = self.mode.pushes(),
             file_count = self.files.len(),

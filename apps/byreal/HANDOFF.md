@@ -93,7 +93,7 @@ sizing/precision rules, error catalogue, and the build/submit contract.
   (`spot_reads_decode_cleanly`, `swap_quote_returns_unsigned_tx`,
   `copy_farming_top_performers_returns_records`). Last green run was against
   live mainnet during the build.
-- **CI.** Plugin builds via `cargo run -p xtask -- build-aomi --app byreal`.
+- **CI.** Plugin builds via `aomi-build compile --app byreal`.
   `byreal.dylib` is in both manifests with matching sha256s.
 
 Re-run smokes:

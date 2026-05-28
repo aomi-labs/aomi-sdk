@@ -31,6 +31,8 @@ pub struct DeploymentState {
     pub target: TargetSpec,
     pub state: StateFlags,
     #[serde(default)]
+    pub files: Vec<StagedFile>,
+    #[serde(default)]
     pub checks: Vec<Check>,
     #[serde(default)]
     pub errors: Vec<String>,
@@ -53,6 +55,7 @@ impl DeploymentState {
             platform,
             target,
             state: StateFlags::default(),
+            files: Vec::new(),
             checks: Vec::new(),
             errors: Vec::new(),
             updated_at: now_seconds(),
@@ -95,6 +98,16 @@ pub struct TargetSpec {
     pub app_path: String,
     /// The release tag this deploy will create (`apps-{name}-{shortcommit}`).
     pub release_tag: String,
+    /// Required backend server tags for activation/load targeting.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub server_tags: Vec<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
+pub struct StagedFile {
+    pub path: String,
+    pub sha256: String,
+    pub bytes: u64,
 }
 
 #[derive(Debug, Clone, Default, Eq, PartialEq, Deserialize, Serialize)]

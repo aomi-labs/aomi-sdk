@@ -167,7 +167,7 @@ impl GitRepo {
     }
 
     pub(crate) fn add_path(&self, path: &str) -> Result<()> {
-        self.git(["add", "-A", "--", path])?;
+        self.git(["add", "-A", "-f", "--", path])?;
         Ok(())
     }
 

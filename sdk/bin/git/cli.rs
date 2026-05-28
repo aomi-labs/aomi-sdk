@@ -112,6 +112,7 @@ impl Cli {
                                     visibility,
                                     outcome.deployment.publish.source_repo.clone(),
                                     github_token,
+                                    outcome.deployment.app.server_tags.clone(),
                                     Some(outcome.deployment.app.display_name.clone()),
                                     Some(outcome.deployment.source.commit.clone()),
                                     Some(outcome.deployment.source.tree.clone()),
@@ -269,6 +270,10 @@ pub struct ActivateArgs {
     #[arg(long)]
     pub source_digest: Option<String>,
 
+    /// Required backend server tag. Repeat for multiple tags.
+    #[arg(long = "target-tag", value_name = "TAG")]
+    pub target_tags: Vec<String>,
+
     /// Print the backend response as JSON.
     #[arg(long)]
     pub json: bool,
@@ -313,6 +318,7 @@ impl ActivateArgs {
             self.visibility,
             self.source_repo.clone(),
             github_token,
+            self.target_tags.clone(),
             self.label.clone(),
             self.source_commit.clone(),
             self.source_tree.clone(),

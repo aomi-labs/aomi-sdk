@@ -3,9 +3,7 @@ members = [
     "sdk",
     "sdk/examples/hello-app",
     "sdk/examples/app-template-http",
-    "xtask",
     "ext",
-    "aomi-build",
 ]
 exclude = [
     "apps/across",

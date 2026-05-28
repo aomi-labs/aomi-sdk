@@ -3,6 +3,15 @@ name: CI
 on:
   pull_request:
     branches: [main, publish]
+  push:
+    branches: [main, publish]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -51,7 +60,11 @@ jobs:
         id: changed-apps
         run: |
           BASE_SHA="${{ github.event.pull_request.base.sha || github.event.before }}"
-          changed=$(git diff --name-only "$BASE_SHA" HEAD -- 'apps/*/src/**' 'apps/*/Cargo.toml' \
+          changed=$(git diff --name-only "$BASE_SHA" HEAD -- \
+            'apps/*/Cargo.toml' \
+            'apps/*/build.rs' \
+            'apps/*/src/**' \
+            'apps/*/tests/**' \
             | sed -n 's|^apps/\([^/]*\)/.*|\1|p' | sort -u | tr '\n' ' ')
           echo "apps=$changed" >> "$GITHUB_OUTPUT"
           echo "Changed apps: $changed"
@@ -66,10 +79,19 @@ jobs:
             echo "::group::$app_name"
             cargo fmt --manifest-path "$manifest" -- --check || failed=1
             cargo clippy --manifest-path "$manifest" --lib -- -Dwarnings || failed=1
-            cargo test --manifest-path "$manifest" --no-run 2>/dev/null || true
+            cargo test --manifest-path "$manifest" --no-run || failed=1
             echo "::endgroup::"
           done
           exit $failed
 
+      - name: Build CLI binaries (aomi-git, aomi-build)
+        run: cargo build -p aomi-sdk --features cli --bins
+
+      - name: Test CLI binaries
+        run: cargo test -p aomi-sdk --features cli --bins
+
+      - name: Build local runtime binary (aomi-run)
+        run: cargo build -p aomi-sdk --features dev-runtime --bin aomi-run
+
       - name: Build all plugins
-        run: cargo xtask build-aomi
+        run: cargo run -p aomi-sdk --features cli --bin aomi-build -- compile

@@ -23,6 +23,11 @@ struct ListResponse {
     platforms: Vec<RemotePlatform>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ServerTagsResponse {
+    server_tags: Vec<String>,
+}
+
 /// Fetch the registered platforms from the backend's public control endpoint.
 pub async fn fetch_platforms(backend_url: &str) -> Result<Vec<RemotePlatform>> {
     let base = backend_url.trim().trim_end_matches('/');
@@ -42,6 +47,27 @@ pub async fn fetch_platforms(backend_url: &str) -> Result<Vec<RemotePlatform>> {
         .await
         .with_context(|| format!("failed to parse {url} response"))?;
     Ok(parsed.platforms)
+}
+
+/// Fetch the current backend instance's server tags from the public control endpoint.
+pub async fn fetch_server_tags(backend_url: &str) -> Result<Vec<String>> {
+    let base = backend_url.trim().trim_end_matches('/');
+    let url = format!("{base}/api/control/server-tags");
+    let response = reqwest::Client::new()
+        .get(&url)
+        .send()
+        .await
+        .with_context(|| format!("failed to GET {url}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        anyhow::bail!("GET {url} returned {status}: {}", body.trim());
+    }
+    let parsed: ServerTagsResponse = response
+        .json()
+        .await
+        .with_context(|| format!("failed to parse {url} response"))?;
+    Ok(normalize_tags(parsed.server_tags))
 }
 
 /// Augment a deployment state with online preflight results. Mutates `state`
@@ -138,8 +164,53 @@ pub async fn run(state: &mut DeploymentState, backend_url: &str) -> Result<()> {
         }
     }
 
+    if !state.target.server_tags.is_empty() {
+        match fetch_server_tags(backend_url).await {
+            Ok(server_tags) => {
+                let requested = normalize_tags(state.target.server_tags.clone());
+                let matches = requested.iter().all(|tag| server_tags.contains(tag));
+                state.checks.push(if matches {
+                    Check::pass(
+                        "server_tags_match",
+                        format!(
+                            "target [{}] subset of server [{}]",
+                            requested.join(","),
+                            server_tags.join(",")
+                        ),
+                    )
+                } else {
+                    let detail = format!(
+                        "target [{}] is not a subset of server [{}]",
+                        requested.join(","),
+                        server_tags.join(",")
+                    );
+                    state.errors.push(detail.clone());
+                    Check::fail("server_tags_match", detail)
+                });
+            }
+            Err(e) => {
+                let detail = format!("GET /api/control/server-tags failed: {e}");
+                state.errors.push(detail.clone());
+                state.checks.push(Check::fail("server_tags_match", detail));
+            }
+        }
+    }
+
     state.touch();
     Ok(())
+}
+
+fn normalize_tags(values: Vec<String>) -> Vec<String> {
+    values
+        .into_iter()
+        .map(|tag| tag.trim().to_ascii_lowercase())
+        .filter(|tag| !tag.is_empty())
+        .fold(Vec::new(), |mut acc, tag| {
+            if !acc.contains(&tag) {
+                acc.push(tag);
+            }
+            acc
+        })
 }
 
 fn normalize_github_url(value: &str) -> String {
@@ -161,4 +232,22 @@ fn normalize_github_url(value: &str) -> String {
         }
     }
     repo.to_ascii_lowercase()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_tags_trims_lowercases_and_deduplicates() {
+        assert_eq!(
+            normalize_tags(vec![
+                " Prod ".to_string(),
+                "platform-x".to_string(),
+                "prod".to_string(),
+                String::new(),
+            ]),
+            vec!["prod", "platform-x"]
+        );
+    }
 }

@@ -70,6 +70,7 @@ impl ActivationPlan {
         visibility: Visibility,
         source_repo: String,
         github_token: Option<String>,
+        target_tags: Vec<String>,
         label: Option<String>,
         source_commit: Option<String>,
         source_tree: Option<String>,
@@ -107,6 +108,7 @@ impl ActivationPlan {
                 "short_commit": short_commit,
             }),
             github_token: github_token.and_then(non_empty),
+            target_tags: normalize_tags(target_tags)?,
         };
 
         Ok(Self {
@@ -170,6 +172,10 @@ pub struct ActivateAppRequest {
     pub is_active: bool,
     pub is_public: bool,
     pub metadata: Value,
+    /// Required backend server tags. The backend loads only when these tags are
+    /// a subset of its configured AOMI_SERVER_TAGS.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub target_tags: Vec<String>,
     /// Per ADR 0009 amended: transient GitHub read token resolved from
     /// `aomi.toml[app].access_token` (an env-var reference). Sent once, used
     /// once by the backend, never persisted. Skipped in serialization when
@@ -185,4 +191,24 @@ fn non_empty(value: String) -> Option<String> {
     } else {
         Some(trimmed.to_string())
     }
+}
+
+fn normalize_tags(values: Vec<String>) -> Result<Vec<String>> {
+    let mut tags = Vec::new();
+    for raw in values {
+        let tag = raw.trim().to_ascii_lowercase();
+        if tag.is_empty() {
+            continue;
+        }
+        if !tag
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+        {
+            bail!("target tag `{raw}` contains unsupported characters");
+        }
+        if !tags.contains(&tag) {
+            tags.push(tag);
+        }
+    }
+    Ok(tags)
 }
