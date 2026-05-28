@@ -683,6 +683,7 @@ fn git_transport_commits_without_push() {
         "git@github.com:aomi-labs/community-apps.git",
     );
     source.write("apps/zora/src/lib.rs", "pub fn marker() {}\n");
+    source.write("apps/zora/.gitignore", "/.aomi/\n");
     source.commit("initial app");
 
     let platform = TestRepo::new();
@@ -705,11 +706,8 @@ fn git_transport_commits_without_push() {
     assert!(outcome.commit.is_some());
     assert!(!outcome.pushed);
     assert!(platform.path("apps/zora/aomi.toml").is_file());
-    assert!(
-        platform
-            .path("apps/zora/.aomi/deployment.json")
-            .is_file()
-    );
+    assert!(platform.path("apps/zora/.gitignore").is_file());
+    assert!(platform.path("apps/zora/.aomi/deployment.json").is_file());
 
     let message = test_git_output(platform.root(), ["log", "-1", "--pretty=%B"]);
     assert!(message.contains("zora"));

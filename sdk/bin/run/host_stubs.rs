@@ -78,19 +78,67 @@ impl Tool for StubTool {
 const STUB_REGISTRY: &[(&str, &str, &str)] = &[
     // evm-core: wallet + EVM read/write primitives.
     ("evm-core", "brave_search", "(stub) Web search via Brave."),
-    ("evm-core", "commit_tx", "(stub) Submit a single EVM transaction for user signing."),
-    ("evm-core", "commit_txs", "(stub) Submit a batch of EVM transactions for user signing."),
-    ("evm-core", "commit_eip712", "(stub) Request an EIP-712 typed-data signature."),
-    ("evm-core", "stage_tx", "(stub) Stage an unsigned EVM transaction for later commit."),
-    ("evm-core", "simulate_batch", "(stub) Simulate a staged batch."),
-    ("evm-core", "view_state", "(stub) Inspect the agent's user state."),
-    ("evm-core", "run_tx", "(stub) Execute a transaction end-to-end."),
-    ("evm-core", "get_time_and_onchain_context", "(stub) Current block time + chain context."),
-    ("evm-core", "get_contract", "(stub) Fetch a verified contract by address."),
-    ("evm-core", "get_account_info", "(stub) Read EVM account balance + nonce."),
-    ("evm-core", "sync_chain", "(stub) Switch the active EVM chain."),
+    (
+        "evm-core",
+        "commit_tx",
+        "(stub) Submit a single EVM transaction for user signing.",
+    ),
+    (
+        "evm-core",
+        "commit_txs",
+        "(stub) Submit a batch of EVM transactions for user signing.",
+    ),
+    (
+        "evm-core",
+        "commit_eip712",
+        "(stub) Request an EIP-712 typed-data signature.",
+    ),
+    (
+        "evm-core",
+        "stage_tx",
+        "(stub) Stage an unsigned EVM transaction for later commit.",
+    ),
+    (
+        "evm-core",
+        "simulate_batch",
+        "(stub) Simulate a staged batch.",
+    ),
+    (
+        "evm-core",
+        "view_state",
+        "(stub) Inspect the agent's user state.",
+    ),
+    (
+        "evm-core",
+        "run_tx",
+        "(stub) Execute a transaction end-to-end.",
+    ),
+    (
+        "evm-core",
+        "get_time_and_onchain_context",
+        "(stub) Current block time + chain context.",
+    ),
+    (
+        "evm-core",
+        "get_contract",
+        "(stub) Fetch a verified contract by address.",
+    ),
+    (
+        "evm-core",
+        "get_account_info",
+        "(stub) Read EVM account balance + nonce.",
+    ),
+    (
+        "evm-core",
+        "sync_chain",
+        "(stub) Switch the active EVM chain.",
+    ),
     // solana-core: SVM signing primitive.
-    ("solana-core", "sign_tx_solana", "(stub) Sign a base64 Solana transaction via the host wallet."),
+    (
+        "solana-core",
+        "sign_tx_solana",
+        "(stub) Sign a base64 Solana transaction via the host wallet.",
+    ),
 ];
 
 /// Build stub tools for every recognised namespace in `requested`.
