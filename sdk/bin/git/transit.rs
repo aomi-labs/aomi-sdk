@@ -11,7 +11,7 @@
 //! transparently uses a different clone instead of silently pushing to the
 //! wrong place.
 //!
-//! `resolve_transit_clone` is idempotent: it clones on first call and runs
+//! `TransitCache::resolve` is idempotent: it clones on first call and runs
 //! `fetch` + force-reset on subsequent calls. The escape hatch
 //! (`--platform-dir <DIR>`) bypasses this module entirely; users who want to
 //! hand-manage their clone still can.
@@ -21,146 +21,151 @@ use std::process::Command;
 
 use anyhow::{Context, Result, anyhow, bail};
 
-use crate::preflight::normalize_github_url;
+use crate::platform::normalize_github_repo;
 
 const TRANSIT_DIR: &str = "transit";
 
-/// Resolve (and lazily refresh) a managed clone of `platform_git` at
-/// `target_branch`. Returns the path to the clone — ready for the existing
-/// stage code to write into.
-///
-/// Accepts any input `normalize_github_url` accepts: full HTTPS URL,
-/// SSH URL, or bare `owner/repo`.
-pub(crate) fn resolve_transit_clone(platform_git: &str, target_branch: &str) -> Result<PathBuf> {
-    let owner_repo = normalize_github_url(platform_git);
-    if owner_repo.is_empty() || !owner_repo.contains('/') {
-        bail!(
-            "platform git URL `{platform_git}` does not look like a GitHub owner/repo \
-             (expected `owner/name`, `https://github.com/owner/name`, or `git@github.com:owner/name.git`)"
-        );
+pub(crate) struct TransitCache {
+    root: PathBuf,
+}
+
+impl TransitCache {
+    /// `$AOMI_HOME/transit/`, defaulting to `$HOME/.aomi/transit/`.
+    ///
+    /// Tests can override by setting `AOMI_HOME`.
+    pub(crate) fn load() -> Result<Self> {
+        let aomi_home = match std::env::var_os("AOMI_HOME") {
+            Some(v) if !v.is_empty() => PathBuf::from(v),
+            _ => {
+                let home = std::env::var_os("HOME")
+                    .filter(|v| !v.is_empty())
+                    .ok_or_else(|| {
+                        anyhow!("neither AOMI_HOME nor HOME is set — cannot locate transit cache")
+                    })?;
+                PathBuf::from(home).join(".aomi")
+            }
+        };
+        Ok(Self {
+            root: aomi_home.join(TRANSIT_DIR),
+        })
     }
 
-    let cache_root = transit_cache_root()?;
-    let key = owner_repo.replace('/', "-");
-    let clone_path = cache_root.join(&key);
-
-    if clone_path.join(".git").is_dir() {
-        refresh_existing(&clone_path, target_branch).with_context(|| {
+    /// Resolve and lazily refresh a managed clone of `platform_git` at `branch`.
+    /// Returns the clone path ready for the existing stage code to write into.
+    pub(crate) fn resolve(&self, platform_git: &str, branch: &str) -> Result<PathBuf> {
+        let owner_repo = normalize_github_repo(platform_git).with_context(|| {
             format!(
-                "failed to refresh transit clone at {} — delete it and retry to re-clone",
-                clone_path.display()
+                "platform git URL `{platform_git}` does not look like a GitHub owner/repo \
+                 (expected `owner/name`, `https://github.com/owner/name`, or `git@github.com:owner/name.git`)"
             )
         })?;
-    } else {
-        if clone_path.exists() {
+        let clone_path = self.root.join(owner_repo.replace('/', "-"));
+
+        if clone_path.join(".git").is_dir() {
+            self.refresh(&clone_path, branch).with_context(|| {
+                format!(
+                    "failed to refresh transit clone at {} — delete it and retry to re-clone",
+                    clone_path.display()
+                )
+            })?;
+        } else {
+            if clone_path.exists() {
+                bail!(
+                    "{} exists but is not a git clone — refusing to touch it. Delete it and retry.",
+                    clone_path.display()
+                );
+            }
+            std::fs::create_dir_all(&self.root)
+                .with_context(|| format!("failed to create {}", self.root.display()))?;
+            self.clone_repo(
+                &format!("https://github.com/{owner_repo}.git"),
+                branch,
+                &clone_path,
+            )?;
+        }
+
+        Ok(clone_path)
+    }
+
+    fn clone_repo(&self, url: &str, branch: &str, dest: &Path) -> Result<()> {
+        let status = Command::new("git")
+            .args([
+                "clone",
+                "--quiet",
+                "--branch",
+                branch,
+                "--single-branch",
+                url,
+            ])
+            .arg(dest)
+            .status()
+            .context("failed to invoke `git clone` — is git installed and on PATH?")?;
+        if !status.success() {
             bail!(
-                "{} exists but is not a git clone — refusing to touch it. Delete it and retry.",
-                clone_path.display()
+                "`git clone {url}` exited {} — check your auth (try `gh auth login`) and that the repo + branch exist",
+                status
+                    .code()
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "?".to_string())
             );
         }
-        std::fs::create_dir_all(&cache_root)
-            .with_context(|| format!("failed to create {}", cache_root.display()))?;
-        let url = https_url(&owner_repo);
-        fresh_clone(&url, target_branch, &clone_path)?;
+        Ok(())
     }
 
-    Ok(clone_path)
-}
-
-/// `$AOMI_HOME/transit/`, defaulting to `$HOME/.aomi/transit/`.
-///
-/// Tests can override by setting `AOMI_HOME`.
-fn transit_cache_root() -> Result<PathBuf> {
-    let aomi_home = match std::env::var_os("AOMI_HOME") {
-        Some(v) if !v.is_empty() => PathBuf::from(v),
-        _ => {
-            let home = std::env::var_os("HOME")
-                .filter(|v| !v.is_empty())
-                .ok_or_else(|| {
-                    anyhow!("neither AOMI_HOME nor HOME is set — cannot locate transit cache")
-                })?;
-            PathBuf::from(home).join(".aomi")
+    fn refresh(&self, clone_path: &Path, branch: &str) -> Result<()> {
+        let status = Command::new("git")
+            .current_dir(clone_path)
+            .args(["fetch", "--quiet", "--prune", "origin"])
+            .status()
+            .context("failed to invoke `git fetch`")?;
+        if !status.success() {
+            bail!(
+                "`git fetch` in transit clone exited {}",
+                status
+                    .code()
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "?".to_string())
+            );
         }
-    };
-    Ok(aomi_home.join(TRANSIT_DIR))
-}
 
-fn https_url(owner_repo: &str) -> String {
-    format!("https://github.com/{owner_repo}.git")
-}
+        let status = Command::new("git")
+            .current_dir(clone_path)
+            .args([
+                "checkout",
+                "--quiet",
+                "-B",
+                branch,
+                &format!("origin/{branch}"),
+            ])
+            .status()
+            .context("failed to invoke `git checkout`")?;
+        if !status.success() {
+            bail!(
+                "`git checkout -B {branch} origin/{branch}` exited {} — does that branch exist upstream?",
+                status
+                    .code()
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "?".to_string())
+            );
+        }
 
-fn fresh_clone(url: &str, branch: &str, dest: &Path) -> Result<()> {
-    let status = Command::new("git")
-        .args([
-            "clone",
-            "--quiet",
-            "--branch",
-            branch,
-            "--single-branch",
-            url,
-        ])
-        .arg(dest)
-        .status()
-        .context("failed to invoke `git clone` — is git installed and on PATH?")?;
-    if !status.success() {
-        bail!(
-            "`git clone {url}` exited {} — check your auth (try `gh auth login`) and that the repo + branch exist",
-            status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".to_string())
-        );
+        let status = Command::new("git")
+            .current_dir(clone_path)
+            .args(["clean", "--quiet", "-fd"])
+            .status()
+            .context("failed to invoke `git clean`")?;
+        if !status.success() {
+            bail!(
+                "`git clean -fd` exited {}",
+                status
+                    .code()
+                    .map(|c| c.to_string())
+                    .unwrap_or_else(|| "?".to_string())
+            );
+        }
+
+        Ok(())
     }
-    Ok(())
-}
-
-fn refresh_existing(clone_path: &Path, branch: &str) -> Result<()> {
-    // `git fetch` — pick up new commits + delete stale refs.
-    let status = Command::new("git")
-        .current_dir(clone_path)
-        .args(["fetch", "--quiet", "--prune", "origin"])
-        .status()
-        .context("failed to invoke `git fetch`")?;
-    if !status.success() {
-        bail!(
-            "`git fetch` in transit clone exited {}",
-            status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".to_string())
-        );
-    }
-
-    // Force-flip local branch to the upstream tip. -B both creates and resets,
-    // so this works regardless of whether the branch exists locally or what
-    // commit it's currently at.
-    let status = Command::new("git")
-        .current_dir(clone_path)
-        .args([
-            "checkout",
-            "--quiet",
-            "-B",
-            branch,
-            &format!("origin/{branch}"),
-        ])
-        .status()
-        .context("failed to invoke `git checkout`")?;
-    if !status.success() {
-        bail!(
-            "`git checkout -B {branch} origin/{branch}` exited {} — does that branch exist upstream?",
-            status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".to_string())
-        );
-    }
-
-    // Wipe any untracked debris from prior runs. Don't pass -x: that would
-    // nuke .git/config and credential caches.
-    let status = Command::new("git")
-        .current_dir(clone_path)
-        .args(["clean", "--quiet", "-fd"])
-        .status()
-        .context("failed to invoke `git clean`")?;
-    if !status.success() {
-        bail!(
-            "`git clean -fd` exited {}",
-            status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".to_string())
-        );
-    }
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -168,16 +173,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn https_url_round_trip() {
-        assert_eq!(
-            https_url("aomi-labs/community-apps"),
-            "https://github.com/aomi-labs/community-apps.git"
-        );
-    }
-
-    #[test]
     fn resolve_rejects_input_without_slash() {
-        let err = resolve_transit_clone("not-a-repo", "publish")
+        let cache = TransitCache {
+            root: PathBuf::from("/tmp/aomi-transit-test"),
+        };
+        let err = cache
+            .resolve("not-a-repo", "publish")
             .expect_err("input without a / must be rejected");
         assert!(err.to_string().contains("owner/repo"), "{err}");
     }

@@ -44,10 +44,13 @@ use clap::{Args, Parser, Subcommand};
 
 use crate::activate::{ACTIVATION_TOKEN_ENV, ActivationPlan, BACKEND_URL_ENV, Visibility};
 use crate::app::App;
-use crate::deployment_state::{read as read_deployment_state, write as write_deployment_state};
+use crate::deployment_state::{
+    DeploymentState, read as read_deployment_state, write as write_deployment_state,
+};
+use crate::git::GitRepo;
 use crate::plan::Deployment;
-use crate::platform::Platform;
-use crate::transit::resolve_transit_clone;
+use crate::platform::{Platform, normalize_github_repo};
+use crate::transit::TransitCache;
 
 #[derive(Debug, Parser)]
 #[command(name = "aomi-git")]
@@ -122,7 +125,10 @@ pub struct DeployArgs {
 
 impl DeployArgs {
     async fn run(self) -> Result<()> {
-        let platform = self.resolve_platform()?;
+        let app = GitRepo::discover(&self.path)
+            .and_then(|repo| App::discover(&repo))
+            .ok();
+        let platform = self.resolve_platform(app.as_ref());
 
         if self.dry_run {
             let deployment = Deployment::dry_run(&self.path, platform.clone(), self.allow_dirty)?;
@@ -131,12 +137,10 @@ impl DeployArgs {
             // Preflight is no longer a separate flag — dry-run always tries
             // online checks if a backend URL is available. Offline still
             // produces a useful plan, just without backend-derived fields.
-            if let Some(backend_url) = self.backend_url() {
-                if let Err(e) = crate::preflight::run(&mut state, &backend_url).await {
-                    state
-                        .errors
-                        .push(format!("backend preflight skipped: {e}"));
-                }
+            if let Some(backend_url) = self.backend_url()
+                && let Err(e) = crate::preflight::run(&mut state, &backend_url).await
+            {
+                state.errors.push(format!("backend preflight skipped: {e}"));
             }
 
             let state_path = write_deployment_state(&deployment.source.git_root, &state)?;
@@ -144,6 +148,7 @@ impl DeployArgs {
                 println!("{}", serde_json::to_string_pretty(&state)?);
             } else {
                 println!("{}", deployment.render());
+                print!("{}", state.render_preflight());
                 println!("  deployment_state    : {}", state_path.display());
             }
             return Ok(());
@@ -151,7 +156,7 @@ impl DeployArgs {
 
         // Live deploy. Resolve the local clone path: either the user's
         // escape-hatch dir or the managed transit cache.
-        let clone_path = self.resolve_clone_path(&platform).await?;
+        let clone_path = self.resolve_clone_path(&platform, app.as_ref()).await?;
 
         let outcome = Deployment::git_transport(&self.path, platform.clone(), &clone_path, true)?;
 
@@ -218,17 +223,18 @@ impl DeployArgs {
         Ok(())
     }
 
-    fn resolve_platform(&self) -> Result<Platform> {
+    fn resolve_platform(&self, app: Option<&App>) -> Platform {
         if let Some(p) = self.platform.clone() {
-            return Ok(p);
+            return p;
         }
-        // Read aomi.toml's [app].platform if present.
-        if let Ok(app) = App::load(&self.path) {
-            if let Some(name) = app.platform.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-                return Ok(Platform::new(name));
-            }
+        if let Some(name) = app
+            .and_then(|a| a.platform.as_deref())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            return Platform::new(name);
         }
-        Ok(Platform::community())
+        Platform::community()
     }
 
     fn backend_url(&self) -> Option<String> {
@@ -240,36 +246,37 @@ impl DeployArgs {
 
     /// Resolve the local clone path: explicit `--platform-dir` if set,
     /// otherwise initialize/refresh the managed transit cache.
-    async fn resolve_clone_path(&self, platform: &Platform) -> Result<PathBuf> {
+    async fn resolve_clone_path(&self, platform: &Platform, app: Option<&App>) -> Result<PathBuf> {
         if let Some(dir) = &self.platform_dir {
             return Ok(dir.clone());
         }
 
         // Need a platform git URL to clone. Order: --git flag → aomi.toml
         // [app].git → backend lookup.
-        let git_url = self.resolve_platform_git(platform).await?;
+        let git_url = self.resolve_platform_git(platform, app).await?;
 
         // Need the target branch. Use aomi.toml's [app].branch if present,
         // else default to "publish" (matches today's behavior and the
         // platforms.deployment_branch we observe in CI).
-        let branch = App::load(&self.path)
-            .ok()
+        let branch = app
             .and_then(|a| a.branch.clone())
             .unwrap_or_else(|| "publish".to_string());
 
-        resolve_transit_clone(&git_url, &branch).with_context(|| {
+        TransitCache::load()?.resolve(&git_url, &branch).with_context(|| {
             "could not initialize transit clone — pass --platform-dir <DIR> to use a hand-managed clone"
         })
     }
 
-    async fn resolve_platform_git(&self, platform: &Platform) -> Result<String> {
+    async fn resolve_platform_git(&self, platform: &Platform, app: Option<&App>) -> Result<String> {
         if let Some(g) = self.git.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
             return Ok(g.to_string());
         }
-        if let Ok(app) = App::load(&self.path) {
-            if let Some(g) = app.git.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-                return Ok(g.to_string());
-            }
+        if let Some(g) = app
+            .and_then(|a| a.git.as_deref())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            return Ok(g.to_string());
         }
         let backend_url = self.backend_url().ok_or_else(|| {
             anyhow!(
@@ -296,9 +303,8 @@ pub struct ActivateArgs {
     #[arg(long, value_name = "NAME")]
     pub platform: Option<Platform>,
 
-    /// Platform repo location — the `source_repo` recorded on the application
-    /// row. Falls back to deployment.json's publish.source_repo, then to a
-    /// backend lookup keyed on `--platform`.
+    /// Platform repo location. Falls back to deployment.json's app.git, then
+    /// to a backend lookup keyed on `--platform`.
     #[arg(long, value_name = "URL|owner/repo")]
     pub git: Option<String>,
 
@@ -404,68 +410,12 @@ impl ActivateArgs {
             })
             .unwrap_or_else(Platform::community);
 
-        let backend_url = self
-            .backend
-            .clone()
-            .or_else(|| std::env::var(BACKEND_URL_ENV).ok())
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| {
-                anyhow!("backend URL is required via --backend or {BACKEND_URL_ENV}")
-            })?;
-
-        let activation_token = self
-            .activation_token
-            .clone()
-            .or_else(|| std::env::var(ACTIVATION_TOKEN_ENV).ok())
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| {
-                anyhow!(
-                    "activation token is required via --activation-token or {ACTIVATION_TOKEN_ENV}"
-                )
-            })?;
-
-        // --git or deployment.json's publish.source_repo or backend lookup.
-        let source_repo = match self
-            .git
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            Some(g) => crate::preflight::normalize_github_url(g),
-            None => match fallback
-                .as_ref()
-                .map(|s| s.app.git.as_deref().unwrap_or_default())
-                .filter(|s| !s.is_empty())
-            {
-                Some(g) => crate::preflight::normalize_github_url(g),
-                None => crate::preflight::lookup_platform_git(&backend_url, &platform).await?,
-            },
-        };
-
-        // --access-token: accepts `$ENV_NAME` reference (matching toml) or
-        // a raw token value. Falls back to deployment.json's app.access_token
-        // (which is always a `$ENV_NAME` reference if present, per the
-        // literal-token rejection at deploy parse time).
-        let raw_ref = self
-            .access_token
-            .clone()
-            .or_else(|| {
-                fallback
-                    .as_ref()
-                    .and_then(|s| s.app.access_token.clone())
-            });
-        let github_token = match raw_ref {
-            Some(s) if s.starts_with('$') => {
-                let env_name = &s[1..];
-                match std::env::var(env_name) {
-                    Ok(v) if !v.is_empty() => Some(v),
-                    Ok(_) => bail!("env var `{env_name}` (from --access-token) is empty"),
-                    Err(_) => bail!("env var `{env_name}` (from --access-token) is not set"),
-                }
-            }
-            Some(s) if !s.is_empty() => Some(s),
-            _ => None,
-        };
+        let backend_url = self.backend_url()?;
+        let activation_token = self.activation_token()?;
+        let source_repo = self
+            .source_repo(fallback.as_ref(), &platform, &backend_url)
+            .await?;
+        let github_token = self.github_token(fallback.as_ref())?;
 
         let display_name = self
             .display_name
@@ -499,5 +449,66 @@ impl ActivateArgs {
             source_tree,
             source_digest,
         )
+    }
+
+    fn backend_url(&self) -> Result<String> {
+        self.backend
+            .clone()
+            .or_else(|| std::env::var(BACKEND_URL_ENV).ok())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow!("backend URL is required via --backend or {BACKEND_URL_ENV}"))
+    }
+
+    fn activation_token(&self) -> Result<String> {
+        self.activation_token
+            .clone()
+            .or_else(|| std::env::var(ACTIVATION_TOKEN_ENV).ok())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                anyhow!(
+                    "activation token is required via --activation-token or {ACTIVATION_TOKEN_ENV}"
+                )
+            })
+    }
+
+    async fn source_repo(
+        &self,
+        fallback: Option<&DeploymentState>,
+        platform: &Platform,
+        backend_url: &str,
+    ) -> Result<String> {
+        if let Some(git) = self.git.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+            return normalize_github_repo(git);
+        }
+        if let Some(git) = fallback
+            .and_then(|s| s.app.git.as_deref())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+        {
+            return normalize_github_repo(git);
+        }
+        crate::preflight::lookup_platform_git(backend_url, platform).await
+    }
+
+    fn github_token(&self, fallback: Option<&DeploymentState>) -> Result<Option<String>> {
+        let Some(value) = self
+            .access_token
+            .clone()
+            .or_else(|| fallback.and_then(|s| s.app.access_token.clone()))
+        else {
+            return Ok(None);
+        };
+        let value = value.trim();
+        if value.is_empty() {
+            return Ok(None);
+        }
+        let Some(env_name) = value.strip_prefix('$') else {
+            return Ok(Some(value.to_string()));
+        };
+        match std::env::var(env_name) {
+            Ok(v) if !v.is_empty() => Ok(Some(v)),
+            Ok(_) => bail!("env var `{env_name}` (from --access-token) is empty"),
+            Err(_) => bail!("env var `{env_name}` (from --access-token) is not set"),
+        }
     }
 }

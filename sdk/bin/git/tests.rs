@@ -7,7 +7,9 @@ use tempfile::TempDir;
 
 use crate::activate::{ActivationPlan, Visibility};
 use crate::cli::{Cli, Command as CliCommand};
-use crate::deployment_state::{DeploymentState, deployment_path, read as read_deployment_state};
+use crate::deployment_state::{
+    DeploymentState, StageId, deployment_path, read as read_deployment_state,
+};
 use crate::plan::{Deployment, Mode};
 use crate::platform::Platform;
 
@@ -260,9 +262,16 @@ async fn activate_falls_back_to_deployment_json_when_flags_omitted() {
         panic!("expected activate");
     };
 
-    let plan = args.plan().await.expect("plan resolves from deployment.json");
+    let plan = args
+        .plan()
+        .await
+        .expect("plan resolves from deployment.json");
     // release_tag pulled from deployment.json's target.release_tag.
-    assert!(plan.request.app_release_tag.starts_with("apps-fallback-bot-"));
+    assert!(
+        plan.request
+            .app_release_tag
+            .starts_with("apps-fallback-bot-")
+    );
     // git pulled from deployment.json's app.git → normalized owner/repo.
     assert_eq!(plan.request.source_repo, "aomi-labs/community-apps");
     // platform pulled from deployment.json's app.platform.
@@ -308,7 +317,10 @@ async fn activate_release_tag_flag_overrides_deployment_json() {
 
     let plan = args.plan().await.expect("plan");
     // CLI positional wins over deployment.json's target.release_tag.
-    assert_eq!(plan.request.app_release_tag, "apps-override-bot-deadbeef0123");
+    assert_eq!(
+        plan.request.app_release_tag,
+        "apps-override-bot-deadbeef0123"
+    );
 }
 
 #[tokio::test]
@@ -342,7 +354,10 @@ async fn activate_without_release_tag_and_without_deployment_json_errors_clearly
         panic!("expected activate");
     };
 
-    let err = args.plan().await.expect_err("missing release tag should error");
+    let err = args
+        .plan()
+        .await
+        .expect_err("missing release tag should error");
     let msg = err.to_string();
     assert!(
         msg.contains("release tag") && msg.contains("deployment.json"),
@@ -528,7 +543,7 @@ name = "lonely-app"
 #[test]
 fn server_tags_default_to_staging_when_aomi_toml_omits_them() {
     // Missing field → defaulted to ["staging"] and surfaced in deployment.json
-    // checks so an operator can see at a glance that the deploy is staging-only.
+    // resolved facts so an operator can see that the deploy is staging-only.
     let repo = TestRepo::new();
     repo.write(
         "aomi.toml",
@@ -549,17 +564,16 @@ git = "https://github.com/aomi-labs/community-apps"
 
     let state = deployment.to_state();
     assert_eq!(state.target.server_tags, vec!["staging"]);
-    let server_tags_check = state
-        .checks
+    let manifest = state
+        .stages
         .iter()
-        .find(|c| c.name == "server_tags")
-        .expect("plan should record a server_tags check");
-    assert!(server_tags_check.passed);
-    let detail = server_tags_check.detail.as_deref().unwrap_or("");
-    assert!(
-        detail.contains("defaulted") && detail.contains("staging"),
-        "default should be visible in the check detail: {detail}"
+        .find(|stage| stage.stage == StageId::Manifest)
+        .expect("manifest stage");
+    assert_eq!(
+        manifest.resolved["server_tags"],
+        serde_json::json!(["staging"])
     );
+    assert_eq!(manifest.resolved["defaulted"], serde_json::json!(true));
 }
 
 #[test]
@@ -608,16 +622,16 @@ server_tags = ["Prod", "community"]
     assert_eq!(deployment.app.server_tags, vec!["prod", "community"]);
 
     let state = deployment.to_state();
-    let server_tags_check = state
-        .checks
+    let manifest = state
+        .stages
         .iter()
-        .find(|c| c.name == "server_tags")
-        .expect("plan should record a server_tags check");
-    let detail = server_tags_check.detail.as_deref().unwrap_or("");
-    assert!(
-        detail.contains("from aomi.toml") && !detail.contains("defaulted"),
-        "explicit value should not be reported as defaulted: {detail}"
+        .find(|stage| stage.stage == StageId::Manifest)
+        .expect("manifest stage");
+    assert_eq!(
+        manifest.resolved["server_tags"],
+        serde_json::json!(["prod", "community"])
     );
+    assert_eq!(manifest.resolved["defaulted"], serde_json::json!(false));
 }
 
 #[test]
@@ -665,11 +679,21 @@ server_tags = ["Prod", "community", "prod"]
     assert_eq!(state.platform.resolved_deploy_branch, None);
 
     // Offline checks recorded.
-    let names: Vec<&str> = state.checks.iter().map(|c| c.name.as_str()).collect();
+    let names: Vec<&str> = state
+        .stages
+        .iter()
+        .flat_map(|stage| stage.checks.iter().map(|check| check.name.as_str()))
+        .collect();
     assert!(names.contains(&"git_clean"));
     assert!(names.contains(&"platform_declared"));
     assert!(names.contains(&"git_declared"));
-    assert!(state.checks.iter().all(|c| c.passed));
+    assert!(
+        state
+            .stages
+            .iter()
+            .flat_map(|stage| stage.checks.iter())
+            .all(|check| check.passed)
+    );
 
     // Persist + reload.
     let path = crate::deployment_state::write(repo.root(), &state).expect("write state");

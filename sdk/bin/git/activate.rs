@@ -79,16 +79,14 @@ impl ActivationPlan {
         let (app_slug, short_commit) = parse_release_tag(release_tag)?;
         let backend_url = backend_url.trim().trim_end_matches('/').to_string();
         if backend_url.is_empty() {
-            bail!("backend URL is required via --backend-url or {BACKEND_URL_ENV}");
+            bail!("backend URL is required via --backend or {BACKEND_URL_ENV}");
         }
         if activation_token.trim().is_empty() {
             bail!("activation token is required via --activation-token or {ACTIVATION_TOKEN_ENV}");
         }
         let source_repo = source_repo.trim().to_string();
         if source_repo.is_empty() {
-            bail!(
-                "source_repo is required — pass --source-repo or ensure aomi.toml declares [app].git"
-            );
+            bail!("source_repo is required — pass --git or ensure aomi.toml declares [app].git");
         }
 
         let request = ActivateAppRequest {

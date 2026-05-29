@@ -5,8 +5,10 @@
 
 use anyhow::{Context, Result};
 use serde::Deserialize;
+use serde_json::json;
 
-use crate::deployment_state::{Check, DeploymentState};
+use crate::deployment_state::{Check, DeploymentState, Stage, StageId};
+use crate::platform::{Platform, normalize_github_repo};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RemotePlatform {
@@ -72,10 +74,7 @@ pub async fn fetch_server_tags(backend_url: &str) -> Result<Vec<String>> {
 
 /// Resolve `platform` to its GitHub repo URL via the backend registry. Used
 /// when neither `--git` nor `aomi.toml [app].git` was provided.
-pub async fn lookup_platform_git(
-    backend_url: &str,
-    platform: &crate::platform::Platform,
-) -> Result<String> {
+pub async fn lookup_platform_git(backend_url: &str, platform: &Platform) -> Result<String> {
     let platforms = fetch_platforms(backend_url).await?;
     let needle = platform.as_str().trim().to_ascii_lowercase();
     let matched = platforms
@@ -87,19 +86,21 @@ pub async fn lookup_platform_git(
                  or pass --git <URL>"
             )
         })?;
-    Ok(matched.github_repo)
+    normalize_github_repo(&matched.github_repo)
 }
 
 /// Augment a deployment state with online preflight results. Mutates `state`
-/// in place. Always extends `state.checks[]`; only sets
-/// `state.platform.resolved_deploy_branch` and `state.state.deployed` when a
-/// matching platform row was found.
+/// in place by replacing the platform/backend stages seeded by `to_state`.
 pub async fn run(state: &mut DeploymentState, backend_url: &str) -> Result<()> {
     let Some(declared) = state.app.platform.clone() else {
-        state.checks.push(Check::fail(
-            "platform_resolved",
-            "aomi.toml does not declare [app].platform",
+        state.replace_stage(Stage::new(
+            StageId::Platform,
+            vec![Check::fail(
+                "platform_resolved",
+                "aomi.toml does not declare [app].platform",
+            )],
         ));
+        state.replace_stage(Stage::skipped(StageId::Backend, "platform did not resolve"));
         state.touch();
         return Ok(());
     };
@@ -107,44 +108,50 @@ pub async fn run(state: &mut DeploymentState, backend_url: &str) -> Result<()> {
     let platforms = match fetch_platforms(backend_url).await {
         Ok(p) => p,
         Err(e) => {
-            state.checks.push(Check::fail(
-                "backend_reachable",
-                format!("GET /api/control/platforms failed: {e}"),
+            state.replace_stage(Stage::new(
+                StageId::Platform,
+                vec![Check::fail(
+                    "backend_reachable",
+                    format!("GET /api/control/platforms failed: {e}"),
+                )],
+            ));
+            state.replace_stage(Stage::skipped(
+                StageId::Backend,
+                "platform registry was unreachable",
             ));
             state.errors.push(e.to_string());
             state.touch();
             return Ok(());
         }
     };
-    state.checks.push(Check::pass(
-        "backend_reachable",
-        format!("found {} platforms", platforms.len()),
-    ));
 
+    let platform_count = platforms.len();
     let normalized = declared.trim().to_ascii_lowercase();
     let matched = platforms
         .into_iter()
         .find(|p| p.name.eq_ignore_ascii_case(&normalized));
 
     let Some(remote) = matched else {
-        state.checks.push(Check::fail(
-            "platform_resolved",
-            format!("platform `{declared}` not registered with backend"),
+        state.replace_stage(Stage::new(
+            StageId::Platform,
+            vec![Check::fail(
+                "platform_resolved",
+                format!("platform `{declared}` not registered with backend"),
+            )],
         ));
+        state.replace_stage(Stage::skipped(StageId::Backend, "platform did not resolve"));
         state.touch();
         return Ok(());
     };
 
-    // Update platform intent with remote facts.
     state.platform.resolved_deploy_branch = Some(remote.deployment_branch.clone());
-    state.checks.push(Check::pass(
+    let mut platform_checks = vec![Check::pass(
         "platform_resolved",
         format!("{} -> {}", remote.name, remote.github_repo),
-    ));
+    )];
 
-    // Compare user's chosen branch to the contractual deployment_branch.
     let on_release_branch = state.target.branch == remote.deployment_branch;
-    state.checks.push(if on_release_branch {
+    platform_checks.push(if on_release_branch {
         Check::pass(
             "branch_matches_contract",
             format!("{} == {}", state.target.branch, remote.deployment_branch),
@@ -159,37 +166,67 @@ pub async fn run(state: &mut DeploymentState, backend_url: &str) -> Result<()> {
         )
     });
 
-    // Recompute the deployed flag from the freshly resolved branch.
-    state.recompute_deployed();
-
-    // Optionally verify the user's declared git URL matches the backend's
-    // record. Mismatch isn't fatal — the user might be using a fork — but
-    // surface it as a warning check.
     if let Some(user_git) = state.app.git.as_deref() {
-        let normalized_user = normalize_github_url(user_git);
-        let normalized_remote = normalize_github_url(&remote.github_repo);
-        if normalized_user == normalized_remote {
-            state.checks.push(Check::pass(
-                "git_url_matches_platform",
-                remote.github_repo.clone(),
-            ));
-        } else {
-            state.checks.push(Check::fail(
-                "git_url_matches_platform",
-                format!(
-                    "aomi.toml git={user_git} != platform.github_repo={}",
-                    remote.github_repo
-                ),
-            ));
+        match (
+            normalize_github_repo(user_git),
+            normalize_github_repo(&remote.github_repo),
+        ) {
+            (Ok(normalized_user), Ok(normalized_remote))
+                if normalized_user == normalized_remote =>
+            {
+                platform_checks.push(Check::pass(
+                    "git_url_matches_platform",
+                    remote.github_repo.clone(),
+                ));
+            }
+            (Ok(_), Ok(_)) => {
+                platform_checks.push(Check::warn(
+                    "git_url_matches_platform",
+                    false,
+                    format!(
+                        "aomi.toml git={user_git} != platform.github_repo={}",
+                        remote.github_repo
+                    ),
+                ));
+            }
+            (Err(e), _) => {
+                platform_checks.push(Check::warn(
+                    "git_url_matches_platform",
+                    false,
+                    format!("aomi.toml git={user_git} is invalid: {e}"),
+                ));
+            }
+            (_, Err(e)) => {
+                platform_checks.push(Check::warn(
+                    "git_url_matches_platform",
+                    false,
+                    format!(
+                        "platform.github_repo={} is invalid: {e}",
+                        remote.github_repo
+                    ),
+                ));
+            }
         }
     }
 
+    state.replace_stage(
+        Stage::new(StageId::Platform, platform_checks)
+            .with_resolved("name", json!(remote.name))
+            .with_resolved("github_repo", json!(remote.github_repo))
+            .with_resolved("deployment_branch", json!(remote.deployment_branch)),
+    );
+    state.recompute_deployed();
+
+    let mut backend_checks = vec![Check::pass(
+        "backend_reachable",
+        format!("found {platform_count} platforms"),
+    )];
     if !state.target.server_tags.is_empty() {
         match fetch_server_tags(backend_url).await {
             Ok(server_tags) => {
                 let requested = normalize_tags(state.target.server_tags.clone());
                 let matches = requested.iter().all(|tag| server_tags.contains(tag));
-                state.checks.push(if matches {
+                backend_checks.push(if matches {
                     Check::pass(
                         "server_tags_match",
                         format!(
@@ -211,11 +248,12 @@ pub async fn run(state: &mut DeploymentState, backend_url: &str) -> Result<()> {
             Err(e) => {
                 let detail = format!("GET /api/control/server-tags failed: {e}");
                 state.errors.push(detail.clone());
-                state.checks.push(Check::fail("server_tags_match", detail));
+                backend_checks.push(Check::fail("server_tags_match", detail));
             }
         }
     }
 
+    state.replace_stage(Stage::new(StageId::Backend, backend_checks));
     state.touch();
     Ok(())
 }
@@ -231,27 +269,6 @@ fn normalize_tags(values: Vec<String>) -> Vec<String> {
             }
             acc
         })
-}
-
-pub(crate) fn normalize_github_url(value: &str) -> String {
-    let mut repo = value
-        .trim()
-        .trim_end_matches('/')
-        .trim_end_matches(".git")
-        .to_string();
-    for prefix in [
-        "git@github.com:",
-        "ssh://git@github.com/",
-        "https://github.com/",
-        "http://github.com/",
-        "github.com/",
-    ] {
-        if let Some(stripped) = repo.strip_prefix(prefix) {
-            repo = stripped.to_string();
-            break;
-        }
-    }
-    repo.to_ascii_lowercase()
 }
 
 #[cfg(test)]

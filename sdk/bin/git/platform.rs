@@ -169,7 +169,7 @@ pub(crate) fn commit_message(deployment: &Deployment) -> (String, String) {
     (subject, body)
 }
 
-fn normalize_github_repo(value: &str) -> Result<String> {
+pub(crate) fn normalize_github_repo(value: &str) -> Result<String> {
     let mut repo = value
         .trim()
         .trim_end_matches('/')
@@ -192,7 +192,7 @@ fn normalize_github_repo(value: &str) -> Result<String> {
             .chars()
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | '/'))
     {
-        return Ok(repo);
+        return Ok(repo.to_ascii_lowercase());
     }
     bail!("unsupported GitHub repo remote `{value}`");
 }
