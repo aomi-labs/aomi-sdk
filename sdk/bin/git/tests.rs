@@ -365,6 +365,172 @@ async fn activate_without_release_tag_and_without_deployment_json_errors_clearly
     );
 }
 
+#[tokio::test]
+async fn activate_target_tags_default_from_deployment_json_server_tags() {
+    // Happy path: contributor declared `server_tags = ["staging"]` in
+    // aomi.toml (or defaulted there), ops omits `--target-tag` on activate —
+    // target_tags should auto-fill from the build's declared intent.
+    let repo = TestRepo::new();
+    repo.write_aomi_toml(
+        "",
+        "default-target-bot",
+        "https://github.com/aomi-labs/community-apps",
+    );
+    repo.write("src/lib.rs", "pub fn marker() {}\n");
+    repo.commit("initial app");
+
+    let state = Deployment::dry_run(repo.root(), Platform::new("community"), false)
+        .expect("dry run")
+        .to_state();
+    assert_eq!(state.target.server_tags, vec!["staging"]); // sanity
+    crate::deployment_state::write(repo.root(), &state).expect("write state");
+
+    let cli = Cli::try_parse_from([
+        "aomi-git",
+        "activate",
+        "--backend",
+        "https://api.example.test",
+        "--activation-token",
+        "activation-secret",
+        "--path",
+        repo.root().to_str().unwrap(),
+    ])
+    .expect("parse activate (no --target-tag)");
+    let CliCommand::Activate(args) = cli.command else {
+        panic!("expected activate");
+    };
+
+    let plan = args
+        .plan()
+        .await
+        .expect("plan resolves target_tags from deployment.json");
+    assert_eq!(plan.request.target_tags, vec!["staging"]);
+}
+
+#[tokio::test]
+async fn activate_rejects_target_tag_widening_beyond_server_tags() {
+    // Footgun guard: build declared server_tags = ["staging"] but ops tries
+    // to activate `--target-tag prod`. Reject — operator cannot widen scope
+    // beyond the contributor's declared intent.
+    let repo = TestRepo::new();
+    repo.write_aomi_toml(
+        "",
+        "widen-bot",
+        "https://github.com/aomi-labs/community-apps",
+    );
+    repo.write("src/lib.rs", "pub fn marker() {}\n");
+    repo.commit("initial app");
+
+    let state = Deployment::dry_run(repo.root(), Platform::new("community"), false)
+        .expect("dry run")
+        .to_state();
+    crate::deployment_state::write(repo.root(), &state).expect("write state");
+
+    let cli = Cli::try_parse_from([
+        "aomi-git",
+        "activate",
+        "--backend",
+        "https://api.example.test",
+        "--activation-token",
+        "activation-secret",
+        "--target-tag",
+        "prod",
+        "--path",
+        repo.root().to_str().unwrap(),
+    ])
+    .expect("parse activate");
+    let CliCommand::Activate(args) = cli.command else {
+        panic!("expected activate");
+    };
+
+    let err = args.plan().await.expect_err("widening must be rejected");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("widen") && msg.contains("server_tags") && msg.contains("prod"),
+        "error should name the widening tag and reference server_tags: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn activate_allows_target_tag_narrowing_within_server_tags() {
+    // Build declared server_tags = ["staging", "prod"]; ops activates to just
+    // "staging" first. Subset OK — operator can narrow.
+    let repo = TestRepo::new();
+    repo.write(
+        "aomi.toml",
+        r#"
+[app]
+name = "narrow-bot"
+platform = "community"
+git = "https://github.com/aomi-labs/community-apps"
+server_tags = ["staging", "prod"]
+"#,
+    );
+    repo.write("src/lib.rs", "pub fn marker() {}\n");
+    repo.commit("initial app");
+
+    let state = Deployment::dry_run(repo.root(), Platform::new("community"), false)
+        .expect("dry run")
+        .to_state();
+    assert_eq!(state.target.server_tags, vec!["staging", "prod"]); // sanity
+    crate::deployment_state::write(repo.root(), &state).expect("write state");
+
+    let cli = Cli::try_parse_from([
+        "aomi-git",
+        "activate",
+        "--backend",
+        "https://api.example.test",
+        "--activation-token",
+        "activation-secret",
+        "--target-tag",
+        "staging",
+        "--path",
+        repo.root().to_str().unwrap(),
+    ])
+    .expect("parse activate");
+    let CliCommand::Activate(args) = cli.command else {
+        panic!("expected activate");
+    };
+
+    let plan = args.plan().await.expect("narrowing must be allowed");
+    assert_eq!(plan.request.target_tags, vec!["staging"]);
+}
+
+#[tokio::test]
+async fn activate_without_target_tags_anywhere_errors_clearly() {
+    // No --target-tag, no deployment.json — must fail with a message that
+    // points at both fixes.
+    let cli = Cli::try_parse_from([
+        "aomi-git",
+        "activate",
+        "apps-orphan-bot-deadbeef0123",
+        "--backend",
+        "https://api.example.test",
+        "--activation-token",
+        "activation-secret",
+        "--platform",
+        "community",
+        "--git",
+        "aomi-labs/community-apps",
+        "--path",
+        "/nonexistent/path/no/deployment-json/here",
+    ])
+    .expect("parse activate");
+    let CliCommand::Activate(args) = cli.command else {
+        panic!("expected activate");
+    };
+
+    let err = args
+        .plan()
+        .await
+        .expect_err("no target tags anywhere must error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("target tag") || msg.contains("server_tags"),
+        "error should point at the fix: {msg}"
+    );
+}
+
 #[test]
 fn recompute_deployed_requires_pushed_even_when_branch_matches() {
     // Regression: previously `recompute_deployed` only compared the resolved

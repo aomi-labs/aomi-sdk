@@ -219,6 +219,9 @@ impl DeployArgs {
                 "  state               : pushed={} deployed={} activated={}",
                 state.state.pushed, state.state.deployed, state.state.activated
             );
+            if outcome.pushed && !state.state.activated {
+                print_next_steps(&outcome, &state);
+            }
         }
         Ok(())
     }
@@ -416,6 +419,7 @@ impl ActivateArgs {
             .source_repo(fallback.as_ref(), &platform, &backend_url)
             .await?;
         let github_token = self.github_token(fallback.as_ref())?;
+        let target_tags = self.resolve_target_tags(fallback.as_ref())?;
 
         let display_name = self
             .display_name
@@ -443,7 +447,7 @@ impl ActivateArgs {
             self.visibility,
             source_repo,
             github_token,
-            self.target_tags.clone(),
+            target_tags,
             display_name,
             source_commit,
             source_tree,
@@ -490,6 +494,68 @@ impl ActivateArgs {
         crate::preflight::lookup_platform_git(backend_url, platform).await
     }
 
+    /// Resolve `target_tags` with two rules:
+    ///
+    /// 1. If `--target-tag` is omitted, default to deployment.json's
+    ///    `target.server_tags` (the build's declared intent). One less flag
+    ///    in the happy path.
+    /// 2. If `--target-tag` IS passed, enforce subset against the build's
+    ///    `server_tags`: operator can narrow but cannot widen. The
+    ///    contributor's intent at build time is the activation ceiling.
+    ///
+    /// Empty result is an error — activation needs at least one target tag.
+    fn resolve_target_tags(&self, fallback: Option<&DeploymentState>) -> Result<Vec<String>> {
+        let server_tags: Vec<String> = fallback
+            .map(|s| s.target.server_tags.clone())
+            .unwrap_or_default();
+
+        if self.target_tags.is_empty() {
+            if server_tags.is_empty() {
+                bail!(
+                    "no target tags supplied — pass `--target-tag <TAG>` (repeatable), \
+                     or run from a source repo whose aomi.toml [app].server_tags declares them \
+                     (and whose .aomi/deployment.json carries them)"
+                );
+            }
+            return Ok(server_tags);
+        }
+
+        // CLI flag is non-empty; enforce subset if we have a server_tags ceiling.
+        if !server_tags.is_empty() {
+            let normalized_server: Vec<String> = server_tags
+                .iter()
+                .map(|t| t.trim().to_ascii_lowercase())
+                .collect();
+            let normalized_targets: Vec<String> = self
+                .target_tags
+                .iter()
+                .map(|t| t.trim().to_ascii_lowercase())
+                .collect();
+            let widened: Vec<String> = normalized_targets
+                .iter()
+                .filter(|t| !normalized_server.contains(t))
+                .cloned()
+                .collect();
+            if !widened.is_empty() {
+                bail!(
+                    "--target-tag [{}] would widen activation beyond aomi.toml \
+                     [app].server_tags = [{}]\n\n\
+                     This release was built with intent to ship to those backends only. \
+                     The operator can narrow activation (subset OK) but cannot widen \
+                     beyond the contributor's declared intent.\n\n\
+                     To fix:\n  \
+                     - if you DO want this app on the widened scope, re-deploy from the \
+                     source repo with the desired server_tags in aomi.toml\n  \
+                     - to activate just the intended subset, drop the widening tag(s) \
+                     from --target-tag",
+                    widened.join(", "),
+                    normalized_server.join(", "),
+                );
+            }
+        }
+        Ok(self.target_tags.clone())
+    }
+
     fn github_token(&self, fallback: Option<&DeploymentState>) -> Result<Option<String>> {
         let Some(value) = self
             .access_token
@@ -511,4 +577,60 @@ impl ActivateArgs {
             Err(_) => bail!("env var `{env_name}` (from --access-token) is not set"),
         }
     }
+}
+
+/// Print a Next-steps block after a successful push, before activation has
+/// landed. Tells the contributor exactly what to watch and exactly what to
+/// run next — eliminates the "what now?" cliff that the older deploy summary
+/// dropped readers off of.
+fn print_next_steps(outcome: &crate::plan::DeployOutcome, state: &DeploymentState) {
+    let source_repo = &outcome.deployment.publish.source_repo;
+    let release_tag = &outcome.deployment.publish.release_tag;
+
+    // Pick a default backend URL for the activate suggestion that matches the
+    // build's declared server_tags — staging if [staging] (the common case),
+    // else don't guess. The contributor can override.
+    let suggested_backend = match state
+        .target
+        .server_tags
+        .iter()
+        .map(|t| t.trim().to_ascii_lowercase())
+        .collect::<Vec<_>>()
+        .as_slice()
+    {
+        tags if tags.iter().any(|t| t == "prod") => Some("https://api.aomi.dev"),
+        tags if tags.iter().any(|t| t == "staging") => Some("https://staging-api.aomi.dev"),
+        _ => None,
+    };
+
+    println!();
+    println!("Next steps:");
+    println!("  1. Watch CI build the release (~1\u{2013}3 min):");
+    println!("       https://github.com/{source_repo}/actions");
+    println!();
+    println!("  2. Once the release appears at:");
+    println!("       https://github.com/{source_repo}/releases/tag/{release_tag}");
+    println!("     it's ready to activate.");
+    println!();
+    println!("  3. Activate (from this directory \u{2014} args resolve from .aomi/deployment.json):");
+    match suggested_backend {
+        Some(backend) => {
+            println!("       AOMI_APP_ACTIVATION_TOKEN=<token> \\");
+            println!("       AOMI_BACKEND_URL={backend} \\");
+            println!("         aomi-git activate");
+        }
+        None => {
+            println!("       AOMI_APP_ACTIVATION_TOKEN=<token> \\");
+            println!("       AOMI_BACKEND_URL=<backend-url> \\");
+            println!("         aomi-git activate");
+        }
+    }
+    println!();
+    println!(
+        "     Don't have the activation token? Request activation from the platform"
+    );
+    println!(
+        "     operator (see CONTRIBUTING.md in the platform repo) with this release tag:"
+    );
+    println!("       {release_tag}");
 }
