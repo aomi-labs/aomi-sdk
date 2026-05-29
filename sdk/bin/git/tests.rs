@@ -365,6 +365,172 @@ async fn activate_without_release_tag_and_without_deployment_json_errors_clearly
     );
 }
 
+#[tokio::test]
+async fn activate_target_tags_default_from_deployment_json_server_tags() {
+    // Happy path: contributor declared `server_tags = ["staging"]` in
+    // aomi.toml (or defaulted there), ops omits `--target-tag` on activate —
+    // target_tags should auto-fill from the build's declared intent.
+    let repo = TestRepo::new();
+    repo.write_aomi_toml(
+        "",
+        "default-target-bot",
+        "https://github.com/aomi-labs/community-apps",
+    );
+    repo.write("src/lib.rs", "pub fn marker() {}\n");
+    repo.commit("initial app");
+
+    let state = Deployment::dry_run(repo.root(), Platform::new("community"), false)
+        .expect("dry run")
+        .to_state();
+    assert_eq!(state.target.server_tags, vec!["staging"]); // sanity
+    crate::deployment_state::write(repo.root(), &state).expect("write state");
+
+    let cli = Cli::try_parse_from([
+        "aomi-git",
+        "activate",
+        "--backend",
+        "https://api.example.test",
+        "--activation-token",
+        "activation-secret",
+        "--path",
+        repo.root().to_str().unwrap(),
+    ])
+    .expect("parse activate (no --target-tag)");
+    let CliCommand::Activate(args) = cli.command else {
+        panic!("expected activate");
+    };
+
+    let plan = args
+        .plan()
+        .await
+        .expect("plan resolves target_tags from deployment.json");
+    assert_eq!(plan.request.target_tags, vec!["staging"]);
+}
+
+#[tokio::test]
+async fn activate_rejects_target_tag_widening_beyond_server_tags() {
+    // Footgun guard: build declared server_tags = ["staging"] but ops tries
+    // to activate `--target-tag prod`. Reject — operator cannot widen scope
+    // beyond the contributor's declared intent.
+    let repo = TestRepo::new();
+    repo.write_aomi_toml(
+        "",
+        "widen-bot",
+        "https://github.com/aomi-labs/community-apps",
+    );
+    repo.write("src/lib.rs", "pub fn marker() {}\n");
+    repo.commit("initial app");
+
+    let state = Deployment::dry_run(repo.root(), Platform::new("community"), false)
+        .expect("dry run")
+        .to_state();
+    crate::deployment_state::write(repo.root(), &state).expect("write state");
+
+    let cli = Cli::try_parse_from([
+        "aomi-git",
+        "activate",
+        "--backend",
+        "https://api.example.test",
+        "--activation-token",
+        "activation-secret",
+        "--target-tag",
+        "prod",
+        "--path",
+        repo.root().to_str().unwrap(),
+    ])
+    .expect("parse activate");
+    let CliCommand::Activate(args) = cli.command else {
+        panic!("expected activate");
+    };
+
+    let err = args.plan().await.expect_err("widening must be rejected");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("widen") && msg.contains("server_tags") && msg.contains("prod"),
+        "error should name the widening tag and reference server_tags: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn activate_allows_target_tag_narrowing_within_server_tags() {
+    // Build declared server_tags = ["staging", "prod"]; ops activates to just
+    // "staging" first. Subset OK — operator can narrow.
+    let repo = TestRepo::new();
+    repo.write(
+        "aomi.toml",
+        r#"
+[app]
+name = "narrow-bot"
+platform = "community"
+git = "https://github.com/aomi-labs/community-apps"
+server_tags = ["staging", "prod"]
+"#,
+    );
+    repo.write("src/lib.rs", "pub fn marker() {}\n");
+    repo.commit("initial app");
+
+    let state = Deployment::dry_run(repo.root(), Platform::new("community"), false)
+        .expect("dry run")
+        .to_state();
+    assert_eq!(state.target.server_tags, vec!["staging", "prod"]); // sanity
+    crate::deployment_state::write(repo.root(), &state).expect("write state");
+
+    let cli = Cli::try_parse_from([
+        "aomi-git",
+        "activate",
+        "--backend",
+        "https://api.example.test",
+        "--activation-token",
+        "activation-secret",
+        "--target-tag",
+        "staging",
+        "--path",
+        repo.root().to_str().unwrap(),
+    ])
+    .expect("parse activate");
+    let CliCommand::Activate(args) = cli.command else {
+        panic!("expected activate");
+    };
+
+    let plan = args.plan().await.expect("narrowing must be allowed");
+    assert_eq!(plan.request.target_tags, vec!["staging"]);
+}
+
+#[tokio::test]
+async fn activate_without_target_tags_anywhere_errors_clearly() {
+    // No --target-tag, no deployment.json — must fail with a message that
+    // points at both fixes.
+    let cli = Cli::try_parse_from([
+        "aomi-git",
+        "activate",
+        "apps-orphan-bot-deadbeef0123",
+        "--backend",
+        "https://api.example.test",
+        "--activation-token",
+        "activation-secret",
+        "--platform",
+        "community",
+        "--git",
+        "aomi-labs/community-apps",
+        "--path",
+        "/nonexistent/path/no/deployment-json/here",
+    ])
+    .expect("parse activate");
+    let CliCommand::Activate(args) = cli.command else {
+        panic!("expected activate");
+    };
+
+    let err = args
+        .plan()
+        .await
+        .expect_err("no target tags anywhere must error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("target tag") || msg.contains("server_tags"),
+        "error should point at the fix: {msg}"
+    );
+}
+
 #[test]
 fn recompute_deployed_requires_pushed_even_when_branch_matches() {
     // Regression: previously `recompute_deployed` only compared the resolved
@@ -1025,6 +1191,241 @@ fn git_transport_allows_owned_dirty_platform_files() {
     assert!(outcome.commit.is_some());
     assert!(!platform.path("apps/zora/stale.txt").exists());
     assert!(platform.path("apps/zora/aomi.toml").is_file());
+}
+
+#[tokio::test]
+async fn status_errors_without_deployment_json() {
+    // `aomi-git status` in a directory that never had a deploy should fail with
+    // a message pointing at `aomi-git deploy` — and must not touch the network.
+    let repo = TestRepo::new();
+    let cli = Cli::try_parse_from([
+        "aomi-git",
+        "status",
+        "--path",
+        repo.root().to_str().unwrap(),
+    ])
+    .expect("parse status");
+    let CliCommand::Status(args) = cli.command else {
+        panic!("expected status");
+    };
+
+    let err = args
+        .run()
+        .await
+        .expect_err("missing deployment.json must error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("deployment.json") && msg.contains("aomi-git deploy"),
+        "error should point at running deploy first: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn activate_request_errors_without_deployment_json() {
+    // `aomi-git activate --request` needs the release tag / repo / app from a
+    // prior deploy. With no deployment.json and no flags it must fail with a
+    // message pointing at `aomi-git deploy` — never silently post nothing.
+    let repo = TestRepo::new();
+    let cli = Cli::try_parse_from([
+        "aomi-git",
+        "activate",
+        "--request",
+        "--path",
+        repo.root().to_str().unwrap(),
+    ])
+    .expect("parse activate --request");
+    let CliCommand::Activate(args) = cli.command else {
+        panic!("expected activate");
+    };
+
+    let err = args
+        .run()
+        .await
+        .expect_err("missing deployment.json must error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("deployment.json") && msg.contains("aomi-git deploy"),
+        "error should point at running deploy first: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn activate_request_dry_run_succeeds_from_deployment_json() {
+    // With a staged deployment.json, `activate --request --dry-run` resolves
+    // app/repo/release and prints the message without posting — no backend,
+    // no activation token, no webhook needed.
+    let repo = TestRepo::new();
+    repo.write_aomi_toml(
+        "",
+        "request-bot",
+        "https://github.com/aomi-labs/community-apps",
+    );
+    repo.write("src/lib.rs", "pub fn marker() {}\n");
+    repo.commit("initial app");
+
+    let state = Deployment::dry_run(repo.root(), Platform::new("community"), false)
+        .expect("dry run")
+        .to_state();
+    crate::deployment_state::write(repo.root(), &state).expect("write state");
+
+    let cli = Cli::try_parse_from([
+        "aomi-git",
+        "activate",
+        "--request",
+        "--dry-run",
+        "--path",
+        repo.root().to_str().unwrap(),
+    ])
+    .expect("parse activate --request --dry-run");
+    let CliCommand::Activate(args) = cli.command else {
+        panic!("expected activate");
+    };
+
+    args.run()
+        .await
+        .expect("dry-run should resolve from deployment.json and not post");
+}
+
+#[test]
+fn status_report_renders_ready_to_activate() {
+    // Offline rendering check: a published release + green CI on an
+    // unactivated app should advertise "ready to activate".
+    use crate::status::{BackendStatus, CiStatus, LocalState, ReleaseStatus, StatusReport};
+
+    let report = StatusReport {
+        repo: "aomi-labs/community-apps".to_string(),
+        release_tag: "apps-my-bot-abc1234".to_string(),
+        branch: "publish".to_string(),
+        local: LocalState {
+            pushed: true,
+            deployed: true,
+            activated: false,
+            updated_at: 0,
+        },
+        ci: CiStatus::Success {
+            name: Some("publish-apps".to_string()),
+            url: "https://github.com/aomi-labs/community-apps/actions/runs/1".to_string(),
+        },
+        release: ReleaseStatus::Available {
+            url: "https://github.com/aomi-labs/community-apps/releases/tag/apps-my-bot-abc1234"
+                .to_string(),
+            assets: 2,
+        },
+        backend: BackendStatus::NotChecked,
+    };
+
+    assert!(report.ready_to_activate());
+    let rendered = report.render();
+    assert!(rendered.contains("ready to activate"), "{rendered}");
+    assert!(rendered.contains("Request activation"), "{rendered}");
+    assert!(rendered.contains("apps-my-bot-abc1234"), "{rendered}");
+}
+
+#[test]
+fn status_report_pending_release_is_not_ready() {
+    use crate::status::{BackendStatus, CiStatus, LocalState, ReleaseStatus, StatusReport};
+
+    let report = StatusReport {
+        repo: "aomi-labs/community-apps".to_string(),
+        release_tag: "apps-my-bot-abc1234".to_string(),
+        branch: "publish".to_string(),
+        local: LocalState {
+            pushed: true,
+            deployed: true,
+            activated: false,
+            updated_at: 0,
+        },
+        ci: CiStatus::Running {
+            name: None,
+            url: "https://github.com/aomi-labs/community-apps/actions/runs/2".to_string(),
+        },
+        release: ReleaseStatus::Pending,
+        backend: BackendStatus::NotChecked,
+    };
+
+    assert!(!report.ready_to_activate());
+    let rendered = report.render();
+    assert!(rendered.contains("running"), "{rendered}");
+    assert!(rendered.contains("pending"), "{rendered}");
+    assert!(!rendered.contains("Request activation"), "{rendered}");
+}
+
+#[test]
+fn status_report_renders_backend_db_row_and_server_health() {
+    // Once CI is done and the app is activated, status surfaces the backend
+    // registry row (DB) plus the runtime-loaded flag (server health).
+    use crate::status::{BackendStatus, CiStatus, LocalState, ReleaseStatus, StatusReport};
+
+    let report = StatusReport {
+        repo: "aomi-labs/community-apps".to_string(),
+        release_tag: "apps-my-bot-abc1234".to_string(),
+        branch: "publish".to_string(),
+        local: LocalState {
+            pushed: true,
+            deployed: true,
+            activated: true,
+            updated_at: 0,
+        },
+        ci: CiStatus::Success {
+            name: Some("publish-apps".to_string()),
+            url: "https://github.com/aomi-labs/community-apps/actions/runs/1".to_string(),
+        },
+        release: ReleaseStatus::Available {
+            url: "https://github.com/aomi-labs/community-apps/releases/tag/apps-my-bot-abc1234"
+                .to_string(),
+            assets: 2,
+        },
+        backend: BackendStatus::Found {
+            backend: "https://staging-api.aomi.dev".to_string(),
+            registered: true,
+            is_active: Some(true),
+            visibility: Some("private".to_string()),
+            loaded: true,
+        },
+    };
+
+    let rendered = report.render();
+    assert!(rendered.contains("staging-api.aomi.dev"), "{rendered}");
+    assert!(rendered.contains("db row"), "{rendered}");
+    assert!(rendered.contains("registered=true"), "{rendered}");
+    assert!(rendered.contains("active=true"), "{rendered}");
+    assert!(rendered.contains("visibility=private"), "{rendered}");
+    assert!(rendered.contains("serving on this backend"), "{rendered}");
+    // Already activated, so no "request activation" nudge.
+    assert!(!rendered.contains("Request activation"), "{rendered}");
+}
+
+#[test]
+fn status_report_renders_not_activated_when_backend_has_no_row() {
+    use crate::status::{BackendStatus, CiStatus, LocalState, ReleaseStatus, StatusReport};
+
+    let report = StatusReport {
+        repo: "aomi-labs/community-apps".to_string(),
+        release_tag: "apps-my-bot-abc1234".to_string(),
+        branch: "publish".to_string(),
+        local: LocalState {
+            pushed: true,
+            deployed: true,
+            activated: false,
+            updated_at: 0,
+        },
+        ci: CiStatus::Success {
+            name: None,
+            url: "https://github.com/aomi-labs/community-apps/actions/runs/1".to_string(),
+        },
+        release: ReleaseStatus::Available {
+            url: "https://github.com/aomi-labs/community-apps/releases/tag/apps-my-bot-abc1234"
+                .to_string(),
+            assets: 1,
+        },
+        backend: BackendStatus::NotRegistered {
+            backend: "https://staging-api.aomi.dev".to_string(),
+        },
+    };
+
+    let rendered = report.render();
+    assert!(rendered.contains("not activated yet"), "{rendered}");
+    assert!(rendered.contains("staging-api.aomi.dev"), "{rendered}");
 }
 
 struct TestRepo {

@@ -231,10 +231,10 @@ fn has_multi_server_overrides(spec_path: &Path) -> Result<bool> {
             ) {
                 continue;
             }
-            if let Some(op_map) = op.as_mapping() {
-                if op_map.contains_key("servers") {
-                    return Ok(true);
-                }
+            if let Some(op_map) = op.as_mapping()
+                && op_map.contains_key("servers")
+            {
+                return Ok(true);
             }
         }
     }

@@ -6,11 +6,13 @@ mod activate;
 mod app;
 mod cli;
 mod deployment_state;
+mod discord;
 mod git;
 mod plan;
 mod platform;
 mod preflight;
 mod stage;
+mod status;
 mod transit;
 
 #[cfg(test)]
