@@ -62,14 +62,19 @@ impl DeploymentState {
         }
     }
 
-    /// Compute `state.deployed` from the target branch vs the platform's
-    /// resolved deploy branch. Only meaningful after preflight has filled
-    /// `resolved_deploy_branch`.
+    /// Compute `state.deployed` from `state.pushed` AND the target branch vs
+    /// the platform's resolved deploy branch.
+    ///
+    /// `deployed` is "the push landed on the contractual deployment branch and
+    /// the backend will see it" — it is a strict subset of `pushed`. A
+    /// dry-run, preflight-only, or `--no-push` run must leave `deployed` false
+    /// even when the branch contract resolves cleanly.
     pub fn recompute_deployed(&mut self) {
-        self.state.deployed = match self.platform.resolved_deploy_branch.as_deref() {
-            Some(resolved) => resolved == self.target.branch,
-            None => false,
-        };
+        self.state.deployed = self.state.pushed
+            && matches!(
+                self.platform.resolved_deploy_branch.as_deref(),
+                Some(resolved) if resolved == self.target.branch,
+            );
     }
 
     pub fn touch(&mut self) {

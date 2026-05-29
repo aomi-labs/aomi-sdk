@@ -476,6 +476,47 @@ server_tags = ["Prod", "community", "prod"]
 }
 
 #[test]
+fn recompute_deployed_requires_pushed_even_when_branch_matches() {
+    // Regression: previously `recompute_deployed` only compared the resolved
+    // deploy branch to `target.branch`, so a `--dry-run --preflight` run on a
+    // platform whose `deployment_branch` matched would flip `deployed = true`
+    // despite `pushed = false`. `deployed` must remain a strict subset of
+    // `pushed`.
+    let repo = TestRepo::new();
+    repo.write_aomi_toml(
+        "",
+        "alice-bot",
+        "https://github.com/aomi-labs/community-apps",
+    );
+    repo.write("src/lib.rs", "pub fn marker() {}\n");
+    repo.commit("initial app");
+
+    let mut state = Deployment::dry_run(repo.root(), Platform::new("community"), false)
+        .expect("dry run")
+        .to_state();
+
+    // Simulate what preflight does after talking to the backend: branch
+    // contract resolves cleanly, but no push has happened yet.
+    state.platform.resolved_deploy_branch = Some(state.target.branch.clone());
+    assert!(!state.state.pushed);
+    state.recompute_deployed();
+    assert!(
+        !state.state.deployed,
+        "deployed must stay false until pushed flips true"
+    );
+
+    // Once push lands on the matching branch, deployed flips with it.
+    state.state.pushed = true;
+    state.recompute_deployed();
+    assert!(state.state.deployed);
+
+    // A pushed-but-wrong-branch run must NOT set deployed.
+    state.platform.resolved_deploy_branch = Some("some-other-branch".to_string());
+    state.recompute_deployed();
+    assert!(!state.state.deployed);
+}
+
+#[test]
 fn dry_run_plan_uses_aomi_toml() {
     let repo = TestRepo::new();
     repo.write(
