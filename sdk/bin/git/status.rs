@@ -23,6 +23,8 @@ const UA: &str = concat!("aomi-git/", env!("CARGO_PKG_VERSION"));
 
 /// Inputs for a status report, pre-resolved by the CLI layer.
 pub struct StatusRequest {
+    /// App slug — used to find the app's row in the backend registry.
+    pub app_name: String,
     /// `owner/repo` (already normalized).
     pub repo: String,
     /// Release tag this deploy created (`apps-{slug}-{shortcommit}`).
@@ -31,6 +33,10 @@ pub struct StatusRequest {
     pub branch: String,
     /// Optional GitHub token for private-repo API reads.
     pub github_token: Option<String>,
+    /// Backend base URL. When present and CI has finished, status also reports
+    /// the app's backend registry row + runtime health. None ⇒ skip the
+    /// backend probe entirely.
+    pub backend_url: Option<String>,
     /// Local state flags carried straight through from `.aomi/deployment.json`.
     pub local: LocalState,
 }
@@ -52,6 +58,7 @@ pub struct StatusReport {
     pub local: LocalState,
     pub ci: CiStatus,
     pub release: ReleaseStatus,
+    pub backend: BackendStatus,
 }
 
 /// Rolled-up CI signal derived from the latest workflow run on the branch.
@@ -85,13 +92,59 @@ pub enum ReleaseStatus {
     Unknown { detail: String },
 }
 
+impl CiStatus {
+    /// CI reached a terminal state (won't change without a re-push). Used to
+    /// decide whether it's worth probing the backend for the activated row.
+    fn is_terminal(&self) -> bool {
+        matches!(self, CiStatus::Success { .. } | CiStatus::Failed { .. })
+    }
+}
+
+/// The app's state on the backend: its `applications` registry row (DB) plus
+/// whether the runtime has the plugin loaded (server health). Sourced from the
+/// unauthenticated `GET /api/control/apps/status` endpoint.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind")]
+pub enum BackendStatus {
+    /// Not probed — no backend URL was resolvable, or CI hasn't finished yet.
+    NotChecked,
+    /// Backend reachable, but no registry row for this app — not activated yet.
+    NotRegistered { backend: String },
+    /// App found. Mirrors the DB row + runtime-loaded flag.
+    Found {
+        backend: String,
+        /// Has an `applications` row.
+        registered: bool,
+        /// DB row `is_active`.
+        is_active: Option<bool>,
+        /// `public` / `private`, derived from the DB row.
+        visibility: Option<String>,
+        /// Runtime has the plugin loaded and serving (server health).
+        loaded: bool,
+    },
+    /// Backend unreachable / returned an unexpected response.
+    Unknown { detail: String },
+}
+
 impl StatusReport {
-    /// Produce a status report by polling GitHub. Best-effort: GitHub failures
-    /// surface as `Unknown` variants rather than erroring the whole command.
+    /// Produce a status report by polling GitHub (and, once CI is done, the
+    /// backend). Best-effort: any network failure surfaces as an `Unknown`
+    /// variant rather than erroring the whole command.
     pub async fn collect(req: StatusRequest) -> Self {
         let client = reqwest::Client::new();
         let ci = fetch_ci(&client, &req).await;
         let release = fetch_release(&client, &req).await;
+
+        // Only probe the backend once CI has finished — before that the app
+        // can't be activated, so a registry lookup would only ever say "not
+        // registered". `ci.is_terminal()` covers a green build whose release
+        // job is still uploading; `release` Available is the clearest signal.
+        let ci_done = ci.is_terminal() || matches!(release, ReleaseStatus::Available { .. });
+        let backend = match (&req.backend_url, ci_done) {
+            (Some(url), true) => fetch_backend(&client, url, &req.app_name).await,
+            _ => BackendStatus::NotChecked,
+        };
+
         StatusReport {
             repo: req.repo,
             release_tag: req.release_tag,
@@ -99,6 +152,7 @@ impl StatusReport {
             local: req.local,
             ci,
             release,
+            backend,
         }
     }
 
@@ -157,12 +211,48 @@ impl StatusReport {
             }
         }
 
+        match &self.backend {
+            BackendStatus::NotChecked => {}
+            BackendStatus::NotRegistered { backend } => {
+                let _ = writeln!(out, "  backend       : not activated yet on {backend}");
+            }
+            BackendStatus::Unknown { detail } => {
+                let _ = writeln!(out, "  backend       : unknown ({detail})");
+            }
+            BackendStatus::Found {
+                backend,
+                registered,
+                is_active,
+                visibility,
+                loaded,
+            } => {
+                let _ = writeln!(out, "  backend       : {backend}");
+                let _ = writeln!(out, "      db row    : registered={registered} active={} visibility={}",
+                    opt_bool(is_active),
+                    visibility.as_deref().unwrap_or("?"),
+                );
+                let health = if *loaded {
+                    "\u{2713} loaded — serving on this backend"
+                } else {
+                    "\u{2717} not loaded (registered but runtime hasn't picked it up)"
+                };
+                let _ = writeln!(out, "      server    : {health}");
+            }
+        }
+
         if self.ready_to_activate() && !self.local.activated {
             let _ = writeln!(out);
             let _ = writeln!(out, "  Release is ready. Request activation from platform ops");
             let _ = writeln!(out, "  (contributors don't hold the activation token).");
         }
         out
+    }
+}
+
+fn opt_bool(value: &Option<bool>) -> String {
+    match value {
+        Some(b) => b.to_string(),
+        None => "?".to_string(),
     }
 }
 
@@ -255,6 +345,52 @@ async fn fetch_release(client: &reqwest::Client, req: &StatusRequest) -> Release
             assets: info.assets.len(),
         },
         Err(e) => ReleaseStatus::Unknown { detail: e.to_string() },
+    }
+}
+
+/// Probe `GET {backend}/api/control/apps/status` (unauthenticated) and pull out
+/// this app's registry row + runtime-loaded flag. The endpoint returns every
+/// app; we match on the (lowercased) slug.
+async fn fetch_backend(
+    client: &reqwest::Client,
+    backend_url: &str,
+    app_name: &str,
+) -> BackendStatus {
+    let base = backend_url.trim().trim_end_matches('/');
+    let url = format!("{base}/api/control/apps/status");
+    let value: serde_json::Value = match get_json(client, &url, None).await {
+        Ok(v) => v,
+        Err(e) => return BackendStatus::Unknown { detail: e.to_string() },
+    };
+
+    let needle = app_name.trim().to_ascii_lowercase();
+    let app = value
+        .get("apps")
+        .and_then(|a| a.as_array())
+        .and_then(|apps| {
+            apps.iter().find(|row| {
+                row.get("name")
+                    .and_then(|n| n.as_str())
+                    .map(|n| n.eq_ignore_ascii_case(&needle))
+                    .unwrap_or(false)
+            })
+        });
+
+    let Some(app) = app else {
+        return BackendStatus::NotRegistered {
+            backend: base.to_string(),
+        };
+    };
+
+    BackendStatus::Found {
+        backend: base.to_string(),
+        registered: app.get("registered").and_then(|v| v.as_bool()).unwrap_or(false),
+        is_active: app.get("is_active").and_then(|v| v.as_bool()),
+        visibility: app
+            .get("visibility")
+            .and_then(|v| v.as_str())
+            .map(str::to_string),
+        loaded: app.get("loaded").and_then(|v| v.as_bool()).unwrap_or(false),
     }
 }
 
