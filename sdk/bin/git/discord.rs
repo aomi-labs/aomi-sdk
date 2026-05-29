@@ -1,79 +1,33 @@
 //! Discord activation-request delivery.
 //!
-//! Contributors don't hold the activation token — platform ops do (ADR 0009).
+//! Contributors don't hold the activation token - platform ops do (ADR 0009).
 //! So after a deploy, the "next action" is to *ask* ops to activate. This
 //! module can post that ask to the Aomi apps Discord via an incoming webhook,
 //! tagging ops and carrying the repo / app / release tag so ops can act
 //! without a round-trip.
 //!
 //! ## Why a webhook, not a clickable link
-//! A `discord.gg/...` invite only opens/joins the server — it cannot send a
+//! A `discord.gg/...` invite only opens/joins the server - it cannot send a
 //! message or ping anyone. Auto-sending requires an authenticated call, so we
 //! POST to a Discord **incoming webhook** (`POST <webhook>` with a JSON body).
 //!
 //! ## Delivery configuration
-//! Webhook URLs are credentials, so the binary does not hardcode one. Set
-//! `AOMI_DISCORD_WEBHOOK_URL` when posting is enabled. An optional
-//! `AOMI_DISCORD_ADMIN_MENTION` value (`<@&ROLE_ID>` or `<@USER_ID>`) can be
-//! used to ping ops; otherwise the message posts without a mention.
+//! The Discord target is intentionally code-owned: contributors should not
+//! configure where activation requests go. Update the constants below when the
+//! activation channel or ops mention changes.
 
 use anyhow::{Result, anyhow, bail};
 use serde_json::json;
 
-/// Public invite to the Aomi apps Discord. Safe to print/commit — an invite
+/// Public invite to the Aomi apps Discord. Safe to print/commit - an invite
 /// only lets someone *join*; it can't post or read.
 pub const DISCORD_INVITE: &str = "https://discord.gg/VF5Zq8ddu";
 
-/// Env var containing the Discord incoming-webhook URL for activation requests.
-pub const DISCORD_WEBHOOK_ENV: &str = "AOMI_DISCORD_WEBHOOK_URL";
+/// Incoming webhook for the activation-request channel.
+const DISCORD_WEBHOOK: &str = "https://discord.com/api/webhooks/REPLACE_ME";
 
-/// Optional env var containing an ops role/user mention (`<@&ID>` or `<@ID>`).
-pub const DISCORD_ADMIN_ENV: &str = "AOMI_DISCORD_ADMIN_MENTION";
-
-/// Posting configuration for the activation-request Discord channel.
-pub struct DiscordConfig {
-    webhook_url: String,
-    admin_mention: Option<String>,
-}
-
-impl DiscordConfig {
-    pub fn from_env() -> Result<Self> {
-        let webhook_url = std::env::var(DISCORD_WEBHOOK_ENV)
-            .map(|v| v.trim().to_string())
-            .unwrap_or_default();
-        if webhook_url.is_empty() {
-            bail!(
-                "Discord webhook is not configured; set {DISCORD_WEBHOOK_ENV}, or run \
-                 `aomi-git activate --request --dry-run` and post the message manually"
-            );
-        }
-        let admin_mention = std::env::var(DISCORD_ADMIN_ENV)
-            .ok()
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty());
-        Ok(Self {
-            webhook_url,
-            admin_mention,
-        })
-    }
-
-    /// POST the activation request to the configured Discord webhook. Returns
-    /// `Ok` on any 2xx (Discord answers 204 No Content on success).
-    pub async fn post(&self, request: &ActivationRequest) -> Result<()> {
-        let response = reqwest::Client::new()
-            .post(&self.webhook_url)
-            .json(&request.webhook_body(self.admin_mention.as_deref()))
-            .send()
-            .await
-            .map_err(|e| anyhow!("failed to POST Discord webhook: {e}"))?;
-        let status = response.status();
-        if !status.is_success() {
-            let text = response.text().await.unwrap_or_default();
-            return Err(anyhow!("Discord webhook returned {status}: {}", text.trim()));
-        }
-        Ok(())
-    }
-}
+/// Ops role/user mention (`<@&ID>` or `<@ID>`).
+const DISCORD_ADMIN: &str = "<@&REPLACE_ME>";
 
 /// The activation ask, independent of how it's delivered.
 pub struct ActivationRequest {
@@ -84,20 +38,15 @@ pub struct ActivationRequest {
 }
 
 impl ActivationRequest {
-    /// Render the human message body, optionally prefixed with an ops mention.
-    pub fn message(&self, admin_mention: Option<&str>) -> String {
+    /// Render the human message body.
+    pub fn message(&self) -> String {
         let tags = if self.server_tags.is_empty() {
             "<none>".to_string()
         } else {
             self.server_tags.join(", ")
         };
-        let mention = admin_mention
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(|s| format!("{s} "))
-            .unwrap_or_default();
         format!(
-            "{mention}**Activation requested**\n\
+            "{DISCORD_ADMIN} **Activation requested**\n\
              - app: `{}`\n\
              - repo: `{}`\n\
              - release: `{}`\n\
@@ -109,11 +58,37 @@ impl ActivationRequest {
 
     /// The JSON body sent to the webhook. `allowed_mentions` is scoped to
     /// users/roles only, never `@everyone`.
-    fn webhook_body(&self, admin_mention: Option<&str>) -> serde_json::Value {
+    fn webhook_body(&self) -> serde_json::Value {
         json!({
-            "content": self.message(admin_mention),
+            "content": self.message(),
             "allowed_mentions": { "parse": ["users", "roles"] },
         })
+    }
+
+    /// POST this activation request to the code-owned Discord webhook. Returns
+    /// `Ok` on any 2xx (Discord answers 204 No Content on success).
+    pub async fn post(&self) -> Result<()> {
+        if DISCORD_WEBHOOK.contains("REPLACE_ME") || DISCORD_ADMIN.contains("REPLACE_ME") {
+            bail!(
+                "Discord activation target is not configured in sdk/bin/git/discord.rs; \
+                 run `aomi-git activate --request --dry-run` and post the message manually"
+            );
+        }
+        let response = reqwest::Client::new()
+            .post(DISCORD_WEBHOOK)
+            .json(&self.webhook_body())
+            .send()
+            .await
+            .map_err(|e| anyhow!("failed to POST Discord webhook: {e}"))?;
+        let status = response.status();
+        if !status.is_success() {
+            let text = response.text().await.unwrap_or_default();
+            return Err(anyhow!(
+                "Discord webhook returned {status}: {}",
+                text.trim()
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -131,9 +106,9 @@ mod tests {
     }
 
     #[test]
-    fn message_includes_optional_admin_repo_app_release_and_tags() {
-        let msg = sample().message(Some("<@&123>"));
-        assert!(msg.starts_with("<@&123>"), "{msg}");
+    fn message_includes_admin_repo_app_release_and_tags() {
+        let msg = sample().message();
+        assert!(msg.starts_with(DISCORD_ADMIN), "{msg}");
         assert!(msg.contains("my-bot"), "{msg}");
         assert!(msg.contains("aomi-labs/community-apps"), "{msg}");
         assert!(msg.contains("apps-my-bot-abc1234"), "{msg}");
@@ -142,7 +117,7 @@ mod tests {
 
     #[test]
     fn webhook_body_scopes_mentions_and_never_everyone() {
-        let body = sample().webhook_body(Some("<@&123>"));
+        let body = sample().webhook_body();
         let parse: Vec<&str> = body["allowed_mentions"]["parse"]
             .as_array()
             .unwrap()

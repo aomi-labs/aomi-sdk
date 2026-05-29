@@ -1,4 +1,4 @@
-//! `aomi-git status` — publication observability for a deployed app.
+//! `aomi-git status` - publication observability for a deployed app.
 //!
 //! After `aomi-git deploy` pushes source to the platform repo, the contributor
 //! has two questions the old "Next steps" block answered with bare URLs:
@@ -7,7 +7,7 @@
 //!   2. Is the release tarball available yet? (i.e. is it activatable)
 //!
 //! This module answers both by polling the GitHub REST API for the source
-//! repo — the workflow run on the publish branch, and the release keyed on the
+//! repo - the workflow run on the publish branch, and the release keyed on the
 //! deploy's release tag. No auth is needed for public platform repos; a token
 //! (`--access-token`, `$ENV` form supported) is used for private ones.
 //!
@@ -23,7 +23,7 @@ const UA: &str = concat!("aomi-git/", env!("CARGO_PKG_VERSION"));
 
 /// Inputs for a status report, pre-resolved by the CLI layer.
 pub struct StatusRequest {
-    /// App slug — used to find the app's row in the backend registry.
+    /// App slug - used to find the app's row in the backend registry.
     pub app_name: String,
     /// `owner/repo` (already normalized).
     pub repo: String,
@@ -34,7 +34,7 @@ pub struct StatusRequest {
     /// Optional GitHub token for private-repo API reads.
     pub github_token: Option<String>,
     /// Backend base URL. When present and CI has finished, status also reports
-    /// the app's backend registry row + runtime health. None ⇒ skip the
+    /// the app's backend registry row + runtime health. None means skip the
     /// backend probe entirely.
     pub backend_url: Option<String>,
     /// Local state flags carried straight through from `.aomi/deployment.json`.
@@ -84,7 +84,7 @@ pub enum CiStatus {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum ReleaseStatus {
-    /// The release tag exists with at least one asset — activatable.
+    /// The release tag exists with at least one asset - activatable.
     Available { url: String, assets: usize },
     /// The release tag has no GitHub release yet.
     Pending,
@@ -106,9 +106,9 @@ impl CiStatus {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum BackendStatus {
-    /// Not probed — no backend URL was resolvable, or CI hasn't finished yet.
+    /// Not probed - no backend URL was resolvable, or CI hasn't finished yet.
     NotChecked,
-    /// Backend reachable, but no registry row for this app — not activated yet.
+    /// Backend reachable, but no registry row for this app - not activated yet.
     NotRegistered { backend: String },
     /// App found. Mirrors the DB row + runtime-loaded flag.
     Found {
@@ -131,29 +131,7 @@ impl StatusReport {
     /// backend). Best-effort: any network failure surfaces as an `Unknown`
     /// variant rather than erroring the whole command.
     pub async fn collect(req: StatusRequest) -> Self {
-        let client = reqwest::Client::new();
-        let ci = fetch_ci(&client, &req).await;
-        let release = fetch_release(&client, &req).await;
-
-        // Only probe the backend once CI has finished — before that the app
-        // can't be activated, so a registry lookup would only ever say "not
-        // registered". `ci.is_terminal()` covers a green build whose release
-        // job is still uploading; `release` Available is the clearest signal.
-        let ci_done = ci.is_terminal() || matches!(release, ReleaseStatus::Available { .. });
-        let backend = match (&req.backend_url, ci_done) {
-            (Some(url), true) => fetch_backend(&client, url, &req.app_name).await,
-            _ => BackendStatus::NotChecked,
-        };
-
-        StatusReport {
-            repo: req.repo,
-            release_tag: req.release_tag,
-            branch: req.branch,
-            local: req.local,
-            ci,
-            release,
-            backend,
-        }
+        StatusProbe::new(req).collect().await
     }
 
     /// Whether the release is published and ready to activate.
@@ -178,18 +156,26 @@ impl StatusReport {
         let _ = write!(out, "  ci            : ");
         match &self.ci {
             CiStatus::NoRuns => {
-                let _ = writeln!(out, "no runs yet on `{}` (push may still be propagating)", self.branch);
+                let _ = writeln!(
+                    out,
+                    "no runs yet on `{}` (push may still be propagating)",
+                    self.branch
+                );
             }
             CiStatus::Running { name, url } => {
-                let _ = writeln!(out, "\u{23f3} running{}", fmt_name(name));
+                let _ = writeln!(out, "[running] running{}", Self::name_suffix(name));
                 let _ = writeln!(out, "                  {url}");
             }
             CiStatus::Success { name, url } => {
-                let _ = writeln!(out, "\u{2713} green{}", fmt_name(name));
+                let _ = writeln!(out, "[ok] green{}", Self::name_suffix(name));
                 let _ = writeln!(out, "                  {url}");
             }
-            CiStatus::Failed { name, conclusion, url } => {
-                let _ = writeln!(out, "\u{2717} {conclusion}{}", fmt_name(name));
+            CiStatus::Failed {
+                name,
+                conclusion,
+                url,
+            } => {
+                let _ = writeln!(out, "[fail] {conclusion}{}", Self::name_suffix(name));
                 let _ = writeln!(out, "                  {url}");
             }
             CiStatus::Unknown { detail } => {
@@ -200,7 +186,10 @@ impl StatusReport {
         let _ = write!(out, "  release       : ");
         match &self.release {
             ReleaseStatus::Available { url, assets } => {
-                let _ = writeln!(out, "\u{2713} published ({assets} asset(s)) — ready to activate");
+                let _ = writeln!(
+                    out,
+                    "[ok] published ({assets} asset(s)) - ready to activate"
+                );
                 let _ = writeln!(out, "                  {url}");
             }
             ReleaseStatus::Pending => {
@@ -227,14 +216,16 @@ impl StatusReport {
                 loaded,
             } => {
                 let _ = writeln!(out, "  backend       : {backend}");
-                let _ = writeln!(out, "      db row    : registered={registered} active={} visibility={}",
-                    opt_bool(is_active),
+                let _ = writeln!(
+                    out,
+                    "      db row    : registered={registered} active={} visibility={}",
+                    Self::bool_label(is_active),
                     visibility.as_deref().unwrap_or("?"),
                 );
                 let health = if *loaded {
-                    "\u{2713} loaded — serving on this backend"
+                    "[ok] loaded - serving on this backend"
                 } else {
-                    "\u{2717} not loaded (registered but runtime hasn't picked it up)"
+                    "[fail] not loaded (registered but runtime hasn't picked it up)"
                 };
                 let _ = writeln!(out, "      server    : {health}");
             }
@@ -242,24 +233,23 @@ impl StatusReport {
 
         if self.ready_to_activate() && !self.local.activated {
             let _ = writeln!(out);
-            let _ = writeln!(out, "  Release is ready. Request activation from platform ops");
+            let _ = writeln!(
+                out,
+                "  Release is ready. Request activation from platform ops"
+            );
             let _ = writeln!(out, "  (contributors don't hold the activation token).");
         }
         out
     }
-}
 
-fn opt_bool(value: &Option<bool>) -> String {
-    match value {
-        Some(b) => b.to_string(),
-        None => "?".to_string(),
+    fn bool_label(value: &Option<bool>) -> String {
+        value
+            .map(|b| b.to_string())
+            .unwrap_or_else(|| "?".to_string())
     }
-}
 
-fn fmt_name(name: &Option<String>) -> String {
-    match name {
-        Some(n) => format!(" — {n}"),
-        None => String::new(),
+    fn name_suffix(name: &Option<String>) -> String {
+        name.as_ref().map(|n| format!(" - {n}")).unwrap_or_default()
     }
 }
 
@@ -277,36 +267,6 @@ struct WorkflowRun {
     html_url: String,
 }
 
-async fn fetch_ci(client: &reqwest::Client, req: &StatusRequest) -> CiStatus {
-    let url = format!(
-        "{GITHUB_API}/repos/{}/actions/runs?branch={}&per_page=10",
-        req.repo, req.branch
-    );
-    let parsed: RunsResponse = match get_json(client, &url, req.github_token.as_deref()).await {
-        Ok(v) => v,
-        Err(e) => return CiStatus::Unknown { detail: e.to_string() },
-    };
-    // Runs come newest-first. The first run on the branch is the latest.
-    let Some(run) = parsed.workflow_runs.into_iter().next() else {
-        return CiStatus::NoRuns;
-    };
-    match run.status.as_deref() {
-        Some("completed") => match run.conclusion.as_deref() {
-            Some("success") => CiStatus::Success { name: run.name, url: run.html_url },
-            Some(other) => CiStatus::Failed {
-                name: run.name,
-                conclusion: other.to_string(),
-                url: run.html_url,
-            },
-            None => CiStatus::Unknown {
-                detail: "run completed with no conclusion".to_string(),
-            },
-        },
-        // queued | in_progress | waiting | requested | pending | None
-        _ => CiStatus::Running { name: run.name, url: run.html_url },
-    }
-}
-
 #[derive(Debug, Deserialize)]
 struct ReleaseInfo {
     html_url: String,
@@ -314,102 +274,189 @@ struct ReleaseInfo {
     assets: Vec<serde_json::Value>,
 }
 
-async fn fetch_release(client: &reqwest::Client, req: &StatusRequest) -> ReleaseStatus {
-    let url = format!(
-        "{GITHUB_API}/repos/{}/releases/tags/{}",
-        req.repo, req.release_tag
-    );
-    let request = client
-        .get(&url)
-        .header(reqwest::header::USER_AGENT, UA)
-        .header(reqwest::header::ACCEPT, "application/vnd.github+json");
-    let request = match req.github_token.as_deref() {
-        Some(t) if !t.is_empty() => request.bearer_auth(t),
-        _ => request,
-    };
-    let response = match request.send().await {
-        Ok(r) => r,
-        Err(e) => return ReleaseStatus::Unknown { detail: e.to_string() },
-    };
-    if response.status() == reqwest::StatusCode::NOT_FOUND {
-        return ReleaseStatus::Pending;
-    }
-    if !response.status().is_success() {
-        return ReleaseStatus::Unknown {
-            detail: format!("GitHub returned {}", response.status()),
-        };
-    }
-    match response.json::<ReleaseInfo>().await {
-        Ok(info) => ReleaseStatus::Available {
-            url: info.html_url,
-            assets: info.assets.len(),
-        },
-        Err(e) => ReleaseStatus::Unknown { detail: e.to_string() },
-    }
+struct StatusProbe {
+    http: reqwest::Client,
+    req: StatusRequest,
 }
 
-/// Probe `GET {backend}/api/control/apps/status` (unauthenticated) and pull out
-/// this app's registry row + runtime-loaded flag. The endpoint returns every
-/// app; we match on the (lowercased) slug.
-async fn fetch_backend(
-    client: &reqwest::Client,
-    backend_url: &str,
-    app_name: &str,
-) -> BackendStatus {
-    let base = backend_url.trim().trim_end_matches('/');
-    let url = format!("{base}/api/control/apps/status");
-    let value: serde_json::Value = match get_json(client, &url, None).await {
-        Ok(v) => v,
-        Err(e) => return BackendStatus::Unknown { detail: e.to_string() },
-    };
+impl StatusProbe {
+    fn new(req: StatusRequest) -> Self {
+        Self {
+            http: reqwest::Client::new(),
+            req,
+        }
+    }
 
-    let needle = app_name.trim().to_ascii_lowercase();
-    let app = value
-        .get("apps")
-        .and_then(|a| a.as_array())
-        .and_then(|apps| {
-            apps.iter().find(|row| {
-                row.get("name")
-                    .and_then(|n| n.as_str())
-                    .map(|n| n.eq_ignore_ascii_case(&needle))
-                    .unwrap_or(false)
-            })
-        });
+    async fn collect(self) -> StatusReport {
+        let ci = self.ci().await;
+        let release = self.release().await;
 
-    let Some(app) = app else {
-        return BackendStatus::NotRegistered {
+        // Only probe the backend once CI has finished. Before that the app
+        // cannot be activated, so a registry lookup would only ever say "not
+        // registered". `ci.is_terminal()` covers a green build whose release
+        // job is still uploading; `release` Available is the clearest signal.
+        let ci_done = ci.is_terminal() || matches!(release, ReleaseStatus::Available { .. });
+        let backend = match (&self.req.backend_url, ci_done) {
+            (Some(url), true) => self.backend(url).await,
+            _ => BackendStatus::NotChecked,
+        };
+
+        StatusReport {
+            repo: self.req.repo,
+            release_tag: self.req.release_tag,
+            branch: self.req.branch,
+            local: self.req.local,
+            ci,
+            release,
+            backend,
+        }
+    }
+
+    async fn ci(&self) -> CiStatus {
+        let request = self
+            .github_request(format!("{GITHUB_API}/repos/{}/actions/runs", self.req.repo))
+            .query(&[("branch", self.req.branch.as_str()), ("per_page", "10")]);
+        let parsed: RunsResponse = match self.json(request, "GitHub").await {
+            Ok(v) => v,
+            Err(e) => {
+                return CiStatus::Unknown {
+                    detail: e.to_string(),
+                };
+            }
+        };
+        let Some(run) = parsed.workflow_runs.into_iter().next() else {
+            return CiStatus::NoRuns;
+        };
+        match run.status.as_deref() {
+            Some("completed") => match run.conclusion.as_deref() {
+                Some("success") => CiStatus::Success {
+                    name: run.name,
+                    url: run.html_url,
+                },
+                Some(other) => CiStatus::Failed {
+                    name: run.name,
+                    conclusion: other.to_string(),
+                    url: run.html_url,
+                },
+                None => CiStatus::Unknown {
+                    detail: "run completed with no conclusion".to_string(),
+                },
+            },
+            _ => CiStatus::Running {
+                name: run.name,
+                url: run.html_url,
+            },
+        }
+    }
+
+    async fn release(&self) -> ReleaseStatus {
+        let request = self.github_request(format!(
+            "{GITHUB_API}/repos/{}/releases/tags/{}",
+            self.req.repo, self.req.release_tag
+        ));
+        let response = match request.send().await {
+            Ok(r) => r,
+            Err(e) => {
+                return ReleaseStatus::Unknown {
+                    detail: e.to_string(),
+                };
+            }
+        };
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            return ReleaseStatus::Pending;
+        }
+        if !response.status().is_success() {
+            return ReleaseStatus::Unknown {
+                detail: format!("GitHub returned {}", response.status()),
+            };
+        }
+        match response.json::<ReleaseInfo>().await {
+            Ok(info) => ReleaseStatus::Available {
+                url: info.html_url,
+                assets: info.assets.len(),
+            },
+            Err(e) => ReleaseStatus::Unknown {
+                detail: e.to_string(),
+            },
+        }
+    }
+
+    async fn backend(&self, backend_url: &str) -> BackendStatus {
+        let base = backend_url.trim().trim_end_matches('/');
+        let value: serde_json::Value = match self
+            .json(
+                self.http.get(format!("{base}/api/control/apps/status")),
+                "backend",
+            )
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                return BackendStatus::Unknown {
+                    detail: e.to_string(),
+                };
+            }
+        };
+
+        let needle = self.req.app_name.trim().to_ascii_lowercase();
+        let app = value
+            .get("apps")
+            .and_then(|a| a.as_array())
+            .and_then(|apps| {
+                apps.iter().find(|row| {
+                    row.get("name")
+                        .and_then(|n| n.as_str())
+                        .map(|n| n.eq_ignore_ascii_case(&needle))
+                        .unwrap_or(false)
+                })
+            });
+
+        let Some(app) = app else {
+            return BackendStatus::NotRegistered {
+                backend: base.to_string(),
+            };
+        };
+
+        BackendStatus::Found {
             backend: base.to_string(),
-        };
-    };
-
-    BackendStatus::Found {
-        backend: base.to_string(),
-        registered: app.get("registered").and_then(|v| v.as_bool()).unwrap_or(false),
-        is_active: app.get("is_active").and_then(|v| v.as_bool()),
-        visibility: app
-            .get("visibility")
-            .and_then(|v| v.as_str())
-            .map(str::to_string),
-        loaded: app.get("loaded").and_then(|v| v.as_bool()).unwrap_or(false),
+            registered: app
+                .get("registered")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+            is_active: app.get("is_active").and_then(|v| v.as_bool()),
+            visibility: app
+                .get("visibility")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+            loaded: app.get("loaded").and_then(|v| v.as_bool()).unwrap_or(false),
+        }
     }
-}
 
-async fn get_json<T: serde::de::DeserializeOwned>(
-    client: &reqwest::Client,
-    url: &str,
-    token: Option<&str>,
-) -> Result<T> {
-    let request = client
-        .get(url)
-        .header(reqwest::header::USER_AGENT, UA)
-        .header(reqwest::header::ACCEPT, "application/vnd.github+json");
-    let request = match token {
-        Some(t) if !t.is_empty() => request.bearer_auth(t),
-        _ => request,
-    };
-    let response = request.send().await.map_err(|e| anyhow!("{e}"))?;
-    if !response.status().is_success() {
-        return Err(anyhow!("GitHub returned {}", response.status()));
+    fn github_request(&self, url: String) -> reqwest::RequestBuilder {
+        let request = self
+            .http
+            .get(url)
+            .header(reqwest::header::USER_AGENT, UA)
+            .header(reqwest::header::ACCEPT, "application/vnd.github+json");
+        match self.req.github_token.as_deref() {
+            Some(t) if !t.is_empty() => request.bearer_auth(t),
+            _ => request,
+        }
     }
-    response.json::<T>().await.map_err(|e| anyhow!("{e}"))
+
+    async fn json<T: serde::de::DeserializeOwned>(
+        &self,
+        request: reqwest::RequestBuilder,
+        service: &str,
+    ) -> Result<T> {
+        let response = request
+            .header(reqwest::header::USER_AGENT, UA)
+            .send()
+            .await
+            .map_err(|e| anyhow!("{e}"))?;
+        if !response.status().is_success() {
+            return Err(anyhow!("{service} returned {}", response.status()));
+        }
+        response.json::<T>().await.map_err(|e| anyhow!("{e}"))
+    }
 }

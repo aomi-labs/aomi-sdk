@@ -124,16 +124,16 @@ fn collapse_response_content_to_json(spec: &mut openapiv3::OpenAPI) -> usize {
         .flatten()
         {
             for resp in op.responses.responses.values_mut() {
-                if let ReferenceOr::Item(r) = resp {
-                    if fix(&mut r.content) {
-                        collapsed += 1;
-                    }
-                }
-            }
-            if let Some(ReferenceOr::Item(r)) = op.responses.default.as_mut() {
-                if fix(&mut r.content) {
+                if let ReferenceOr::Item(r) = resp
+                    && fix(&mut r.content)
+                {
                     collapsed += 1;
                 }
+            }
+            if let Some(ReferenceOr::Item(r)) = op.responses.default.as_mut()
+                && fix(&mut r.content)
+            {
+                collapsed += 1;
             }
         }
     }
@@ -353,13 +353,7 @@ fn retype_path_params_as_string(spec: &mut openapiv3::OpenAPI) -> usize {
                 };
                 let needs_retype = match &parameter_data.format {
                     ParameterSchemaOrContent::Schema(ReferenceOr::Item(schema)) => {
-                        matches!(
-                            schema.schema_kind,
-                            openapiv3::SchemaKind::Any(_) | openapiv3::SchemaKind::Type(_)
-                        ) && match &schema.schema_kind {
-                            openapiv3::SchemaKind::Any(_) => true,
-                            _ => false,
-                        }
+                        matches!(&schema.schema_kind, openapiv3::SchemaKind::Any(_))
                     }
                     _ => false,
                 };

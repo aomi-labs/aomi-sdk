@@ -1,4 +1,4 @@
-//! `.aomi/deployment.json` — local plan artifact carrying the resolved
+//! `.aomi/deployment.json` - local plan artifact carrying the resolved
 //! deployment plus three independent state flags. Per ADR 0009.
 //!
 //! Lifecycle:
@@ -84,7 +84,7 @@ impl DeploymentState {
     /// the platform's resolved deploy branch.
     ///
     /// `deployed` means "the push landed on the contractual deployment branch
-    /// and the backend will see it" — it is a strict subset of `pushed`. A
+    /// and the backend will see it" - it is a strict subset of `pushed`. A
     /// dry-run or `--platform-dir` run that didn't push must leave `deployed`
     /// false even when the branch contract resolves cleanly.
     pub fn recompute_deployed(&mut self) {
@@ -99,7 +99,7 @@ impl DeploymentState {
         self.updated_at = now_seconds();
     }
 
-    /// Render the validation pipeline as a compact, human-readable summary —
+    /// Render the validation pipeline as a compact, human-readable summary -
     /// one line per stage, with failed/advisory check details indented beneath.
     pub fn render_preflight(&self) -> String {
         use std::fmt::Write as _;
@@ -130,15 +130,15 @@ impl DeploymentState {
                     .iter()
                     .map(|(k, v)| format!("{k}={}", render_value(v)))
                     .collect();
-                let _ = write!(out, "  ·  {}", pairs.join(" "));
+                let _ = write!(out, "  |  {}", pairs.join(" "));
             }
             out.push('\n');
 
             // Surface the detail of anything that didn't pass.
             for check in stage.checks.iter().filter(|c| !c.passed) {
                 let mark = match check.severity {
-                    Severity::Error => "✗",
-                    Severity::Warn => "⚠",
+                    Severity::Error => "[error]",
+                    Severity::Warn => "[warn]",
                 };
                 if let Some(detail) = &check.detail {
                     let _ = writeln!(out, "         {mark} {}: {detail}", check.name);
@@ -150,7 +150,7 @@ impl DeploymentState {
 }
 
 /// Compact one-line rendering of a resolved JSON value for the preflight
-/// summary (`["a","b"]` → `[a,b]`, strings unquoted).
+/// summary (`["a","b"]` -> `[a,b]`, strings unquoted).
 fn render_value(value: &Value) -> String {
     match value {
         Value::String(s) => s.clone(),
@@ -207,7 +207,7 @@ pub struct StateFlags {
     pub activated: bool,
 }
 
-/// How much weight a failing check carries. `Error` checks gate the deploy —
+/// How much weight a failing check carries. `Error` checks gate the deploy -
 /// a failure fails the whole stage. `Warn` checks are advisory (e.g. a
 /// fork-tolerant URL mismatch); a failure downgrades the stage to `Warning`
 /// but does not block.
@@ -240,7 +240,7 @@ impl Check {
         }
     }
 
-    /// A failing gate check — fails the stage it belongs to.
+    /// A failing gate check - fails the stage it belongs to.
     pub fn fail(name: impl Into<String>, detail: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -264,12 +264,12 @@ impl Check {
 
 /// The ordered stages of the deploy validation pipeline. Each stage is a
 /// precondition for the next:
-/// 1. `Workspace` — is the local tree shippable (clean git).
-/// 2. `Manifest`  — does `aomi.toml` declare what we need.
-/// 3. `Platform`  — resolve the declared platform → repo + deploy branch.
-/// 4. `Backend`   — will the backend actually accept this (server tags, DB).
+/// 1. `Workspace` - is the local tree shippable (clean git).
+/// 2. `Manifest`  - does `aomi.toml` declare what we need.
+/// 3. `Platform`  - resolve the declared platform repo + deploy branch.
+/// 4. `Backend`   - will the backend actually accept this (server tags, DB).
 ///
-/// Stages 1–2 are offline (filled by `plan::to_state`); 3–4 are online
+/// Stages 1-2 are offline (filled by `plan::to_state`); 3-4 are online
 /// (filled by `preflight::run`).
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -297,9 +297,9 @@ impl StageId {
 pub enum StageStatus {
     /// All checks passed.
     Passed,
-    /// At least one `Error`-severity check failed — deploy is blocked here.
+    /// At least one `Error`-severity check failed - deploy is blocked here.
     Failed,
-    /// Only `Warn`-severity checks failed — advisory, not blocking.
+    /// Only `Warn`-severity checks failed - advisory, not blocking.
     Warning,
     /// Stage did not run (an upstream gate failed, or its inputs were absent).
     Skipped,
@@ -315,7 +315,7 @@ pub struct Stage {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub checks: Vec<Check>,
     /// Facts this stage established (e.g. the resolved repo + branch, or the
-    /// effective server_tags). Distinct from `checks` — these are outputs, not
+    /// effective server_tags). Distinct from `checks` - these are outputs, not
     /// pass/fail assertions.
     #[serde(default, skip_serializing_if = "Map::is_empty")]
     pub resolved: Map<String, Value>,
@@ -324,7 +324,7 @@ pub struct Stage {
 impl Stage {
     /// Build a stage from its checks, deriving `status` from their outcomes.
     pub fn new(stage: StageId, checks: Vec<Check>) -> Self {
-        let status = derive_status(&checks);
+        let status = Self::derive_status(&checks);
         Self {
             stage,
             status,
@@ -350,22 +350,22 @@ impl Stage {
         self.resolved.insert(key.to_string(), value);
         self
     }
-}
 
-/// Derive a stage's rolled-up status from its checks. Order-independent: any
-/// failed `Error` check ⇒ `Failed`; otherwise any failed `Warn` ⇒ `Warning`;
-/// otherwise `Passed`.
-fn derive_status(checks: &[Check]) -> StageStatus {
-    let mut status = StageStatus::Passed;
-    for check in checks {
-        if !check.passed {
-            match check.severity {
-                Severity::Error => return StageStatus::Failed,
-                Severity::Warn => status = StageStatus::Warning,
+    /// Derive a stage's rolled-up status from its checks. Order-independent:
+    /// any failed `Error` check means `Failed`; otherwise any failed `Warn`
+    /// means `Warning`; otherwise `Passed`.
+    fn derive_status(checks: &[Check]) -> StageStatus {
+        let mut status = StageStatus::Passed;
+        for check in checks {
+            if !check.passed {
+                match check.severity {
+                    Severity::Error => return StageStatus::Failed,
+                    Severity::Warn => status = StageStatus::Warning,
+                }
             }
         }
+        status
     }
-    status
 }
 
 pub fn deployment_path(source_repo_root: &Path) -> PathBuf {

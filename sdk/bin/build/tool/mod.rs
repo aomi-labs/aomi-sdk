@@ -213,15 +213,15 @@ fn ensure_workspace_excludes(root: &std::path::Path, platform: &str) -> Result<b
     }
     // Insert before the closing `]` of the exclude block. Best-effort string
     // manipulation: find `exclude = [` and the next `]`.
-    if let Some(start) = cargo.find("exclude = [") {
-        if let Some(end_offset) = cargo[start..].find(']') {
-            let end = start + end_offset;
-            let prefix = &cargo[..end];
-            let suffix = &cargo[end..];
-            let new_cargo = format!("{prefix}    {needle},\n{suffix}");
-            std::fs::write(&cargo_path, new_cargo)?;
-            return Ok(true);
-        }
+    if let Some(start) = cargo.find("exclude = [")
+        && let Some(end_offset) = cargo[start..].find(']')
+    {
+        let end = start + end_offset;
+        let prefix = &cargo[..end];
+        let suffix = &cargo[end..];
+        let new_cargo = format!("{prefix}    {needle},\n{suffix}");
+        std::fs::write(&cargo_path, new_cargo)?;
+        return Ok(true);
     }
     // No exclude block — silently skip rather than fail the gen.
     Ok(false)

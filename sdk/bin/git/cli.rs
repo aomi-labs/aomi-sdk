@@ -38,8 +38,8 @@
 //!   --json
 //! ```
 //!
-//! Defaults pyramid (both commands): CLI flag → `.aomi/deployment.json` in
-//! `--path` → backend lookup → hardcoded default. Each step is best-effort —
+//! Defaults pyramid (both commands): CLI flag -> `.aomi/deployment.json` in
+//! `--path` -> backend lookup -> hardcoded default. Each step is best-effort -
 //! a missing deployment.json or unreachable backend never aborts the plan,
 //! only the operation that genuinely needs the unresolved value.
 
@@ -143,7 +143,7 @@ impl DeployArgs {
             let deployment = Deployment::dry_run(&self.path, platform.clone(), self.allow_dirty)?;
             let mut state = deployment.to_state();
 
-            // Preflight is no longer a separate flag — dry-run always tries
+            // Preflight is no longer a separate flag - dry-run always tries
             // online checks if a backend URL is available. Offline still
             // produces a useful plan, just without backend-derived fields.
             if let Some(backend_url) = self.backend_url()
@@ -263,8 +263,8 @@ impl DeployArgs {
             return Ok(dir.clone());
         }
 
-        // Need a platform git URL to clone. Order: --git flag → aomi.toml
-        // [app].git → backend lookup.
+        // Need a platform git URL to clone. Order: --git flag -> aomi.toml
+        // [app].git -> backend lookup.
         let git_url = self.resolve_platform_git(platform, app).await?;
 
         // Need the target branch. Use aomi.toml's [app].branch if present,
@@ -275,7 +275,7 @@ impl DeployArgs {
             .unwrap_or_else(|| "publish".to_string());
 
         TransitCache::load()?.resolve(&git_url, &branch).with_context(|| {
-            "could not initialize transit clone — pass --platform-dir <DIR> to use a hand-managed clone"
+            "could not initialize transit clone - pass --platform-dir <DIR> to use a hand-managed clone"
         })
     }
 
@@ -307,9 +307,15 @@ impl DeployArgs {
         println!("     This polls CI and tells you when the release is ready to activate.");
         println!();
         println!("  2. Request activation from platform ops:");
-        println!("       aomi-git activate --request --path {}", self.path.display());
+        println!(
+            "       aomi-git activate --request --path {}",
+            self.path.display()
+        );
         println!("     This prints or posts your repo, app, and release for ops to activate.");
-        println!("     Join the Aomi apps Discord if needed: {}", crate::discord::DISCORD_INVITE);
+        println!(
+            "     Join the Aomi apps Discord if needed: {}",
+            crate::discord::DISCORD_INVITE
+        );
     }
 }
 
@@ -381,7 +387,7 @@ pub struct ActivateArgs {
 
     /// Don't activate. Build an activation request from `.aomi/deployment.json`
     /// for platform ops. With `--dry-run`, print the message; otherwise post it
-    /// using `AOMI_DISCORD_WEBHOOK_URL`.
+    /// using the code-owned Discord webhook.
     #[arg(long)]
     pub request: bool,
 
@@ -424,7 +430,7 @@ impl ActivateArgs {
     async fn request_activation(&self) -> Result<()> {
         let state = read_deployment_state(&self.path)?.ok_or_else(|| {
             anyhow!(
-                "no .aomi/deployment.json at {} — run `aomi-git deploy` first",
+                "no .aomi/deployment.json at {} - run `aomi-git deploy` first",
                 self.path.display()
             )
         })?;
@@ -443,7 +449,7 @@ impl ActivateArgs {
             .or_else(|| state.app.git.clone())
             .ok_or_else(|| {
                 anyhow!(
-                    "platform repo is unknown — run from a source repo whose aomi.toml \
+                    "platform repo is unknown - run from a source repo whose aomi.toml \
                      declares [app].git"
                 )
             })?;
@@ -456,16 +462,12 @@ impl ActivateArgs {
         };
 
         if self.dry_run {
-            let admin = std::env::var(crate::discord::DISCORD_ADMIN_ENV).ok();
-            println!("{}", request.message(admin.as_deref()));
-            println!(
-                "\n(dry-run: configure {} to POST this to Discord)",
-                crate::discord::DISCORD_WEBHOOK_ENV
-            );
+            println!("{}", request.message());
+            println!("\n(dry-run: not posted to Discord)");
             return Ok(());
         }
 
-        crate::discord::DiscordConfig::from_env()?.post(&request).await?;
+        request.post().await?;
         println!(
             "Posted activation request for `{}` to the Aomi apps Discord.",
             request.release_tag
@@ -475,7 +477,7 @@ impl ActivateArgs {
 
     pub async fn plan(&self) -> Result<ActivationPlan> {
         // Load .aomi/deployment.json once for the fallback pyramid. Missing
-        // is fine — we just have less to fall back on.
+        // is fine - we just have less to fall back on.
         let fallback = read_deployment_state(&self.path).ok().flatten();
 
         let release_tag = self
@@ -484,7 +486,7 @@ impl ActivateArgs {
             .or_else(|| fallback.as_ref().map(|s| s.target.release_tag.clone()))
             .ok_or_else(|| {
                 anyhow!(
-                    "release tag is required — pass it positionally, or run from a directory \
+                    "release tag is required - pass it positionally, or run from a directory \
                      with a prior `aomi-git deploy`'s .aomi/deployment.json"
                 )
             })?;
@@ -527,20 +529,17 @@ impl ActivateArgs {
             .or_else(|| fallback.as_ref().map(|s| s.source.digest.clone()));
 
         // Visibility follows the same defaults pyramid as every other field:
-        // CLI flag → deployment.json's app.public → hardcoded `private`.
+        // CLI flag -> deployment.json's app.public -> hardcoded `private`.
         let visibility = self
             .visibility
             .or_else(|| {
-                fallback
-                    .as_ref()
-                    .and_then(|s| s.app.public)
-                    .map(|public| {
-                        if public {
-                            Visibility::Public
-                        } else {
-                            Visibility::Private
-                        }
-                    })
+                fallback.as_ref().and_then(|s| s.app.public).map(|public| {
+                    if public {
+                        Visibility::Public
+                    } else {
+                        Visibility::Private
+                    }
+                })
             })
             .unwrap_or(Visibility::Private);
 
@@ -608,7 +607,7 @@ impl ActivateArgs {
     ///    `server_tags`: operator can narrow but cannot widen. The
     ///    contributor's intent at build time is the activation ceiling.
     ///
-    /// Empty result is an error — activation needs at least one target tag.
+    /// Empty result is an error - activation needs at least one target tag.
     fn resolve_target_tags(&self, fallback: Option<&DeploymentState>) -> Result<Vec<String>> {
         let server_tags: Vec<String> = fallback
             .map(|s| s.target.server_tags.clone())
@@ -617,7 +616,7 @@ impl ActivateArgs {
         if self.target_tags.is_empty() {
             if server_tags.is_empty() {
                 bail!(
-                    "no target tags supplied — pass `--target-tag <TAG>` (repeatable), \
+                    "no target tags supplied - pass `--target-tag <TAG>` (repeatable), \
                      or run from a source repo whose aomi.toml [app].server_tags declares them \
                      (and whose .aomi/deployment.json carries them)"
                 );
@@ -701,7 +700,7 @@ pub struct StatusArgs {
     /// Backend base URL. When CI has finished, status also reports the app's
     /// backend registry row + runtime health. Defaults to `AOMI_BACKEND_URL`,
     /// then to the public backend implied by the build's `server_tags`
-    /// (`staging` → staging, `prod` → prod). Pass `--backend ''` to skip.
+    /// (`staging` -> staging, `prod` -> prod). Pass `--backend ''` to skip.
     #[arg(long, value_name = "URL")]
     pub backend: Option<String>,
 
@@ -725,7 +724,7 @@ impl StatusArgs {
     pub async fn run(self) -> Result<()> {
         let state = read_deployment_state(&self.path)?.ok_or_else(|| {
             anyhow!(
-                "no .aomi/deployment.json at {} — run `aomi-git deploy` first, or pass --path \
+                "no .aomi/deployment.json at {} - run `aomi-git deploy` first, or pass --path \
                  to the source repo",
                 self.path.display()
             )
@@ -736,7 +735,7 @@ impl StatusArgs {
             .clone()
             .unwrap_or_else(|| state.target.release_tag.clone());
 
-        // Resolve owner/repo: --git flag → deployment.json [app].git.
+        // Resolve owner/repo: --git flag -> deployment.json [app].git.
         let raw_repo = self
             .git
             .as_deref()
@@ -746,7 +745,7 @@ impl StatusArgs {
             .or_else(|| state.app.git.clone())
             .ok_or_else(|| {
                 anyhow!(
-                    "platform repo is unknown — pass --git <URL|owner/repo> or run from a source \
+                    "platform repo is unknown - pass --git <URL|owner/repo> or run from a source \
                      repo whose aomi.toml declares [app].git"
                 )
             })?;
@@ -831,7 +830,10 @@ impl StatusArgs {
     /// Map declared `server_tags` to the public backend most likely to run it:
     /// staging first, then prod. Custom tags return None so we never guess.
     fn default_backend_from_tags(tags: &[String]) -> Option<String> {
-        if tags.iter().any(|t| t.trim().eq_ignore_ascii_case("staging")) {
+        if tags
+            .iter()
+            .any(|t| t.trim().eq_ignore_ascii_case("staging"))
+        {
             Some("https://staging-api.aomi.dev".to_string())
         } else if tags.iter().any(|t| t.trim().eq_ignore_ascii_case("prod")) {
             Some("https://api.aomi.dev".to_string())

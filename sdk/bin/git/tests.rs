@@ -1209,7 +1209,10 @@ async fn status_errors_without_deployment_json() {
         panic!("expected status");
     };
 
-    let err = args.run().await.expect_err("missing deployment.json must error");
+    let err = args
+        .run()
+        .await
+        .expect_err("missing deployment.json must error");
     let msg = err.to_string();
     assert!(
         msg.contains("deployment.json") && msg.contains("aomi-git deploy"),
