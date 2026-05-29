@@ -11,6 +11,7 @@ mod plan;
 mod platform;
 mod preflight;
 mod stage;
+mod status;
 mod transit;
 
 #[cfg(test)]

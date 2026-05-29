@@ -30,6 +30,12 @@
 //!   --path <DIR>             # source repo (for .aomi/deployment.json fallback)
 //!   --dry-run
 //!   --json
+//!
+//! status [RELEASE_TAG]
+//!   --git <URL|owner/repo>   # falls back to .aomi/deployment.json [app].git
+//!   --access-token <$ENV|VAL># private-repo GitHub reads
+//!   --path <DIR>             # source repo (for .aomi/deployment.json lookup)
+//!   --json
 //! ```
 //!
 //! Defaults pyramid (both commands): CLI flag → `.aomi/deployment.json` in
@@ -65,6 +71,7 @@ impl Cli {
         match self.command {
             Command::Deploy(args) => args.run().await,
             Command::Activate(args) => args.run().await,
+            Command::Status(args) => args.run().await,
         }
     }
 }
@@ -75,6 +82,8 @@ pub enum Command {
     Deploy(DeployArgs),
     /// Activate a published Aomi app release in the backend.
     Activate(ActivateArgs),
+    /// Check publication status (CI build + release availability) for a deploy.
+    Status(StatusArgs),
 }
 
 // ---------------------------------------------------------------------------
@@ -326,9 +335,10 @@ pub struct ActivateArgs {
     #[arg(long, value_name = "$ENV|VAL")]
     pub access_token: Option<String>,
 
-    /// Activation visibility.
-    #[arg(long, value_enum, default_value_t = Visibility::Private)]
-    pub visibility: Visibility,
+    /// Activation visibility (`aomi.toml [app].public`). Falls back to
+    /// deployment.json's app.public, then to `private`.
+    #[arg(long, value_enum)]
+    pub visibility: Option<Visibility>,
 
     /// Display label for the app registry row (`aomi.toml [app].display_name`).
     /// Falls back to deployment.json's app.display_name.
@@ -439,12 +449,30 @@ impl ActivateArgs {
             .clone()
             .or_else(|| fallback.as_ref().map(|s| s.source.digest.clone()));
 
+        // Visibility follows the same defaults pyramid as every other field:
+        // CLI flag → deployment.json's app.public → hardcoded `private`.
+        let visibility = self
+            .visibility
+            .or_else(|| {
+                fallback
+                    .as_ref()
+                    .and_then(|s| s.app.public)
+                    .map(|public| {
+                        if public {
+                            Visibility::Public
+                        } else {
+                            Visibility::Private
+                        }
+                    })
+            })
+            .unwrap_or(Visibility::Private);
+
         ActivationPlan::new(
             &release_tag,
             platform,
             backend_url,
             activation_token,
-            self.visibility,
+            visibility,
             source_repo,
             github_token,
             target_tags,
@@ -579,58 +607,147 @@ impl ActivateArgs {
     }
 }
 
-/// Print a Next-steps block after a successful push, before activation has
-/// landed. Tells the contributor exactly what to watch and exactly what to
-/// run next — eliminates the "what now?" cliff that the older deploy summary
-/// dropped readers off of.
-fn print_next_steps(outcome: &crate::plan::DeployOutcome, state: &DeploymentState) {
-    let source_repo = &outcome.deployment.publish.source_repo;
-    let release_tag = &outcome.deployment.publish.release_tag;
+// ---------------------------------------------------------------------------
+// Status
+// ---------------------------------------------------------------------------
 
-    // Pick a default backend URL for the activate suggestion that matches the
-    // build's declared server_tags — staging if [staging] (the common case),
-    // else don't guess. The contributor can override.
-    let suggested_backend = match state
-        .target
-        .server_tags
-        .iter()
-        .map(|t| t.trim().to_ascii_lowercase())
-        .collect::<Vec<_>>()
-        .as_slice()
-    {
-        tags if tags.iter().any(|t| t == "prod") => Some("https://api.aomi.dev"),
-        tags if tags.iter().any(|t| t == "staging") => Some("https://staging-api.aomi.dev"),
-        _ => None,
+#[derive(Debug, Args, Clone)]
+pub struct StatusArgs {
+    /// Release tag to check (e.g. `apps-my-bot-abc1234`). When omitted, read
+    /// from `.aomi/deployment.json` at `--path`.
+    pub release_tag: Option<String>,
+
+    /// Platform repo location. Falls back to deployment.json's app.git.
+    #[arg(long, value_name = "URL|owner/repo")]
+    pub git: Option<String>,
+
+    /// GitHub PAT (or `$ENV_VAR_NAME` reference) for reading a private platform
+    /// repo's Actions/release status. Omit for public repos. Falls back to
+    /// deployment.json's app.access_token.
+    #[arg(long, value_name = "$ENV|VAL")]
+    pub access_token: Option<String>,
+
+    /// Source repo path for the `.aomi/deployment.json` lookup. Defaults to the
+    /// current directory.
+    #[arg(long, default_value = ".")]
+    pub path: PathBuf,
+
+    /// Print the status report as JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+impl StatusArgs {
+    pub async fn run(self) -> Result<()> {
+        let state = read_deployment_state(&self.path)?.ok_or_else(|| {
+            anyhow!(
+                "no .aomi/deployment.json at {} — run `aomi-git deploy` first, or pass --path \
+                 to the source repo",
+                self.path.display()
+            )
+        })?;
+
+        let release_tag = self
+            .release_tag
+            .clone()
+            .unwrap_or_else(|| state.target.release_tag.clone());
+
+        // Resolve owner/repo: --git flag → deployment.json [app].git.
+        let raw_repo = self
+            .git
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .or_else(|| state.app.git.clone())
+            .ok_or_else(|| {
+                anyhow!(
+                    "platform repo is unknown — pass --git <URL|owner/repo> or run from a source \
+                     repo whose aomi.toml declares [app].git"
+                )
+            })?;
+        let repo = normalize_github_repo(&raw_repo)?;
+
+        let github_token = resolve_access_token(
+            self.access_token.as_deref(),
+            state.app.access_token.as_deref(),
+        )?;
+
+        let req = crate::status::StatusRequest {
+            repo,
+            release_tag,
+            branch: state.target.branch.clone(),
+            github_token,
+            local: crate::status::LocalState {
+                pushed: state.state.pushed,
+                deployed: state.state.deployed,
+                activated: state.state.activated,
+                updated_at: state.updated_at,
+            },
+        };
+
+        let report = crate::status::StatusReport::collect(req).await;
+        if self.json {
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        } else {
+            print!("{}", report.render());
+        }
+        Ok(())
+    }
+}
+
+/// Resolve an `--access-token` value (or its deployment.json fallback) to a
+/// concrete token. `$ENV_VAR_NAME` references are dereferenced from the
+/// environment; a bare value is taken literally. `None` (public repo) is fine.
+fn resolve_access_token(flag: Option<&str>, fallback: Option<&str>) -> Result<Option<String>> {
+    let Some(value) = flag
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .or_else(|| fallback.map(str::trim).filter(|s| !s.is_empty()).map(str::to_string))
+    else {
+        return Ok(None);
     };
+    let Some(env_name) = value.strip_prefix('$') else {
+        return Ok(Some(value));
+    };
+    match std::env::var(env_name) {
+        Ok(v) if !v.is_empty() => Ok(Some(v)),
+        Ok(_) => bail!("env var `{env_name}` (from --access-token) is empty"),
+        Err(_) => bail!("env var `{env_name}` (from --access-token) is not set"),
+    }
+}
+
+/// URL contributors click to request activation from platform ops. The
+/// release tag and repo ride along as query params so the landing page can
+/// post a pre-filled, admin-tagging message into the `#aomi-apps` Discord
+/// channel on the contributor's behalf (server-side webhook) — the contributor
+/// never holds the activation token, so requesting is the real "next action".
+const REQUEST_ACTIVATION_URL: &str = "https://aomi.dev/request-activation";
+
+/// Print a Next-steps block after a successful push, before activation has
+/// landed.
+///
+/// Two steps, mirroring the trust model: the contributor (1) watches the
+/// publication land via `aomi-git status`, then (2) requests activation from
+/// platform ops via a Discord deep link — because contributors don't hold the
+/// activation token, *asking* is the next action, not running `activate`.
+fn print_next_steps(outcome: &crate::plan::DeployOutcome, _state: &DeploymentState) {
+    let release_tag = &outcome.deployment.publish.release_tag;
+    let repo = &outcome.deployment.publish.source_repo;
 
     println!();
     println!("Next steps:");
-    println!("  1. Watch CI build the release (~1\u{2013}3 min):");
-    println!("       https://github.com/{source_repo}/actions");
+    println!("  1. Track the build & release:");
+    println!("       aomi-git status");
+    println!("     (polls CI and tells you when the release is ready to activate)");
     println!();
-    println!("  2. Once the release appears at:");
-    println!("       https://github.com/{source_repo}/releases/tag/{release_tag}");
-    println!("     it's ready to activate.");
-    println!();
-    println!("  3. Activate (from this directory \u{2014} args resolve from .aomi/deployment.json):");
-    match suggested_backend {
-        Some(backend) => {
-            println!("       AOMI_APP_ACTIVATION_TOKEN=<token> \\");
-            println!("       AOMI_BACKEND_URL={backend} \\");
-            println!("         aomi-git activate");
-        }
-        None => {
-            println!("       AOMI_APP_ACTIVATION_TOKEN=<token> \\");
-            println!("       AOMI_BACKEND_URL=<backend-url> \\");
-            println!("         aomi-git activate");
-        }
-    }
-    println!();
+    println!("  2. Request activation from platform ops:");
     println!(
-        "     Don't have the activation token? Request activation from the platform"
+        "       {REQUEST_ACTIVATION_URL}?release={release_tag}&repo={repo}"
     );
     println!(
-        "     operator (see CONTRIBUTING.md in the platform repo) with this release tag:"
+        "     Opens #aomi-apps and pings @platform-ops with your release tag."
     );
-    println!("       {release_tag}");
+    println!("     (Contributors don't hold the activation token — ops activate for you.)");
 }

@@ -1193,6 +1193,92 @@ fn git_transport_allows_owned_dirty_platform_files() {
     assert!(platform.path("apps/zora/aomi.toml").is_file());
 }
 
+#[tokio::test]
+async fn status_errors_without_deployment_json() {
+    // `aomi-git status` in a directory that never had a deploy should fail with
+    // a message pointing at `aomi-git deploy` — and must not touch the network.
+    let repo = TestRepo::new();
+    let cli = Cli::try_parse_from([
+        "aomi-git",
+        "status",
+        "--path",
+        repo.root().to_str().unwrap(),
+    ])
+    .expect("parse status");
+    let CliCommand::Status(args) = cli.command else {
+        panic!("expected status");
+    };
+
+    let err = args.run().await.expect_err("missing deployment.json must error");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("deployment.json") && msg.contains("aomi-git deploy"),
+        "error should point at running deploy first: {msg}"
+    );
+}
+
+#[test]
+fn status_report_renders_ready_to_activate() {
+    // Offline rendering check: a published release + green CI on an
+    // unactivated app should advertise "ready to activate".
+    use crate::status::{CiStatus, LocalState, ReleaseStatus, StatusReport};
+
+    let report = StatusReport {
+        repo: "aomi-labs/community-apps".to_string(),
+        release_tag: "apps-my-bot-abc1234".to_string(),
+        branch: "publish".to_string(),
+        local: LocalState {
+            pushed: true,
+            deployed: true,
+            activated: false,
+            updated_at: 0,
+        },
+        ci: CiStatus::Success {
+            name: Some("publish-apps".to_string()),
+            url: "https://github.com/aomi-labs/community-apps/actions/runs/1".to_string(),
+        },
+        release: ReleaseStatus::Available {
+            url: "https://github.com/aomi-labs/community-apps/releases/tag/apps-my-bot-abc1234"
+                .to_string(),
+            assets: 2,
+        },
+    };
+
+    assert!(report.ready_to_activate());
+    let rendered = report.render();
+    assert!(rendered.contains("ready to activate"), "{rendered}");
+    assert!(rendered.contains("Request activation"), "{rendered}");
+    assert!(rendered.contains("apps-my-bot-abc1234"), "{rendered}");
+}
+
+#[test]
+fn status_report_pending_release_is_not_ready() {
+    use crate::status::{CiStatus, LocalState, ReleaseStatus, StatusReport};
+
+    let report = StatusReport {
+        repo: "aomi-labs/community-apps".to_string(),
+        release_tag: "apps-my-bot-abc1234".to_string(),
+        branch: "publish".to_string(),
+        local: LocalState {
+            pushed: true,
+            deployed: true,
+            activated: false,
+            updated_at: 0,
+        },
+        ci: CiStatus::Running {
+            name: None,
+            url: "https://github.com/aomi-labs/community-apps/actions/runs/2".to_string(),
+        },
+        release: ReleaseStatus::Pending,
+    };
+
+    assert!(!report.ready_to_activate());
+    let rendered = report.render();
+    assert!(rendered.contains("running"), "{rendered}");
+    assert!(rendered.contains("pending"), "{rendered}");
+    assert!(!rendered.contains("Request activation"), "{rendered}");
+}
+
 struct TestRepo {
     tmp: TempDir,
 }
