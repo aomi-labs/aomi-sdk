@@ -86,6 +86,15 @@ impl App {
 }
 
 impl App {
+    /// Convenience: discover the app config rooted at `path`. Equivalent to
+    /// `App::discover(&GitRepo::discover(path)?)`. Useful for CLI defaulting
+    /// where we want aomi.toml's [app] field values without a full
+    /// `Deployment::dry_run`.
+    pub fn load(path: &Path) -> Result<Self> {
+        let repo = GitRepo::discover(path)?;
+        Self::discover(&repo)
+    }
+
     pub fn discover(repo: &GitRepo) -> Result<Self> {
         let mut dir = repo.start_dir().to_path_buf();
 

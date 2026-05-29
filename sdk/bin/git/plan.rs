@@ -48,6 +48,10 @@ impl Deployment {
         Self::build(Mode::DryRun, platform, app, source, Vec::new())
     }
 
+    // No CLI surface invokes this since `--stage-dir` was retired. Kept as
+    // a library-side utility (and to anchor source_staging_* regression tests
+    // that lock down the on-disk staging contract `git_transport` depends on).
+    #[allow(dead_code)]
     pub fn stage(
         start: impl AsRef<Path>,
         platform: Platform,

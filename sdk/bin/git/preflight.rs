@@ -70,6 +70,26 @@ pub async fn fetch_server_tags(backend_url: &str) -> Result<Vec<String>> {
     Ok(normalize_tags(parsed.server_tags))
 }
 
+/// Resolve `platform` to its GitHub repo URL via the backend registry. Used
+/// when neither `--git` nor `aomi.toml [app].git` was provided.
+pub async fn lookup_platform_git(
+    backend_url: &str,
+    platform: &crate::platform::Platform,
+) -> Result<String> {
+    let platforms = fetch_platforms(backend_url).await?;
+    let needle = platform.as_str().trim().to_ascii_lowercase();
+    let matched = platforms
+        .into_iter()
+        .find(|p| p.name.eq_ignore_ascii_case(&needle))
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "backend does not know about platform `{needle}` — declare [app].git in aomi.toml \
+                 or pass --git <URL>"
+            )
+        })?;
+    Ok(matched.github_repo)
+}
+
 /// Augment a deployment state with online preflight results. Mutates `state`
 /// in place. Always extends `state.checks[]`; only sets
 /// `state.platform.resolved_deploy_branch` and `state.state.deployed` when a
@@ -213,7 +233,7 @@ fn normalize_tags(values: Vec<String>) -> Vec<String> {
         })
 }
 
-fn normalize_github_url(value: &str) -> String {
+pub(crate) fn normalize_github_url(value: &str) -> String {
     let mut repo = value
         .trim()
         .trim_end_matches('/')
