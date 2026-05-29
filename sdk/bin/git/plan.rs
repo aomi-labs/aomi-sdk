@@ -2,9 +2,12 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 use crate::app::App;
-use crate::deployment_state::{Check, DeploymentState, StagedFile, StateFlags, TargetSpec};
+use crate::deployment_state::{
+    Check, DeploymentState, Stage, StageId, StagedFile, StateFlags, TargetSpec,
+};
 use crate::git::{GitRepo, Source};
 use crate::platform::{
     Platform, PublishTarget, commit_message, ensure_dirty_scope, verify_remote_origin,
@@ -48,6 +51,10 @@ impl Deployment {
         Self::build(Mode::DryRun, platform, app, source, Vec::new())
     }
 
+    // No CLI surface invokes this since `--stage-dir` was retired. Kept as
+    // a library-side utility (and to anchor source_staging_* regression tests
+    // that lock down the on-disk staging contract `git_transport` depends on).
+    #[allow(dead_code)]
     pub fn stage(
         start: impl AsRef<Path>,
         platform: Platform,
@@ -168,50 +175,51 @@ impl Deployment {
         };
         let mut state = DeploymentState::new(self.app.clone(), self.source.clone(), target);
 
-        // Offline checks: things we can verify without network.
-        state.checks.push(Check {
-            name: "git_clean".to_string(),
-            passed: !self.source.dirty,
-            detail: if self.source.dirty {
-                Some("git tree is dirty".to_string())
+        // Stage 1 — workspace: is the local tree shippable?
+        let workspace = Stage::new(
+            StageId::Workspace,
+            vec![if self.source.dirty {
+                Check::fail("git_clean", "git tree is dirty")
             } else {
-                None
-            },
-        });
-        state.checks.push(if self.app.platform.is_some() {
-            Check::pass("platform_declared", self.app.platform.clone().unwrap())
-        } else {
-            Check::fail(
+                Check::pass("git_clean", "working tree clean")
+            }],
+        );
+
+        // Stage 2 — manifest: does aomi.toml declare what we need?
+        // `platform` is a hard gate (nothing resolves without it). `git` is
+        // advisory: the backend lookup can supply the repo, so a missing
+        // [app].git only costs us the `git_url_matches_platform` check later.
+        let mut manifest_checks = vec![match &self.app.platform {
+            Some(platform) => Check::pass("platform_declared", platform.clone()),
+            None => Check::fail(
                 "platform_declared",
                 "aomi.toml is missing [app].platform — preflight cannot resolve target",
-            )
-        });
-        state.checks.push(if self.app.git.is_some() {
-            Check::pass("git_declared", self.app.git.clone().unwrap())
-        } else {
-            Check::fail(
+            ),
+        }];
+        manifest_checks.push(match &self.app.git {
+            Some(git) => Check::pass("git_declared", git.clone()),
+            None => Check::warn(
                 "git_declared",
-                "aomi.toml is missing [app].git — preflight cannot verify push access",
-            )
+                false,
+                "aomi.toml has no [app].git — will fall back to backend lookup; \
+                 git_url verification will be skipped",
+            ),
         });
-        // Surface server_tags in the plan so deployment.json shows the
-        // effective value, and flag when we filled in the default — operators
-        // looking at a deploy can see at a glance whether their aomi.toml
-        // pinned a target or whether we silently picked staging.
-        state.checks.push(if self.app.server_tags_defaulted {
-            Check::pass(
-                "server_tags",
-                format!(
-                    "defaulted to [{}] (aomi.toml did not declare server_tags)",
-                    self.app.server_tags.join(",")
-                ),
-            )
-        } else {
-            Check::pass(
-                "server_tags",
-                format!("[{}] (from aomi.toml)", self.app.server_tags.join(",")),
-            )
-        });
+        // server_tags is a resolved fact, not a pass/fail check: it always has
+        // a value (defaulting to [staging]). Surface it — plus whether we
+        // filled in the default — so an operator can see at a glance whether
+        // their aomi.toml pinned a target or we silently picked staging.
+        let manifest = Stage::new(StageId::Manifest, manifest_checks)
+            .with_resolved("server_tags", json!(self.app.server_tags))
+            .with_resolved("defaulted", json!(self.app.server_tags_defaulted));
+
+        // Stages 3 & 4 are online; seed them as skipped placeholders that
+        // preflight upgrades once it can reach the backend.
+        let needs_backend = "requires backend preflight (--backend / AOMI_BACKEND_URL)";
+        let platform = Stage::skipped(StageId::Platform, needs_backend);
+        let backend = Stage::skipped(StageId::Backend, needs_backend);
+
+        state.stages = vec![workspace, manifest, platform, backend];
 
         // State flags start false; preflight + deploy flip them.
         state.state = StateFlags::default();

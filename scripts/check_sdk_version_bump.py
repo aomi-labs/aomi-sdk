@@ -43,7 +43,11 @@ def base_sdk_version(base_rev: str) -> str | None:
 
 def changed_sdk_files(base_rev: str, head_rev: str) -> list[str]:
     output = run("git", "diff", "--name-only", base_rev, head_rev, "--", "sdk")
-    return [line for line in output.splitlines() if line]
+    return [
+        line
+        for line in output.splitlines()
+        if line and not line.startswith(("sdk/bin/", "sdk/examples/"))
+    ]
 
 
 def write_output(path: str | None, key: str, value: str) -> None:

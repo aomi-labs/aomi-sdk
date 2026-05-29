@@ -21,8 +21,8 @@ This repository contains public dynamic app crates, the public SDK they build ag
 
 - `apps/*`: official app crates that compile to dynamic plugins
 - `sdk`: the public plugin SDK used by those apps
-- `sdk/bin/build`: the **`aomi-build`** CLI — scaffold apps from OpenAPI specs, compile and validate plugins (formerly the `xtask` crate)
-- `sdk/bin/git`: the **`aomi-git`** CLI — `deploy` and `activate` for shipping apps to a platform hosting repo (community-apps, krexa-hosted-apps, etc.)
+- `sdk/bin/build`: the **`aomi-build`** CLI — scaffold apps from OpenAPI specs, compile and validate plugins (formerly the `xtask` crate). See [`docs/aomi-build.md`](./docs/aomi-build.md)
+- `sdk/bin/git`: the **`aomi-git`** CLI — `deploy` and `activate` for shipping apps to a platform hosting repo (community-apps, krexa-hosted-apps, etc.). See [`docs/aomi-git.md`](./docs/aomi-git.md)
 - `sdk/examples/app-template-http`: reference app showing the recommended file layout for a new plugin
 - `docs/host-interop.md`: the public host capability contract used by execution-oriented apps
 - `docs/repo-structure.md`: how to structure a new app crate in this repo
