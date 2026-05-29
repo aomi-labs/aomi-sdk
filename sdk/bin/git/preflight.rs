@@ -136,8 +136,10 @@ pub async fn run(state: &mut DeploymentState, backend_url: &str) -> Result<()> {
     // stage so `backend_reachable` always lives in one place — the gate that
     // opens platform resolution (stage 3) and, transitively, the backend
     // checks (stage 4).
-    let backend_reachable =
-        Check::pass("backend_reachable", format!("found {platform_count} platforms"));
+    let backend_reachable = Check::pass(
+        "backend_reachable",
+        format!("found {platform_count} platforms"),
+    );
 
     let Some(remote) = matched else {
         state.replace_stage(Stage::new(
