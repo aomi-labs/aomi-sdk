@@ -131,13 +131,24 @@ pub async fn run(state: &mut DeploymentState, backend_url: &str) -> Result<()> {
         .into_iter()
         .find(|p| p.name.eq_ignore_ascii_case(&normalized));
 
+    // The fetch succeeded, so the backend is reachable regardless of whether
+    // the platform resolves. Record that as the first check of the Platform
+    // stage so `backend_reachable` always lives in one place — the gate that
+    // opens platform resolution (stage 3) and, transitively, the backend
+    // checks (stage 4).
+    let backend_reachable =
+        Check::pass("backend_reachable", format!("found {platform_count} platforms"));
+
     let Some(remote) = matched else {
         state.replace_stage(Stage::new(
             StageId::Platform,
-            vec![Check::fail(
-                "platform_resolved",
-                format!("platform `{declared}` not registered with backend"),
-            )],
+            vec![
+                backend_reachable,
+                Check::fail(
+                    "platform_resolved",
+                    format!("platform `{declared}` not registered with backend"),
+                ),
+            ],
         ));
         state.replace_stage(Stage::skipped(StageId::Backend, "platform did not resolve"));
         state.touch();
@@ -145,10 +156,13 @@ pub async fn run(state: &mut DeploymentState, backend_url: &str) -> Result<()> {
     };
 
     state.platform.resolved_deploy_branch = Some(remote.deployment_branch.clone());
-    let mut platform_checks = vec![Check::pass(
-        "platform_resolved",
-        format!("{} -> {}", remote.name, remote.github_repo),
-    )];
+    let mut platform_checks = vec![
+        backend_reachable,
+        Check::pass(
+            "platform_resolved",
+            format!("{} -> {}", remote.name, remote.github_repo),
+        ),
+    ];
 
     let on_release_branch = state.target.branch == remote.deployment_branch;
     platform_checks.push(if on_release_branch {
@@ -174,8 +188,11 @@ pub async fn run(state: &mut DeploymentState, backend_url: &str) -> Result<()> {
             (Ok(normalized_user), Ok(normalized_remote))
                 if normalized_user == normalized_remote =>
             {
-                platform_checks.push(Check::pass(
+                // Advisory (fork-tolerant): always warn-severity so a reader
+                // sees a consistent severity whether it passes or fails.
+                platform_checks.push(Check::warn(
                     "git_url_matches_platform",
+                    true,
                     remote.github_repo.clone(),
                 ));
             }
@@ -217,43 +234,49 @@ pub async fn run(state: &mut DeploymentState, backend_url: &str) -> Result<()> {
     );
     state.recompute_deployed();
 
-    let mut backend_checks = vec![Check::pass(
-        "backend_reachable",
-        format!("found {platform_count} platforms"),
-    )];
-    if !state.target.server_tags.is_empty() {
-        match fetch_server_tags(backend_url).await {
-            Ok(server_tags) => {
-                let requested = normalize_tags(state.target.server_tags.clone());
-                let matches = requested.iter().all(|tag| server_tags.contains(tag));
-                backend_checks.push(if matches {
-                    Check::pass(
-                        "server_tags_match",
-                        format!(
-                            "target [{}] subset of server [{}]",
-                            requested.join(","),
-                            server_tags.join(",")
-                        ),
-                    )
-                } else {
-                    let detail = format!(
-                        "target [{}] is not a subset of server [{}]",
-                        requested.join(","),
-                        server_tags.join(",")
-                    );
-                    state.errors.push(detail.clone());
-                    Check::fail("server_tags_match", detail)
-                });
-            }
-            Err(e) => {
-                let detail = format!("GET /api/control/server-tags failed: {e}");
-                state.errors.push(detail.clone());
-                backend_checks.push(Check::fail("server_tags_match", detail));
-            }
-        }
+    // Stage 4 — backend acceptance. With no declared tags there is nothing for
+    // the backend to gate on, so the stage is genuinely skipped rather than
+    // vacuously passing.
+    if state.target.server_tags.is_empty() {
+        state.replace_stage(Stage::skipped(
+            StageId::Backend,
+            "aomi.toml declares no server_tags",
+        ));
+        state.touch();
+        return Ok(());
     }
 
-    state.replace_stage(Stage::new(StageId::Backend, backend_checks));
+    let server_tags_subset = match fetch_server_tags(backend_url).await {
+        Ok(server_tags) => {
+            let requested = normalize_tags(state.target.server_tags.clone());
+            let matches = requested.iter().all(|tag| server_tags.contains(tag));
+            if matches {
+                Check::pass(
+                    "server_tags_subset",
+                    format!(
+                        "target [{}] subset of server [{}]",
+                        requested.join(","),
+                        server_tags.join(",")
+                    ),
+                )
+            } else {
+                let detail = format!(
+                    "target [{}] is not a subset of server [{}]",
+                    requested.join(","),
+                    server_tags.join(",")
+                );
+                state.errors.push(detail.clone());
+                Check::fail("server_tags_subset", detail)
+            }
+        }
+        Err(e) => {
+            let detail = format!("GET /api/control/server-tags failed: {e}");
+            state.errors.push(detail.clone());
+            Check::fail("server_tags_subset", detail)
+        }
+    };
+
+    state.replace_stage(Stage::new(StageId::Backend, vec![server_tags_subset]));
     state.touch();
     Ok(())
 }
