@@ -205,7 +205,9 @@ impl ConfigPlan {
     ) -> Result<Self> {
         let app_name = app_name.trim().to_ascii_lowercase();
         if app_name.is_empty() {
-            bail!("app name is required for config — pass --app or run from a deployed source repo");
+            bail!(
+                "app name is required for config — pass --app or run from a deployed source repo"
+            );
         }
         if !app_name
             .chars()

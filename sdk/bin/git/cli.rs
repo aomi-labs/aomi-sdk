@@ -919,9 +919,7 @@ impl ConfigArgs {
         // At least one mutating flag must be present — config without an intent
         // is a no-op (and would needlessly re-send the label/metadata).
         if self.public.is_none() && self.display_name.is_none() {
-            bail!(
-                "nothing to configure — pass --public <BOOL> and/or --display-name <STR>"
-            );
+            bail!("nothing to configure — pass --public <BOOL> and/or --display-name <STR>");
         }
 
         let plan = self.plan()?;
