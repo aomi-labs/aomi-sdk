@@ -36,7 +36,23 @@
 //!   --access-token <$ENV|VAL># private-repo GitHub reads
 //!   --path <DIR>             # source repo (for .aomi/deployment.json lookup)
 //!   --json
+//!
+//! config
+//!   --app <NAME>             # app slug; falls back to .aomi/deployment.json
+//!   --platform <NAME>
+//!   --backend <URL>
+//!   --activation-token <T>   # AOMI_APP_ACTIVATION_TOKEN
+//!   --public <BOOL>          # flip aomi.toml [app].public live
+//!   --display-name <STR>     # registry label
+//!   --path <DIR>             # source repo (for .aomi/deployment.json lookup)
+//!   --dry-run
+//!   --json
 //! ```
+//!
+//! `config` is a metadata-only edit: it reuses the activate endpoint with the
+//! platform activation token but omits source_repo/app_release_tag, so the
+//! backend updates the existing registry row in place without re-fetching the
+//! release bundle.
 //!
 //! Defaults pyramid (both commands): CLI flag -> `.aomi/deployment.json` in
 //! `--path` -> backend lookup -> hardcoded default. Each step is best-effort -
@@ -48,7 +64,9 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, Parser, Subcommand};
 
-use crate::activate::{ACTIVATION_TOKEN_ENV, ActivationPlan, BACKEND_URL_ENV, Visibility};
+use crate::activate::{
+    ACTIVATION_TOKEN_ENV, ActivationPlan, BACKEND_URL_ENV, ConfigPlan, Visibility,
+};
 use crate::app::App;
 use crate::deployment_state::{
     DeploymentState, read as read_deployment_state, write as write_deployment_state,
@@ -72,6 +90,7 @@ impl Cli {
             Command::Deploy(args) => args.run().await,
             Command::Activate(args) => args.run().await,
             Command::Status(args) => args.run().await,
+            Command::Config(args) => args.run().await,
         }
     }
 }
@@ -84,6 +103,9 @@ pub enum Command {
     Activate(ActivateArgs),
     /// Check publication status (CI build + release availability) for a deploy.
     Status(StatusArgs),
+    /// Edit a live app's registry config (visibility, label, target tags)
+    /// without re-deploying or re-fetching the release.
+    Config(ConfigArgs),
 }
 
 // ---------------------------------------------------------------------------
@@ -840,5 +862,148 @@ impl StatusArgs {
         } else {
             None
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Config
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Args, Clone)]
+pub struct ConfigArgs {
+    /// App slug to reconfigure. Falls back to `.aomi/deployment.json`'s
+    /// `app.name` at `--path`.
+    #[arg(long, value_name = "NAME")]
+    pub app: Option<String>,
+
+    /// Platform tag (`aomi.toml [app].platform`). Falls back to
+    /// deployment.json's app.platform, then to `community`.
+    #[arg(long, value_name = "NAME")]
+    pub platform: Option<Platform>,
+
+    /// Backend base URL (default: `AOMI_BACKEND_URL`).
+    #[arg(long, value_name = "URL")]
+    pub backend: Option<String>,
+
+    /// Platform activation token (default: `AOMI_APP_ACTIVATION_TOKEN`).
+    #[arg(long, value_name = "TOKEN")]
+    pub activation_token: Option<String>,
+
+    /// Flip the app's visibility live (`aomi.toml [app].public`). Omit to leave
+    /// the backend's current visibility untouched.
+    #[arg(long, value_name = "BOOL")]
+    pub public: Option<bool>,
+
+    /// New display label for the registry row. When omitted, the app's existing
+    /// `display_name` (from deployment.json) is re-sent so the backend's upsert
+    /// doesn't overwrite the label with the bare slug.
+    #[arg(long, value_name = "STR")]
+    pub display_name: Option<String>,
+
+    /// Source repo path for the `.aomi/deployment.json` fallback. Defaults to
+    /// the current directory.
+    #[arg(long, default_value = ".")]
+    pub path: PathBuf,
+
+    /// Print the planned config request without sending it.
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Print the backend response as JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+impl ConfigArgs {
+    pub async fn run(self) -> Result<()> {
+        // At least one mutating flag must be present — config without an intent
+        // is a no-op (and would needlessly re-send the label/metadata).
+        if self.public.is_none() && self.display_name.is_none() {
+            bail!("nothing to configure — pass --public <BOOL> and/or --display-name <STR>");
+        }
+
+        let plan = self.plan()?;
+        if self.dry_run {
+            let printable = serde_json::json!({
+                "endpoint": plan.endpoint(),
+                "request":  plan.request,
+            });
+            println!("{}", serde_json::to_string_pretty(&printable)?);
+            return Ok(());
+        }
+
+        let response = plan.execute().await?;
+        if self.json {
+            println!("{}", serde_json::to_string_pretty(&response)?);
+        } else {
+            println!("configured {}", plan.request.name);
+        }
+        Ok(())
+    }
+
+    fn plan(&self) -> Result<ConfigPlan> {
+        // Load .aomi/deployment.json once for the fallback pyramid. Missing is
+        // fine — the user can still drive everything via flags.
+        let fallback = read_deployment_state(&self.path).ok().flatten();
+
+        let app_name = self
+            .app
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .or_else(|| fallback.as_ref().map(|s| s.app.name.clone()))
+            .ok_or_else(|| {
+                anyhow!(
+                    "app name is required — pass --app <NAME>, or run from a source repo with a \
+                     prior `aomi-git deploy`'s .aomi/deployment.json"
+                )
+            })?;
+
+        let platform = self
+            .platform
+            .clone()
+            .or_else(|| {
+                fallback
+                    .as_ref()
+                    .and_then(|s| s.app.platform.as_deref())
+                    .map(Platform::new)
+            })
+            .unwrap_or_else(Platform::community);
+
+        let backend_url = self
+            .backend
+            .clone()
+            .or_else(|| std::env::var(BACKEND_URL_ENV).ok())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| anyhow!("backend URL is required via --backend or {BACKEND_URL_ENV}"))?;
+
+        let activation_token = self
+            .activation_token
+            .clone()
+            .or_else(|| std::env::var(ACTIVATION_TOKEN_ENV).ok())
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                anyhow!(
+                    "activation token is required via --activation-token or {ACTIVATION_TOKEN_ENV}"
+                )
+            })?;
+
+        // Always resolve a display label to send: the explicit flag, else the
+        // app's existing display_name. The backend rewrites the label on every
+        // upsert, so re-sending the current value is what keeps it stable.
+        let display_name = self
+            .display_name
+            .clone()
+            .or_else(|| fallback.as_ref().map(|s| s.app.display_name.clone()));
+
+        ConfigPlan::new(
+            app_name,
+            platform,
+            backend_url,
+            activation_token,
+            self.public,
+            display_name,
+        )
     }
 }
