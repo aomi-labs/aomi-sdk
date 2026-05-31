@@ -24,10 +24,11 @@ use serde_json::json;
 pub const DISCORD_INVITE: &str = "https://discord.gg/VF5Zq8ddu";
 
 /// Incoming webhook for the activation-request channel.
-const DISCORD_WEBHOOK: &str = "https://discord.com/api/webhooks/REPLACE_ME";
+const DISCORD_WEBHOOK: &str =
+    "https://discord.com/api/webhooks/1510784125009657876/DVnF_g6TgBsnrzRBBu5hKfvsRvA6U7fYFfJnDTQMWT5pkn6uxGJ1io4LyN9E7CrPDfWp";
 
 /// Ops role/user mention (`<@&ID>` or `<@ID>`).
-const DISCORD_ADMIN: &str = "<@&REPLACE_ME>";
+const DISCORD_ADMIN: &str = "<@969173216536952893>";
 
 /// The activation ask, independent of how it's delivered.
 pub struct ActivationRequest {
