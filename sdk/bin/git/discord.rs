@@ -28,7 +28,7 @@ const DISCORD_WEBHOOK: &str =
     "https://discord.com/api/webhooks/1510784125009657876/DVnF_g6TgBsnrzRBBu5hKfvsRvA6U7fYFfJnDTQMWT5pkn6uxGJ1io4LyN9E7CrPDfWp";
 
 /// Ops role/user mention (`<@&ID>` or `<@ID>`).
-const DISCORD_ADMIN: &str = "<@969173216536952893>";
+const DISCORD_ADMIN: &str = "<@&1510790865520693348>";
 
 /// The activation ask, independent of how it's delivered.
 pub struct ActivationRequest {
