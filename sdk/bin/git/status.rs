@@ -15,11 +15,20 @@
 //! as `unknown` rather than aborting, so `status` stays useful offline (it can
 //! still print the local `.aomi/deployment.json` flags).
 
+use std::time::Duration;
+
 use anyhow::{Result, anyhow};
 use serde::{Deserialize, Serialize};
 
 const GITHUB_API: &str = "https://api.github.com";
 const UA: &str = concat!("aomi-git/", env!("CARGO_PKG_VERSION"));
+
+/// Cap how long any single probe (GitHub or backend) may take. `status` is
+/// best-effort — a stalled connection must degrade to `unknown`, never hang the
+/// command. Covers the whole request; `connect_timeout` bounds the TCP/TLS
+/// handshake specifically (the part that stalls on a flaky network).
+const PROBE_TIMEOUT: Duration = Duration::from_secs(12);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
 
 /// Inputs for a status report, pre-resolved by the CLI layer.
 pub struct StatusRequest {
@@ -281,10 +290,16 @@ struct StatusProbe {
 
 impl StatusProbe {
     fn new(req: StatusRequest) -> Self {
-        Self {
-            http: reqwest::Client::new(),
-            req,
-        }
+        // A timeout-bounded client so a stalled probe can't hang the command.
+        // Fall back to the default client if the builder ever fails (it won't
+        // with these options, but we never want construction to panic here).
+        let http = reqwest::Client::builder()
+            .timeout(PROBE_TIMEOUT)
+            .connect_timeout(CONNECT_TIMEOUT)
+            .user_agent(UA)
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+        Self { http, req }
     }
 
     async fn collect(self) -> StatusReport {
