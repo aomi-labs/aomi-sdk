@@ -35,7 +35,11 @@ pub mod host {
     use super::RouteTarget;
 
     macro_rules! host_target {
-        ($name:ident, $tool:literal) => {
+        // Accept any number of attributes (including `///` doc comments)
+        // and forward them to the generated struct so docs.rs renders
+        // them. Existing call sites without attributes still match.
+        ($(#[$attr:meta])* $name:ident, $tool:literal) => {
+            $(#[$attr])*
             #[derive(Debug, Clone, Copy, Default)]
             pub struct $name;
 
@@ -60,25 +64,95 @@ pub mod host {
     host_target!(GetAccountInfo, "get_account_info");
     host_target!(SyncChain, "sync_chain");
 
-    // SVM (Solana) primitives.
+    // ── SVM (Solana) primitives ──────────────────────────────────────────
     //
-    // `SignTxSolana` is the singular sign-only counterpart to `CommitEip712`:
-    // takes a fully-built unsigned Solana transaction (base64 versioned/legacy
-    // bytes) and returns the signed transaction bytes. The host wallet decodes
-    // the tx, prompts the user for approval, signs with the connected SVM
-    // wallet, and binds the signed bytes back to the route's awaited alias.
+    // Route-target markers for the SVM verbs in the `svm-core` namespace
+    // family (split into `svm-reads`, `svm-stage`, `svm-commit`,
+    // `svm-sign-data`, `svm-bundle` on the host side per ADR 0004
+    // § Decision B). App `build_*` tools emit route plans that drive
+    // these as continuations — mirroring how EVM apps use `CommitEip712`
+    // for the typed-data signing step.
     //
-    // Args contract:
-    //   { "unsigned_tx": "<base64 serialized solana tx>",
-    //     "description": "<human-readable summary for wallet UX>" }
+    // Three lanes from ADR 0003 § Decision A:
+    //   - Lane 1 (ix list)        — `SvmStageIx`  → `svm_stage_ix`
+    //   - Lane 2 (received tx)    — host-side producer blocked on ADR
+    //                               0005 storage primitive (#38-pipeline-b).
+    //                               `SvmStageTx` marker will be added
+    //                               then. For now apps holding raw
+    //                               bytes pass them inline through
+    //                               `SvmSignTx`.
+    //   - Lane 3 (off-chain msg)  — `SvmSignData` → `svm_sign_data`
     //
-    // Bound artifact (string): the base64 signed tx bytes, ready to be POSTed
-    // to whichever venue (e.g. byreal `/dex/v2/send-swap-tx`) is expecting it.
+    // Two consumers per ADR 0003 § Decision B + ADR 0004 § C.2:
+    //   - Stage / sim / commit:
+    //       `SvmStageIx`     → `svm_stage_ix`
+    //       `SvmSimulateTx`  → `svm_simulate_tx` (accepts ix_ids; will
+    //                          accept tx_id post-#38-pipeline-b)
+    //       `SvmCommitTx`    → `svm_commit_tx` (carries
+    //                          `mode: "wallet" | "internal-rpc"` arg;
+    //                          internal-rpc errors loud until host
+    //                          #38-pipeline-c lands the broadcast loop)
+    //   - Sign-only (app-broadcast pattern, ADR 0004 § C.2):
+    //       `SvmSignTx`      → `svm_sign_tx` (blocked on
+    //                          host #39-svm-apps-c; marker shipped
+    //                          forward-compat — byreal-style apps wrap
+    //                          signing here, then POST signed bytes to
+    //                          their own venue endpoint)
     //
-    // Note: there is intentionally no `SignTxsSolana` (plural) — Solana
-    // wallets sign one tx per user prompt. Apps that need multiple signed txs
-    // should issue separate `SignTxSolana` route steps.
-    host_target!(SignTxSolana, "sign_tx_solana");
+    // Args contracts and bound-artifact shapes are documented at each
+    // verb's host-side implementation in product-mono
+    // `aomi/crates/tools/src/svm/`. Apps that need to inspect them
+    // should follow the host-tool docstring as the source of truth.
+    //
+    // Naming convention: every SVM marker is `Svm*` (PascalCase) →
+    // `svm_*` (snake_case). The host is the single source of truth for
+    // the snake_case verb name.
+
+    // Lane 1 producer — stage a `Vec<Instruction>`. Returns one
+    // `pending_ix_id` per instruction; downstream simulate / commit
+    // verbs consume the id list. ADR 0003 § Decision A.
+    host_target!(SvmStageIx, "svm_stage_ix");
+
+    // Simulate a staged transaction. Accepts either `ix_ids` (Lane 1)
+    // or — post-#38-pipeline-b — `tx_id` (Lane 2). Carries
+    // `mode: "litesvm" | "rpc"` per ADR 0002.
+    host_target!(SvmSimulateTx, "svm_simulate_tx");
+
+    // Wallet- or runtime-broadcast commit. Carries
+    // `mode: "wallet" | "internal-rpc"` per ADR 0003 § Decision B.
+    // Wallet mode pushes a `SvmTxApproval` envelope through the host
+    // wallet plumbing; internal-rpc returns a loud not-implemented
+    // error until host #38-pipeline-c lands the broadcast loop +
+    // `WalletCallback::Tx*` variants.
+    host_target!(SvmCommitTx, "svm_commit_tx");
+
+    // Sign-only verb for the **app-broadcast** pattern (ADR 0004 §
+    // C.2). byreal-style apps wrap signing here, then forward the
+    // signed bytes to their own venue endpoint (e.g. byreal
+    // `/dex/v2/send-swap-tx`, Jupiter `/execute`, Raydium tx-API).
+    // Args contract (transitional pre-#39-svm-apps-b):
+    //   { "unsigned_tx": "<base64>", "description": "..." }
+    // Args contract (Lane 2 staged, post-#39-svm-apps-b):
+    //   { "tx_id": <u32>, "description": "..." }
+    // Bound artifact (string): base64 signed tx bytes.
+    //
+    // Blocked on host #39-svm-apps-c — host tool `svm_sign_tx`
+    // doesn't exist yet. Marker ships forward-compat so apps can be
+    // authored against the right shape; runtime route dispatch will
+    // log warn-skip until the host catches up.
+    //
+    // Note: there is intentionally no `SvmSignTxs` (plural) — Solana
+    // wallets sign one tx per user prompt. Apps that need multiple
+    // signed txs should issue separate `SvmSignTx` route steps.
+    host_target!(SvmSignTx, "svm_sign_tx");
+
+    // Lane 3 producer + consumer — off-chain message signing for
+    // commit-reveal flows, Squads proposal payloads, wallet-attested
+    // intents. Host-side renamed from `svm_commit_message` in iter 39
+    // (ADR 0003 OQ #3 closed). Args contract:
+    //   { "message_base64": "...", "description": "...",
+    //     "domain": {...}, "kind": "..." }
+    host_target!(SvmSignData, "svm_sign_data");
 }
 
 #[derive(Debug, Clone)]
@@ -316,7 +390,7 @@ impl<'a> NextStepBuilder<'a> {
     ///
     /// Aliases must be unique within a route plan, but the *tool name* does not
     /// have to be — a single plan may have multiple `commit_eip712` / `stage_tx`
-    /// / `sign_tx_solana` steps each binding to a distinct alias. The runtime
+    /// / `svm_sign_tx` steps each binding to a distinct alias. The runtime
     /// consumes aliases in FIFO order per tool name, so list the steps in the
     /// order you expect the LLM/user to drive them (use `.note(...)` to
     /// reinforce the order in the suggested-action prompt).
@@ -582,6 +656,72 @@ mod tests {
     }
 
     #[test]
+    fn svm_host_route_target_names_match_host_tools() {
+        // Frozen string contract — the snake_case tool names returned by
+        // `RouteTarget::tool_name()` must exactly match the host-side
+        // tool names registered in `aomi/crates/tools/src/namespace.rs`
+        // sub-namespace impls (`SvmStageNamespace::get_tool_names`,
+        // `SvmCommitNamespace::get_tool_names`, etc.).
+        //
+        // A drift here means an app's route continuation dispatches to a
+        // tool name the host doesn't recognize → runtime warn-skip and
+        // dead route. Bump SDK in lockstep with any host rename.
+        assert_eq!(
+            <host::SvmStageIx as RouteTarget>::tool_name(),
+            "svm_stage_ix"
+        );
+        assert_eq!(
+            <host::SvmSimulateTx as RouteTarget>::tool_name(),
+            "svm_simulate_tx"
+        );
+        assert_eq!(
+            <host::SvmCommitTx as RouteTarget>::tool_name(),
+            "svm_commit_tx"
+        );
+        assert_eq!(
+            <host::SvmSignTx as RouteTarget>::tool_name(),
+            "svm_sign_tx"
+        );
+        assert_eq!(
+            <host::SvmSignData as RouteTarget>::tool_name(),
+            "svm_sign_data"
+        );
+    }
+
+    #[test]
+    fn svm_stage_commit_route_plan_serializes() {
+        // Smoke-test the canonical SVM build/submit pattern as it'd
+        // appear in a wallet-broadcast app (e.g. a future Marinade
+        // `build_stake`): stage instructions → simulate → commit with
+        // wallet mode. Exercises the four new SVM markers in one plan.
+        let plan = ToolReturn::route(json!({"status": "previewed"}))
+            .next(|next| {
+                next.add::<host::SvmStageIx>(json!({
+                    "instructions": [{"program_id": "Stake11...", "accounts": [], "data_base64": "..."}],
+                    "description": "stake 1 SOL on Marinade",
+                }))
+                .bind_as("ix_ids");
+            })
+            .after::<host::SvmCommitTx>(json!({
+                "mode": "wallet",
+                "version": "v0",
+            }))
+            .awaits("ix_ids")
+            .build();
+
+        let serialized = serde_json::to_value(&plan).unwrap();
+        let routes = serialized
+            .get("__aomi_tool_routes")
+            .and_then(Value::as_array)
+            .expect("routes present");
+        let tools: Vec<&str> = routes
+            .iter()
+            .filter_map(|r| r.get("tool").and_then(Value::as_str))
+            .collect();
+        assert_eq!(tools, vec!["svm_stage_ix", "svm_commit_tx"]);
+    }
+
+    #[test]
     fn route_builder_serializes_bound_artifact_plan() {
         let tool_return = ToolReturn::route(json!({"status": "awaiting_wallet"}))
             .next(|next| {
@@ -627,11 +767,11 @@ mod tests {
     fn route_builder_serializes_solana_sign_plan() {
         // Mirror of `route_builder_serializes_bound_artifact_plan` but for
         // the SVM (Solana) sign-only flow: app builds an unsigned tx, host
-        // signs via SignTxSolana, the bound `signed_tx` artifact then feeds
+        // signs via SvmSignTx, the bound `signed_tx` artifact then feeds
         // into the submit step which forwards the signed bytes upstream.
         let tool_return = ToolReturn::route(json!({"status": "awaiting_wallet"}))
             .next(|next| {
-                next.add::<host::SignTxSolana>(json!({
+                next.add::<host::SvmSignTx>(json!({
                     "unsigned_tx": "AgAB...base64...",
                     "description": "Swap 1 USDC for 0.005 SOL via byreal RFQ",
                 }))
@@ -651,7 +791,7 @@ mod tests {
                 "__aomi_tool_value": {"status": "awaiting_wallet"},
                 "__aomi_tool_routes": [
                     {
-                        "tool": "sign_tx_solana",
+                        "tool": "svm_sign_tx",
                         "args": {
                             "unsigned_tx": "AgAB...base64...",
                             "description": "Swap 1 USDC for 0.005 SOL via byreal RFQ",

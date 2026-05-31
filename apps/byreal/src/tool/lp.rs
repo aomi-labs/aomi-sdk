@@ -3,7 +3,7 @@
 //!
 //! Reads expose the byreal-unique social-LP dataset (top performers,
 //! per-provider strategy histories, current incentive epoch). Writes cover
-//! reward claiming via the `host::SignTxSolana` route.
+//! reward claiming via the `host::SvmSignTx` route.
 //!
 //! v1 explicitly handles the single-tx reward-claim case. byreal's
 //! `encode-v2` endpoint may return multiple unsigned txs per call (one per
@@ -176,7 +176,7 @@ impl DynAomiTool for BuildClaimRewards {
     type App = ByrealApp;
     type Args = BuildClaimRewardsArgs;
     const NAME: &'static str = "byreal_lp_build_claim_rewards";
-    const DESCRIPTION: &'static str = "Build (do not submit) a Copy Farming reward / fee claim. Internally encodes the claim against byreal's incentive contract and returns a preview + a routed `sign_tx_solana` step the host wallet signs. v1 supports single-transaction claims only — if byreal's encoder returns multiple txs (large position batches), this errors with a hint to retry with fewer position_addresses at a time.";
+    const DESCRIPTION: &'static str = "Build (do not submit) a Copy Farming reward / fee claim. Internally encodes the claim against byreal's incentive contract and returns a preview + a routed `svm_sign_tx` step the host wallet signs. v1 supports single-transaction claims only — if byreal's encoder returns multiple txs (large position batches), this errors with a hint to retry with fewer position_addresses at a time.";
 
     fn run_with_routes(
         _app: &Self::App,
@@ -263,7 +263,7 @@ pub(crate) struct SubmitClaimRewardsArgs {
     pub order_code: String,
     /// Wallet that owns the positions.
     pub wallet: String,
-    /// Base64 signed Solana tx. Filled in by the host wallet via `sign_tx_solana`.
+    /// Base64 signed Solana tx. Filled in by the host wallet via `svm_sign_tx`.
     pub signed_tx: Option<String>,
 }
 
@@ -278,7 +278,7 @@ impl DynAomiTool for SubmitClaimRewards {
     fn run(_app: &Self::App, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         validate_confirmation(args.confirmation.as_deref())?;
         let signed = args.signed_tx.as_deref().ok_or_else(|| {
-            "[byreal] signed_tx missing — wait for sign_tx_solana callback".to_string()
+            "[byreal] signed_tx missing — wait for svm_sign_tx callback".to_string()
         })?;
         // byreal's submit endpoint expects the signed tx wrapped in an array under
         // `signedTxPayload` — match what the frontend sends.

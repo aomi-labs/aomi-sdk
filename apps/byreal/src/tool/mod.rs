@@ -91,7 +91,7 @@ pub(crate) fn build_evm_signed_routes<Submit: RouteTarget>(
         .map_err(|e| format!("[byreal] route build failed: {e}"))
 }
 
-/// Build a `sign_tx_solana` route plan: app emits an unsigned Solana tx
+/// Build a `svm_sign_tx` route plan: app emits an unsigned Solana tx
 /// (base64 versioned bytes) + a continuation, host wallet signs, runtime
 /// splices the signed bytes into the `submit_*` tool args under
 /// `signed_tx`.
@@ -106,7 +106,7 @@ pub(crate) fn build_solana_signed_routes<Submit: RouteTarget>(
 ) -> Result<ToolReturn, String> {
     ToolReturn::route(value)
         .next(|next| {
-            next.add::<host::SignTxSolana>(json!({
+            next.add::<host::SvmSignTx>(json!({
                 "unsigned_tx": unsigned_tx_b64,
                 "description": description,
             }))

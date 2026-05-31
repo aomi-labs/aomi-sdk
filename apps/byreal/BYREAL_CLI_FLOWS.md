@@ -144,9 +144,9 @@ sequenceDiagram
     Byreal-->>App: routerType, transaction (unsigned base64), quoteId, orderId
 
     App-->>LLM: ToolReturn preview plus route
-    Note right of App: route adds host SignTxSolana then awaits signed_tx
+    Note right of App: route adds host SvmSignTx then awaits signed_tx
 
-    LLM->>Host: sign_tx_solana unsigned_tx
+    LLM->>Host: svm_sign_tx unsigned_tx
     Host->>Host: wallet decodes versioned tx, user approves, ed25519 sign
     Host-->>LLM: signed_tx (base64)
 
@@ -191,7 +191,7 @@ sequenceDiagram
     Byreal-->>App: orderCode, rewardEncodeItems=[unsigned tx]
     App-->>LLM: ToolReturn preview plus route
 
-    LLM->>Host: sign_tx_solana unsigned_tx
+    LLM->>Host: svm_sign_tx unsigned_tx
     Host-->>LLM: signed_tx
 
     LLM->>App: byreal_lp_submit_claim_rewards order_code wallet signed_tx
@@ -222,7 +222,7 @@ flowchart LR
     EVM -->|signature| App
     App -->|POST /exchange| HL
 
-    App -->|sign_tx_solana base64 tx| SVM
+    App -->|svm_sign_tx base64 tx| SVM
     SVM -->|signed bytes| App
     App -->|POST /dex /router /rfq| Byreal
     Byreal -->|forward signed tx| Solana

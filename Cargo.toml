@@ -24,6 +24,7 @@ exclude = [
     "apps/l2beat",
     "apps/lifi",
     "apps/manifold",
+    "apps/marinade",
     "apps/molinar",
     "apps/morpho",
     "apps/neynar",
