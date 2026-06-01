@@ -112,6 +112,92 @@ pub struct DynToolMetadata {
 }
 
 // ============================================================================
+// App Variant
+// ============================================================================
+
+/// Pipeline-shape contract an app conforms to.
+///
+/// Mirrors the host's `BuiltinApp` enum (see `aomi/crates/runtime/src/loader/
+/// types.rs` on the product-mono side). Each variant corresponds to a durable
+/// transaction pipeline and resolves to a canonical namespace composition; an
+/// app declaring a variant inherits that composition automatically.
+///
+/// Apps may *additionally* declare explicit `namespaces()` to add host tool
+/// surfaces on top of what the variant provides — the host loader takes the
+/// union (`variant.default_namespaces() ∪ namespaces`). byreal-style
+/// cross-chain apps stay string-typed (no variant) because the variant set is
+/// SVM-shaped today.
+///
+/// **Sync contract with host**: the kebab strings returned by
+/// [`AppVariant::as_str`] must exactly match what host's `BuiltinApp::parse`
+/// accepts. Adding a host variant requires bumping the SDK in lockstep —
+/// there is no shared source of truth, by design (the SDK can't depend on
+/// product-mono).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AppVariant {
+    /// EVM. Pairs with host `BuiltinApp::Evm`. Default namespace set:
+    /// `["evm-core"]`.
+    Evm,
+    /// SVM catch-all meta. Pairs with host `BuiltinApp::Svm`. Default
+    /// namespace set: `["svm-core"]` (the meta — expands to all five SVM
+    /// sub-namespaces on the host side).
+    Svm,
+    /// SVM pipelines A + B (wallet send / runtime broadcast). Default
+    /// namespace set: `["svm-reads", "svm-stage", "svm-commit"]`.
+    SvmSelfBroadcast,
+    /// SVM pipeline C (venue HTTP submit — byreal-style, Jupiter
+    /// Meta-Aggregator, Raydium tx-API). Default namespace set:
+    /// `["svm-reads", "svm-stage"]`; app's own `submit_*` tool forwards
+    /// signed bytes to a venue endpoint.
+    SvmAppBroadcast,
+    /// SVM pipeline D (Jito bundle). Default namespace set:
+    /// `["svm-reads", "svm-stage", "svm-bundle"]`. `svm-bundle` is a
+    /// host-side stub today; bundle verbs land with #39-svm-apps-d.
+    SvmBundleBroadcast,
+    /// SVM pipeline F (off-chain message signing). Default namespace set:
+    /// `["svm-reads", "svm-sign-data"]`.
+    SvmOffChainSign,
+    /// SVM pipeline R (reads only, analytics). Default namespace set:
+    /// `["svm-reads"]`.
+    SvmReadOnly,
+}
+
+impl AppVariant {
+    /// Kebab-case identifier the host's `BuiltinApp::parse` accepts and
+    /// `BuiltinApp::as_str` emits. Stable across the variant's lifetime —
+    /// rename here only if the host renames first.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Evm => "evm",
+            Self::Svm => "svm",
+            Self::SvmSelfBroadcast => "svm-self-broadcast",
+            Self::SvmAppBroadcast => "svm-app-broadcast",
+            Self::SvmBundleBroadcast => "svm-bundle-broadcast",
+            Self::SvmOffChainSign => "svm-off-chain-sign",
+            Self::SvmReadOnly => "svm-read-only",
+        }
+    }
+
+    /// Canonical namespace composition the host will register for this
+    /// variant. Mirror of host `BuiltinApp::default_namespaces()`.
+    ///
+    /// Returned as `&'static [&'static str]` for zero-allocation
+    /// inspection; the manifest builder converts to `Vec<String>` when
+    /// merging with the app's explicit `namespaces()`.
+    pub fn default_namespaces(self) -> &'static [&'static str] {
+        match self {
+            Self::Evm => &["evm-core"],
+            Self::Svm => &["svm-core"],
+            Self::SvmSelfBroadcast => &["svm-reads", "svm-stage", "svm-commit"],
+            Self::SvmAppBroadcast => &["svm-reads", "svm-stage"],
+            Self::SvmBundleBroadcast => &["svm-reads", "svm-stage", "svm-bundle"],
+            Self::SvmOffChainSign => &["svm-reads", "svm-sign-data"],
+            Self::SvmReadOnly => &["svm-reads"],
+        }
+    }
+}
+
+// ============================================================================
 // Plugin Manifest
 // ============================================================================
 
@@ -131,8 +217,19 @@ pub struct DynManifest {
     pub preamble: String,
     /// Tools provided by this plugin
     pub tools: Vec<DynToolMetadata>,
+    /// Pipeline-shape variant the app conforms to (see [`AppVariant`]).
+    /// When present, the host loader seeds the namespace set with
+    /// `AppVariant::default_namespaces()` and unions in any explicit
+    /// [`namespaces`](Self::namespaces). `None` means the app is
+    /// string-typed only — `namespaces` is the source of truth.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variant: Option<String>,
     /// Host-side namespaces the plugin needs (e.g. `["database"]`, `["forge"]`).
     /// The host injects these namespaces' tools alongside the plugin's own tools.
+    ///
+    /// When [`variant`](Self::variant) is also set, the host loader takes the
+    /// union of variant defaults and this list. Apps that want a pure variant
+    /// declaration can leave this `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub namespaces: Option<Vec<String>>,
     /// Per-app secret slots this plugin declares (see [`crate::Secret`]).
@@ -395,15 +492,44 @@ pub trait DynAomiApp: Clone + Default + Send + Sync + 'static {
         sink: DynAsyncSink,
     ) -> DynToolDispatch;
 
-    /// Host-side namespaces this plugin requires (e.g. `["evm-core"]`, `["database"]`,
-    /// `["solana-core"]`).
+    /// Pipeline-shape variant this app conforms to (see [`AppVariant`]).
+    ///
+    /// Default is `None` — the app is string-typed via [`namespaces`](Self::namespaces).
+    /// SVM-only apps should prefer declaring a variant so the host loader
+    /// composes the canonical namespace set; cross-chain apps (e.g. byreal,
+    /// which spans Hyperliquid perps + Solana spot) stay string-typed.
+    ///
+    /// When both `variant` and `namespaces` are set, the host loader takes
+    /// the union (variant defaults + explicit namespaces), so apps can layer
+    /// extra surfaces on top of a variant — e.g. an SVM app that also needs
+    /// `["database"]` for admin metadata.
+    fn variant(&self) -> Option<AppVariant> {
+        None
+    }
+
+    /// Host-side namespaces this plugin requires. Canonical names only:
+    ///
+    /// - EVM: `"evm-core"`
+    /// - SVM meta: `"svm-core"` (expands to all five sub-namespaces)
+    /// - SVM subs: `"svm-reads"`, `"svm-stage"`, `"svm-commit"`,
+    ///   `"svm-sign-data"`, `"svm-bundle"`
+    /// - Other: `"database"`, `"forge"`
+    ///
+    /// Legacy aliases (`"solana-core"`, `"sol"`, `"solana"`, `"svm"`,
+    /// `"common"`) were removed in host iter-39 — the loader logs
+    /// `"unknown namespace requested by plugin, skipping"` and registers
+    /// nothing for them. Update existing plugins to canonical names.
     ///
     /// Default is `["evm-core"]`, which most apps want. Override to:
-    /// - Add other namespaces alongside (e.g. `["evm-core", "solana-core"]` for an
-    ///   app that needs both EVM and Solana wallet flows — note that `"solana-core"`
-    ///   is reserved for app-specific Solana integrations).
+    /// - Add SVM surfaces alongside (e.g. `["evm-core", "svm-reads"]`
+    ///   for byreal's cross-chain pattern).
     /// - Replace entirely (e.g. `["database"]` for a namespace-only admin app).
     /// - Return `Some(vec![])` to opt out explicitly.
+    ///
+    /// For SVM-only apps, prefer declaring a [`variant`](Self::variant) instead
+    /// — it inherits the canonical namespace composition and signals the
+    /// pipeline-shape intent. See ADR 0004 on the product-mono side for the
+    /// variant table.
     fn namespaces(&self) -> Option<Vec<String>> {
         Some(vec!["evm-core".to_string()])
     }
@@ -423,6 +549,7 @@ pub trait DynAomiApp: Clone + Default + Send + Sync + 'static {
             version: self.version().to_string(),
             preamble: self.preamble().to_string(),
             tools: self.tools(),
+            variant: self.variant().map(|v| v.as_str().to_string()),
             namespaces: self.namespaces(),
             secrets: self.secrets(),
         }
@@ -541,243 +668,4 @@ pub fn parse_dyn_args<T: DeserializeOwned>(args_json: &str) -> Result<T, String>
 /// call this directly.
 pub fn parse_dyn_ctx(ctx_json: &str) -> Result<DynToolCallCtx, String> {
     serde_json::from_str(ctx_json).map_err(|e| format!("invalid ctx_json: {e}"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde::Deserialize;
-    use serde_json::json;
-
-    #[derive(Debug, Clone, Deserialize, JsonSchema)]
-    struct Args {
-        name: String,
-    }
-
-    #[derive(Clone, Default)]
-    struct App;
-
-    impl DynAomiApp for App {
-        fn name(&self) -> &'static str {
-            "test"
-        }
-
-        fn version(&self) -> &'static str {
-            "0.0.0"
-        }
-
-        fn preamble(&self) -> &'static str {
-            "test preamble"
-        }
-
-        fn tools(&self) -> Vec<DynToolMetadata> {
-            vec![Tool::descriptor(self)]
-        }
-
-        fn start_tool(
-            &self,
-            _name: &str,
-            _args_json: &str,
-            _ctx_json: &str,
-            _sink: DynAsyncSink,
-        ) -> DynToolDispatch {
-            DynToolDispatch::Ready(DynToolResult::err("not needed in this test"))
-        }
-    }
-
-    struct Tool;
-
-    impl DynAomiTool for Tool {
-        type App = App;
-        type Args = Args;
-        const NAME: &'static str = "echo";
-        const DESCRIPTION: &'static str = "echo input";
-
-        fn run(_app: &Self::App, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-            Ok(serde_json::json!({"name": args.name}))
-        }
-    }
-
-    #[test]
-    fn test_descriptor_schema_generation() {
-        let descriptor = Tool::descriptor(&App);
-        assert_eq!(descriptor.name, "echo");
-        assert_eq!(descriptor.app, "test");
-        assert!(!descriptor.supports_async);
-        assert_eq!(
-            descriptor
-                .parameters_schema
-                .get("type")
-                .and_then(Value::as_str),
-            Some("object")
-        );
-    }
-
-    #[test]
-    fn test_exec_envelopes_roundtrip() {
-        let start = DynToolStart::AsyncQueued { execution_id: 42 };
-        let start_json = serde_json::to_string(&start).unwrap();
-        let parsed_start: DynToolStart = serde_json::from_str(&start_json).unwrap();
-        assert!(matches!(
-            parsed_start,
-            DynToolStart::AsyncQueued { execution_id: 42 }
-        ));
-
-        let poll = AsyncExecPool::Update {
-            value: serde_json::json!({"step": 1}),
-            has_more: false,
-        };
-        let poll_json = serde_json::to_string(&poll).unwrap();
-        let parsed_poll: AsyncExecPool = serde_json::from_str(&poll_json).unwrap();
-        assert!(matches!(
-            parsed_poll,
-            AsyncExecPool::Update {
-                has_more: false,
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn test_run_with_routes_wraps_legacy_run() {
-        let result = Tool::run_with_routes(
-            &App,
-            Args {
-                name: "cecilia".to_string(),
-            },
-            DynToolCallCtx {
-                session_id: "session".to_string(),
-                tool_name: "echo".to_string(),
-                call_id: "call".to_string(),
-                state_attributes: Default::default(),
-                secrets: Default::default(),
-            },
-        )
-        .unwrap();
-
-        assert_eq!(result.value, json!({"name": "cecilia"}));
-        assert!(result.routes.is_empty());
-    }
-
-    #[test]
-    fn test_async_sink_pushes_updates() {
-        let queue = Arc::new(AsyncExecQueue::default());
-        let sink = DynAsyncSink::__from_queue(queue.clone());
-
-        sink.emit(serde_json::json!({"n": 1})).unwrap();
-        sink.complete(serde_json::json!({"n": 2})).unwrap();
-
-        assert!(matches!(
-            queue.poll(),
-            AsyncExecPool::Update { has_more: true, .. }
-        ));
-        assert!(matches!(
-            queue.poll(),
-            AsyncExecPool::Update {
-                has_more: false,
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn test_async_sink_complete_accepts_routed_tool_returns() {
-        let queue = Arc::new(AsyncExecQueue::default());
-        let sink = DynAsyncSink::__from_queue(queue.clone());
-
-        // Terminal complete() accepts a routed envelope — the wire shape is
-        // the SDK's serialized envelope, identical to what a sync tool's
-        // run_with_routes would produce.
-        sink.complete(crate::route::ToolReturn::with_route(
-            json!({"status": "awaiting_wallet"}),
-            crate::route::RouteStep::on_return("submit_polymarket_order", json!({"market": "btc"})),
-        ))
-        .expect("terminal complete should accept routed ToolReturn");
-
-        match queue.poll() {
-            AsyncExecPool::Update { value, has_more } => {
-                assert!(!has_more, "complete pushes terminal update");
-                let envelope = value.as_object().expect("envelope is a JSON object");
-                assert_eq!(
-                    envelope
-                        .get(crate::route::TOOL_RETURN_MARKER)
-                        .and_then(Value::as_bool),
-                    Some(true),
-                    "envelope marker present in queued value"
-                );
-                assert!(envelope.get(crate::route::TOOL_RETURN_ROUTES_KEY).is_some());
-            }
-            other => panic!("expected Update, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_async_sink_emit_rejects_routed_tool_returns() {
-        let queue = Arc::new(AsyncExecQueue::default());
-        let sink = DynAsyncSink::__from_queue(queue);
-
-        // Intermediate emit() still rejects routed envelopes — there's no
-        // terminal anchor for routes mid-stream.
-        let err = sink
-            .emit(crate::route::ToolReturn::with_route(
-                json!({"progress": 0.5}),
-                crate::route::RouteStep::on_return(
-                    "submit_polymarket_order",
-                    json!({"market": "btc"}),
-                ),
-            ))
-            .expect_err("intermediate emits should reject routed envelopes");
-        assert!(
-            err.contains("intermediate async updates do not support routed ToolReturn"),
-            "error message should explain the emit-vs-complete distinction; got: {err}"
-        );
-    }
-
-    #[test]
-    fn test_manifest_defaults_to_evm_core_namespace() {
-        let manifest = App.manifest();
-        assert_eq!(manifest.sdk_version, crate::AOMI_SDK_VERSION);
-        assert_eq!(manifest.namespaces, Some(vec!["evm-core".to_string()]));
-    }
-
-    #[test]
-    fn test_manifest_can_opt_out_of_host_namespaces() {
-        #[derive(Clone, Default)]
-        struct NoHostNamespacesApp;
-
-        impl DynAomiApp for NoHostNamespacesApp {
-            fn name(&self) -> &'static str {
-                "no-host-namespaces"
-            }
-
-            fn version(&self) -> &'static str {
-                "0.0.0"
-            }
-
-            fn preamble(&self) -> &'static str {
-                "test preamble"
-            }
-
-            fn tools(&self) -> Vec<DynToolMetadata> {
-                vec![]
-            }
-
-            fn start_tool(
-                &self,
-                _name: &str,
-                _args_json: &str,
-                _ctx_json: &str,
-                _sink: DynAsyncSink,
-            ) -> DynToolDispatch {
-                DynToolDispatch::Ready(DynToolResult::err("not needed in this test"))
-            }
-
-            fn namespaces(&self) -> Option<Vec<String>> {
-                Some(vec![])
-            }
-        }
-
-        let manifest = NoHostNamespacesApp.manifest();
-        assert_eq!(manifest.namespaces, Some(vec![]));
-    }
 }

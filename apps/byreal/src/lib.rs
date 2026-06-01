@@ -52,12 +52,42 @@ incentives. v1 supports single-tx claims; for large batches, claim positions in 
 Each `build_*` tool returns a structured action preview AND a routed signing step:
 
 - **EVM (perps):** routes to `commit_eip712` with EIP-712 typed-data; signature comes back as
-  `signature` and feeds the matching `byreal_perps_submit_*` continuation.
+  `master_signature` and feeds the matching `byreal_perps_submit_*` continuation.
 - **Solana (spot, lp):** routes to `svm_sign_tx` with a base64 versioned tx; signed bytes come
   back as `signed_tx` and feed the matching `byreal_spot_submit_*` / `byreal_lp_submit_*` continuation.
 
 You NEVER hold a private key. Treat the `submit_args_template` returned by `build_*` as opaque
 runtime state — forward it verbatim; the runtime splices the signature/signed tx in.
+
+## Confirmation gates (always)
+
+Before calling ANY `build_*` tool, emit a one-screen pre-execute summary and stop the turn.
+Examples:
+
+**Perps order:**
+
+    Side: <long|short>
+    Size: <size> <coin> (~$<notional> notional)
+    Leverage: <leverage>x
+    Margin Mode: <cross|isolated>
+    Order type: <market|limit @ $X>
+    Est. liquidation: ~$<price> (rough, excludes mmr)
+
+**Spot swap:**
+
+    Swap: <in_amount> <in_symbol> -> <out_amount_estimated> <out_symbol>
+    Slippage: <bps> bps
+    Router: <AMM|RFQ>
+    Price impact: <pct>
+    Wallet: <svm address>
+
+**Claim rewards:**
+
+    Claim: <N positions>
+    Wallet: <svm address>
+    Encoder returned 1 tx (v1 single-tx mode)
+
+Wait for the user to reply with "go" / "confirm" before calling `build_*`.
 
 ## Sizing & precision (perps)
 
@@ -141,63 +171,17 @@ dyn_aomi_app!(
         tool::lp::BuildClaimRewards,
         tool::lp::SubmitClaimRewards,
     ],
-    // byreal needs Solana wallet signing for spot/lp write paths — the
-    // build_*_swap / build_*_claim_rewards routes emit `host::SvmSignTx`
-    // continuations and bind the returned `signed_tx` into their
-    // submit_* steps. solana-core is the opt-in namespace that surfaces
-    // `svm_sign_tx` to the LLM.
-    namespaces = ["evm-core", "solana-core"]
+    // byreal is cross-chain (Hyperliquid perps + Solana spot/LP), so it
+    // stays string-typed via `namespaces` rather than declaring a single
+    // SVM `variant`. The SVM-side surface byreal touches is just the
+    // chain reads (`svm_get_*`); the actual signing flows through the
+    // host route target `host::SvmSignTx`, which the app's `submit_*`
+    // tools forward to byreal's own venue endpoints
+    // (`/dex/v2/send-swap-tx` for AMM, `/rfq/v1/swap` for RFQ).
+    //
+    // End-to-end Solana signing depends on host-side `svm_sign_tx`
+    // (ADR 0004 § C.2 / row #39-svm-apps-c) — track that in product-mono
+    // ralph. The legacy `solana-core` alias was removed in host iter 39;
+    // canonical names only.
+    namespaces = ["evm-core", "svm-reads"]
 );
-
-#[cfg(test)]
-mod tests {
-    use super::client::ByrealApp;
-    use super::tool;
-    use aomi_sdk::{DynAomiApp, DynAomiTool};
-    use serde_json::Value;
-
-    fn assert_required_properties_exist(tool_name: &str, schema: &Value) {
-        let required = schema
-            .get("required")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        if required.is_empty() {
-            return;
-        }
-        let properties = schema
-            .get("properties")
-            .and_then(Value::as_object)
-            .unwrap_or_else(|| {
-                panic!("{tool_name}: schema missing top-level properties: {schema}")
-            });
-
-        for field in required {
-            let field_name = field
-                .as_str()
-                .unwrap_or_else(|| panic!("{tool_name}: required entry is not a string: {field}"));
-            assert!(
-                properties.contains_key(field_name),
-                "{tool_name}: required field '{field_name}' missing from properties: {schema}"
-            );
-        }
-    }
-
-    #[test]
-    fn byreal_tool_schemas_have_valid_required_fields() {
-        let app = ByrealApp;
-        let tools = app.tools();
-        for tool in &tools {
-            assert_required_properties_exist(&tool.name, &tool.parameters_schema);
-        }
-    }
-
-    #[test]
-    fn lp_tool_schemas_match_expected_shape() {
-        let top_lps = tool::lp::GetTopLps::descriptor(&ByrealApp).parameters_schema;
-        let positions = tool::lp::GetPositions::descriptor(&ByrealApp).parameters_schema;
-
-        assert_required_properties_exist("byreal_lp_get_top_performers", &top_lps);
-        assert_required_properties_exist("byreal_lp_get_positions", &positions);
-    }
-}

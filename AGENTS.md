@@ -1,4 +1,4 @@
-# Aomi Apps Agent Guide
+# Aomi SDK Agent Guide
 
 This repository contains standalone Aomi app crates under `apps/<name>`. When an app breaks, use this process.
 

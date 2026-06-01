@@ -1,7 +1,6 @@
 {
   "rust-analyzer.linkedProjects": [
     "Cargo.toml",
-    "xtask/Cargo.toml",
     "sdk/Cargo.toml",
     "sdk/examples/hello-app/Cargo.toml",
     "sdk/examples/app-template-http/Cargo.toml",

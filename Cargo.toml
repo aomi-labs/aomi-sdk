@@ -3,9 +3,7 @@ members = [
     "sdk",
     "sdk/examples/hello-app",
     "sdk/examples/app-template-http",
-    "xtask",
     "ext",
-    "aomi-build",
 ]
 exclude = [
     "apps/across",
@@ -26,6 +24,7 @@ exclude = [
     "apps/l2beat",
     "apps/lifi",
     "apps/manifold",
+    "apps/marinade",
     "apps/molinar",
     "apps/morpho",
     "apps/neynar",

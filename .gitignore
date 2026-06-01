@@ -8,3 +8,6 @@ apps/l2beat/
 .env
 .env.*
 **/Cargo.lock
+
+# Claude Code worktrees (transient, must never be committed)
+.claude/worktrees/

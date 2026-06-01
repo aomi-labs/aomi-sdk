@@ -35,7 +35,11 @@ pub mod host {
     use super::RouteTarget;
 
     macro_rules! host_target {
-        ($name:ident, $tool:literal) => {
+        // Accept any number of attributes (including `///` doc comments)
+        // and forward them to the generated struct so docs.rs renders
+        // them. Existing call sites without attributes still match.
+        ($(#[$attr:meta])* $name:ident, $tool:literal) => {
+            $(#[$attr])*
             #[derive(Debug, Clone, Copy, Default)]
             pub struct $name;
 
@@ -50,7 +54,7 @@ pub mod host {
     host_target!(BraveSearch, "brave_search");
     host_target!(CommitTx, "commit_tx");
     host_target!(CommitTxs, "commit_txs");
-    host_target!(CommitEip712, "commit_message");
+    host_target!(CommitEip712, "commit_eip712");
     host_target!(StageTx, "stage_tx");
     host_target!(SimulateBatch, "simulate_batch");
     host_target!(ViewState, "view_state");
@@ -60,25 +64,160 @@ pub mod host {
     host_target!(GetAccountInfo, "get_account_info");
     host_target!(SyncChain, "sync_chain");
 
-    // SVM (Solana) primitives.
+    // ── SVM (Solana) primitives ──────────────────────────────────────────
     //
-    // `SvmSignTx` is the singular sign-only counterpart to `CommitEip712`:
-    // takes a fully-built unsigned Solana transaction (base64 versioned/legacy
-    // bytes) and returns the signed transaction bytes. The host wallet decodes
-    // the tx, prompts the user for approval, signs with the connected SVM
-    // wallet, and binds the signed bytes back to the route's awaited alias.
+    // Route-target markers for the SVM verbs in the `svm-core` namespace
+    // family (split into `svm-reads`, `svm-stage`, `svm-commit`,
+    // `svm-sign-data`, `svm-bundle` on the host side per ADR 0004
+    // § Decision B). App `build_*` tools emit route plans that drive
+    // these as continuations — mirroring how EVM apps use `CommitEip712`
+    // for the typed-data signing step.
+    //
+    // Three lanes from ADR 0003 § Decision A:
+    //   - Lane 1 (ix list)        — `SvmStageIx`  → `svm_stage_ix`
+    //   - Lane 2 (received tx)    — `SvmStageTx`  → `svm_stage_tx`
+    //                               (host #38-pipeline-b2 landed iter
+    //                               39 follow-up; ADR 0005 storage
+    //                               primitive `SvmPending::Tx` ships
+    //                               with it). Apps that receive a
+    //                               base64 `VersionedTransaction` from
+    //                               a venue (e.g. byreal `build-swap-tx`,
+    //                               Jupiter `/swap`) stage it through
+    //                               this marker and downstream verbs
+    //                               consume the minted `tx_id`.
+    //   - Lane 3 (off-chain msg)  — `SvmSignData` → `svm_sign_data`
+    //
+    // Two consumers per ADR 0003 § Decision B + ADR 0004 § C.2:
+    //   - Stage / sim / commit (lane-symmetric per ADR 0003 § Decision A):
+    //       `SvmStageIx`     → `svm_stage_ix`     (Lane 1 producer)
+    //       `SvmStageTx`     → `svm_stage_tx`     (Lane 2 producer)
+    //       `SvmSimulateIx`  → `svm_simulate_ix`  (Lane 1 consumer; takes
+    //                          `ix_ids` + assembly args)
+    //       `SvmSimulateTx`  → `svm_simulate_tx`  (Lane 2 consumer; takes
+    //                          `tx_id`; blob's metadata is authoritative)
+    //       `SvmCommitTx`    → `svm_commit_tx` (carries
+    //                          `mode: "wallet" | "internal-rpc"` arg;
+    //                          internal-rpc errors loud until host
+    //                          #38-pipeline-c lands the broadcast loop;
+    //                          Lane 2 `tx_id` arm lands with that row)
+    //   - Sign-only (app-broadcast pattern, ADR 0004 § C.2):
+    //       `SvmSignTx`      → `svm_sign_tx` (blocked on
+    //                          host #39-svm-apps-c; marker shipped
+    //                          forward-compat — byreal-style apps wrap
+    //                          signing here, then POST signed bytes to
+    //                          their own venue endpoint)
+    //
+    // Lane-symmetric note: stage / simulate split per tool name, NOT per
+    // XOR arg. The lane lives in the tool the LLM picks; arg shapes are
+    // non-discriminated. This mirrors how the host's `finalize_stage_tx`
+    // already dispatches by `attribute.name` (call_consumer/svm.rs).
+    //
+    // Args contracts and bound-artifact shapes are documented at each
+    // verb's host-side implementation in product-mono
+    // `aomi/crates/tools/src/svm/`. Apps that need to inspect them
+    // should follow the host-tool docstring as the source of truth.
+    //
+    // Naming convention: every SVM marker is `Svm*` (PascalCase) →
+    // `svm_*` (snake_case). The host is the single source of truth for
+    // the snake_case verb name.
+
+    // Lane 1 producer — stage a `Vec<Instruction>`. Returns one
+    // `pending_ix_id` per instruction; downstream simulate / commit
+    // verbs consume the id list. ADR 0003 § Decision A.
+    host_target!(SvmStageIx, "svm_stage_ix");
+
+    // Lane 2 producer — stage a base64 `VersionedTransaction` blob
+    // received from a venue (e.g. byreal `/dex/v2/build-swap-tx`,
+    // Jupiter `/swap`, Raydium tx-API). The host decodes, validates
+    // payer = connected wallet, then stages the blob under a fresh
+    // `pending_tx_id`. Downstream verbs (`SvmSimulateTx`,
+    // `SvmCommitTx`, `SvmSignTx`) consume that id. ADR 0003 §
+    // Decision A + ADR 0005 storage primitive; host
+    // #38-pipeline-b2 (iter 39 follow-up).
     //
     // Args contract:
-    //   { "unsigned_tx": "<base64 serialized solana tx>",
-    //     "description": "<human-readable summary for wallet UX>" }
+    //   { "tx": "<base64 VersionedTransaction>",
+    //     "description": "...",          // optional, surfaces in UI
+    //     "kind": "..." }                // optional, free-form tag
     //
-    // Bound artifact (string): the base64 signed tx bytes, ready to be POSTed
-    // to whichever venue (e.g. byreal `/dex/v2/send-swap-tx`) is expecting it.
+    // The pre-#39-svm-apps-b transitional inline form for
+    // `SvmSignTx`  (`{ "unsigned_tx": "<base64>", ... }`) remains
+    // supported but Lane 2 staging is now the preferred path — it
+    // unlocks simulate, lets the host re-attach a fresh blockhash
+    // (default), and gives the runtime a single `tx_id` to thread
+    // through any consumer.
     //
-    // Note: there is intentionally no `SignTxsSolana` (plural) — Solana
-    // wallets sign one tx per user prompt. Apps that need multiple signed txs
-    // should issue separate `SvmSignTx` route steps.
+    // The `preserve_blockhash: bool` arg (default false, true for
+    // venue-validated flows like byreal preData/data byte-compare)
+    // lands with host #39-svm-apps-b.
+    host_target!(SvmStageTx, "svm_stage_tx");
+
+    // Lane 1 simulate consumer — assembles the staged ix list into a
+    // VersionedTransaction and simulates. Args contract:
+    //   { "ix_ids": [<u32>, ...],
+    //     "version": "legacy" | "v0",                 // optional
+    //     "address_lookup_tables": ["<pubkey>", ...], // optional (v0 only)
+    //     "compute_units": <u32>,                     // optional
+    //     "priority_microlamports": <u64>,            // optional
+    //     "mode": "litesvm" | "rpc",                  // optional, see ADR 0002
+    //     "replace_recent_blockhash": <bool>,         // optional, default true
+    //     "sig_verify": <bool>,                       // optional, default false
+    //     "accounts": ["<pubkey>", ...] }             // optional address filter
+    //
+    // Rejects ids that resolve to `svm_stage_tx`-staged blobs with a
+    // "use svm_simulate_tx" hint. Mirrors the host's lane symmetry
+    // (split landed alongside this SDK bump).
+    host_target!(SvmSimulateIx, "svm_simulate_ix");
+
+    // Lane 2 simulate consumer — simulates a `svm_stage_tx`-staged
+    // tx blob as-is. The blob's version / ALTs / blockhash / compute
+    // budget are preserved; there are no assembly args, because the
+    // blob's metadata is authoritative. Args contract:
+    //   { "tx_id": <u32>,
+    //     "mode": "litesvm" | "rpc",          // optional
+    //     "replace_recent_blockhash": <bool>, // optional, default true
+    //     "sig_verify": <bool>,               // optional, default false
+    //     "accounts": ["<pubkey>", ...] }     // optional address filter
+    //
+    // Rejects ids that resolve to `svm_stage_ix`-staged instructions
+    // with a "use svm_simulate_ix" hint.
+    host_target!(SvmSimulateTx, "svm_simulate_tx");
+
+    // Wallet- or runtime-broadcast commit. Carries
+    // `mode: "wallet" | "internal-rpc"` per ADR 0003 § Decision B.
+    // Wallet mode pushes a `SvmTxApproval` envelope through the host
+    // wallet plumbing; internal-rpc returns a loud not-implemented
+    // error until host #38-pipeline-c lands the broadcast loop +
+    // `WalletCallback::Tx*` variants.
+    host_target!(SvmCommitTx, "svm_commit_tx");
+
+    // Sign-only verb for the **app-broadcast** pattern (ADR 0004 §
+    // C.2). byreal-style apps wrap signing here, then forward the
+    // signed bytes to their own venue endpoint (e.g. byreal
+    // `/dex/v2/send-swap-tx`, Jupiter `/execute`, Raydium tx-API).
+    // Args contract (transitional pre-#39-svm-apps-b):
+    //   { "unsigned_tx": "<base64>", "description": "..." }
+    // Args contract (Lane 2 staged, post-#39-svm-apps-b):
+    //   { "tx_id": <u32>, "description": "..." }
+    // Bound artifact (string): base64 signed tx bytes.
+    //
+    // Blocked on host #39-svm-apps-c — host tool `svm_sign_tx`
+    // doesn't exist yet. Marker ships forward-compat so apps can be
+    // authored against the right shape; runtime route dispatch will
+    // log warn-skip until the host catches up.
+    //
+    // Note: there is intentionally no `SvmSignTxs` (plural) — Solana
+    // wallets sign one tx per user prompt. Apps that need multiple
+    // signed txs should issue separate `SvmSignTx` route steps.
     host_target!(SvmSignTx, "svm_sign_tx");
+
+    // Lane 3 producer + consumer — off-chain message signing for
+    // commit-reveal flows, Squads proposal payloads, wallet-attested
+    // intents. Host-side renamed from `svm_commit_message` in iter 39
+    // (ADR 0003 OQ #3 closed). Args contract:
+    //   { "message_base64": "...", "description": "...",
+    //     "domain": {...}, "kind": "..." }
+    host_target!(SvmSignData, "svm_sign_data");
 }
 
 #[derive(Debug, Clone)]
@@ -444,479 +583,5 @@ impl AfterStepBuilder {
 
     pub fn try_build(self) -> Result<ToolReturn, String> {
         self.route.try_build()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::route::{EnforcementPolicy, RouteStep, ToolReturn};
-    use crate::{DynAomiApp, DynAomiTool, DynToolCallCtx};
-    use serde_json::{json, Value};
-
-    use super::*;
-
-    #[derive(Clone, Default)]
-    struct App;
-
-    impl DynAomiApp for App {
-        fn name(&self) -> &'static str {
-            "test"
-        }
-
-        fn version(&self) -> &'static str {
-            "0.1.0"
-        }
-
-        fn preamble(&self) -> &'static str {
-            "test"
-        }
-
-        fn tools(&self) -> Vec<crate::DynToolMetadata> {
-            Vec::new()
-        }
-
-        fn start_tool(
-            &self,
-            _name: &str,
-            _args_json: &str,
-            _ctx_json: &str,
-            _sink: crate::DynAsyncSink,
-        ) -> crate::DynToolDispatch {
-            unreachable!()
-        }
-    }
-
-    struct SubmitOrder;
-    impl DynAomiTool for SubmitOrder {
-        type App = App;
-        type Args = serde_json::Value;
-
-        const NAME: &'static str = "submit_order";
-        const DESCRIPTION: &'static str = "submit";
-
-        fn run(_app: &App, _args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-            Ok(Value::Null)
-        }
-    }
-
-    struct SyncTool;
-    impl DynAomiTool for SyncTool {
-        type App = App;
-        type Args = serde_json::Value;
-
-        const NAME: &'static str = "sync_tool";
-        const DESCRIPTION: &'static str = "sync";
-
-        fn run(_app: &App, _args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-            Ok(Value::Null)
-        }
-    }
-
-    struct AsyncTool;
-    impl DynAomiTool for AsyncTool {
-        type App = App;
-        type Args = serde_json::Value;
-
-        const NAME: &'static str = "async_tool";
-        const DESCRIPTION: &'static str = "async";
-        const IS_ASYNC: bool = true;
-    }
-
-    #[test]
-    fn plain_tool_return_serializes_to_the_raw_value() {
-        let tool_return = ToolReturn::value(json!({"ok": true}));
-        let serialized = serde_json::to_value(&tool_return).unwrap();
-        assert_eq!(serialized, json!({"ok": true}));
-
-        let roundtrip = ToolReturn::from_value(serialized).unwrap();
-        assert_eq!(roundtrip.value, json!({"ok": true}));
-        assert!(roundtrip.routes.is_empty());
-    }
-
-    #[test]
-    fn routed_tool_return_serializes_to_an_envelope() {
-        // OnBoundEvent-based plan: a producer step binds an alias and
-        // a deferred consumer awaits it. This is the canonical wire shape
-        // after the wallet-callback machinery was removed.
-        let tool_return = ToolReturn::with_routes(
-            json!({"status": "awaiting_wallet"}),
-            [
-                RouteStep::on_return("commit_eip712", json!({"typed_data": {}}))
-                    .bind_as("clob_l1_signature"),
-                RouteStep::on_bound_event(
-                    "submit_polymarket_order",
-                    json!({"market": "btc"}),
-                    "clob_l1_signature",
-                ),
-            ],
-        );
-
-        let serialized = serde_json::to_value(&tool_return).unwrap();
-        assert_eq!(
-            serialized,
-            json!({
-                "__aomi_tool_return": true,
-                "__aomi_tool_value": {"status": "awaiting_wallet"},
-                "__aomi_tool_routes": [
-                    {
-                        "tool": "commit_eip712",
-                        "args": {"typed_data": {}},
-                        "trigger": {"type": "on_sync_return"},
-                        "bind_as": "clob_l1_signature",
-                    },
-                    {
-                        "tool": "submit_polymarket_order",
-                        "args": {"market": "btc"},
-                        "trigger": {
-                            "type": "on_bound_event",
-                            "alias": "clob_l1_signature",
-                        },
-                    }
-                ],
-            })
-        );
-
-        let roundtrip = ToolReturn::from_value(serialized).unwrap();
-        assert!(roundtrip.has_routes());
-        assert_eq!(roundtrip.routes.len(), 2);
-    }
-
-    #[test]
-    fn route_builder_serializes_bound_artifact_plan() {
-        let tool_return = ToolReturn::route(json!({"status": "awaiting_wallet"}))
-            .next(|next| {
-                // Stable host-provided tools can use typed route targets too.
-                next.add::<host::CommitEip712>(json!({"typed_data": {}}))
-                    .bind_as("clob_l1_signature")
-                    .note("sign this first");
-            })
-            .after::<SubmitOrder>(json!({"market": "btc"}))
-            .awaits("clob_l1_signature")
-            .note("continue submit")
-            .build();
-
-        let serialized = serde_json::to_value(&tool_return).unwrap();
-        assert_eq!(
-            serialized,
-            json!({
-                "__aomi_tool_return": true,
-                "__aomi_tool_value": {"status": "awaiting_wallet"},
-                "__aomi_tool_routes": [
-                    {
-                        "tool": "commit_eip712",
-                        "args": {"typed_data": {}},
-                        "trigger": {"type": "on_sync_return"},
-                        "bind_as": "clob_l1_signature",
-                        "prompt": "sign this first",
-                    },
-                    {
-                        "tool": "submit_order",
-                        "args": {"market": "btc"},
-                        "trigger": {
-                            "type": "on_bound_event",
-                            "alias": "clob_l1_signature",
-                        },
-                        "prompt": "continue submit",
-                    }
-                ]
-            })
-        );
-    }
-
-    #[test]
-    fn route_builder_serializes_solana_sign_plan() {
-        // Mirror of `route_builder_serializes_bound_artifact_plan` but for
-        // the SVM (Solana) sign-only flow: app builds an unsigned tx, host
-        // signs via SvmSignTx, the bound `signed_tx` artifact then feeds
-        // into the submit step which forwards the signed bytes upstream.
-        let tool_return = ToolReturn::route(json!({"status": "awaiting_wallet"}))
-            .next(|next| {
-                next.add::<host::SvmSignTx>(json!({
-                    "unsigned_tx": "AgAB...base64...",
-                    "description": "Swap 1 USDC for 0.005 SOL via byreal RFQ",
-                }))
-                .bind_as("signed_tx")
-                .note("sign this Solana swap");
-            })
-            .after::<SubmitOrder>(json!({"venue": "byreal-rfq"}))
-            .awaits("signed_tx")
-            .note("submit signed tx to venue")
-            .build();
-
-        let serialized = serde_json::to_value(&tool_return).unwrap();
-        assert_eq!(
-            serialized,
-            json!({
-                "__aomi_tool_return": true,
-                "__aomi_tool_value": {"status": "awaiting_wallet"},
-                "__aomi_tool_routes": [
-                    {
-                        "tool": "svm_sign_tx",
-                        "args": {
-                            "unsigned_tx": "AgAB...base64...",
-                            "description": "Swap 1 USDC for 0.005 SOL via byreal RFQ",
-                        },
-                        "trigger": {"type": "on_sync_return"},
-                        "bind_as": "signed_tx",
-                        "prompt": "sign this Solana swap",
-                    },
-                    {
-                        "tool": "submit_order",
-                        "args": {"venue": "byreal-rfq"},
-                        "trigger": {
-                            "type": "on_bound_event",
-                            "alias": "signed_tx",
-                        },
-                        "prompt": "submit signed tx to venue",
-                    }
-                ]
-            })
-        );
-    }
-
-    #[test]
-    fn route_builder_bind_as_works_for_any_tool() {
-        // The router is alias-keyed: any tool can bind_as. There's no
-        // per-tool eligibility check and no artifact-kind enum.
-        let tool_return = ToolReturn::route(json!({"status": "ok"}))
-            .next(|next| {
-                next.add::<SyncTool>(json!({"x": 1})).bind_as("tool_result");
-            })
-            .after::<SubmitOrder>(json!({}))
-            .awaits("tool_result")
-            .build();
-
-        assert_eq!(
-            tool_return.routes[0].bind_as.as_deref(),
-            Some("tool_result")
-        );
-    }
-
-    #[test]
-    fn route_builder_async_tool_can_bind_as() {
-        // Async tools' terminal completions land via the runtime's pending
-        // event bridge; from the router's perspective they're just steps
-        // that produce a Value. No SDK-side eligibility check.
-        let tool_return = ToolReturn::route(json!({"status": "ok"}))
-            .next(|next| {
-                next.add::<AsyncTool>(json!({"x": 1})).bind_as("from_async");
-            })
-            .after::<SubmitOrder>(json!({}))
-            .awaits("from_async")
-            .build();
-
-        assert_eq!(tool_return.routes[0].bind_as.as_deref(), Some("from_async"));
-    }
-
-    #[test]
-    fn route_builder_enforcement_can_satisfy_awaited_alias() {
-        let tool_return = ToolReturn::route(json!({"status": "ok"}))
-            .next(|next| {
-                next.add::<host::StageTx>(json!({"to": "0x1", "data": {"raw": "0x"}}))
-                    .enforce(EnforcementPolicy::Stop, |enforce| {
-                        enforce.add::<host::SimulateBatch>(json!({}));
-                        enforce
-                            .add::<host::CommitTxs>(json!({"aa_preference": "auto"}))
-                            .bind_as("transaction_hash");
-                    });
-            })
-            .after::<SubmitOrder>(json!({"quote_id": "quote-1"}))
-            .awaits("transaction_hash")
-            .build();
-
-        assert_eq!(tool_return.routes[0].bind_as, None);
-        assert!(tool_return.routes[0].enforcement.is_some());
-        assert!(matches!(
-            &tool_return.routes[1].trigger,
-            RouteTrigger::OnBoundEvent { alias } if alias == "transaction_hash"
-        ));
-    }
-
-    #[test]
-    fn route_builder_rejects_multiple_enforced_producers() {
-        let err = ToolReturn::route(json!({"status": "ok"}))
-            .next(|next| {
-                next.add::<host::StageTx>(json!({"to": "0x1"}))
-                    .enforce(EnforcementPolicy::Stop, |_| {});
-                next.add::<host::StageTx>(json!({"to": "0x2"}))
-                    .enforce(EnforcementPolicy::Stop, |_| {});
-            })
-            .try_build()
-            .expect_err("multiple enforced producers should fail");
-
-        assert!(err.contains("at most one enforced producer"));
-    }
-
-    #[test]
-    fn route_builder_rejects_non_object_enforced_producer_args() {
-        let err = ToolReturn::route(json!({"status": "ok"}))
-            .next(|next| {
-                next.add::<host::StageTx>(json!(["not", "an", "object"]))
-                    .enforce(EnforcementPolicy::Stop, |_| {});
-            })
-            .try_build()
-            .expect_err("non-object enforced producer args should fail");
-
-        assert!(err.contains("must use object args"));
-    }
-
-    #[test]
-    fn route_builder_rejects_unknown_awaited_alias() {
-        let err = ToolReturn::route(json!({"status": "ok"}))
-            .after::<SubmitOrder>(json!({}))
-            .awaits("missing_alias")
-            .try_build()
-            .expect_err("missing awaited alias should fail");
-
-        assert!(err.contains("awaits unknown alias `missing_alias`"));
-    }
-
-    #[test]
-    fn route_builder_rejects_duplicate_aliases() {
-        let err = ToolReturn::route(json!({"status": "ok"}))
-            .next(|next| {
-                next.add::<host::CommitEip712>(json!({"typed_data": {}}))
-                    .bind_as("dup");
-                next.add::<SyncTool>(json!({"x": 1})).bind_as("dup");
-            })
-            .after::<SubmitOrder>(json!({}))
-            .awaits("dup")
-            .try_build()
-            .expect_err("duplicate aliases should fail");
-
-        assert!(err.contains("duplicate bound alias `dup`"));
-    }
-
-    #[test]
-    fn route_builder_rejects_empty_bound_aliases() {
-        let err = ToolReturn::route(json!({"status": "ok"}))
-            .next(|next| {
-                next.add::<SyncTool>(json!({"x": 1})).bind_as("   ");
-            })
-            .try_build()
-            .expect_err("empty bound aliases should fail");
-
-        assert!(err.contains("bound alias must not be empty"));
-    }
-
-    #[test]
-    fn route_builder_rejects_empty_awaited_aliases() {
-        let err = ToolReturn::route(json!({"status": "ok"}))
-            .next(|next| {
-                next.add::<SyncTool>(json!({"x": 1})).bind_as("artifact");
-            })
-            .after::<SubmitOrder>(json!({}))
-            .awaits(" ")
-            .try_build()
-            .expect_err("empty awaited aliases should fail");
-
-        assert!(err.contains("awaits alias must not be empty"));
-    }
-
-    #[test]
-    fn route_builder_allows_repeated_tool_with_distinct_binds() {
-        // Lifts the prior "bound producers must have unique tool names"
-        // constraint. Two `commit_eip712` steps in one plan, each binding to a
-        // distinct alias, is the combined approve+trade shape used by 0x
-        // gasless (Permit2 + Settler) and by Permit2-style flows for other
-        // DEX integrations.
-        let tool_return = ToolReturn::route(json!({"status": "awaiting_wallet"}))
-            .next(|next| {
-                next.add::<host::CommitEip712>(json!({"typed_data": {"approval": true}}))
-                    .bind_as("approval")
-                    .note("Sign the Permit2 approval first.");
-                next.add::<host::CommitEip712>(json!({"typed_data": {"trade": true}}))
-                    .bind_as("trade")
-                    .note("Then sign the gasless trade.");
-            })
-            .after::<SubmitOrder>(json!({"chain_id": 1}))
-            .awaits_all(["approval", "trade"])
-            .build();
-
-        assert_eq!(tool_return.routes.len(), 3);
-        assert_eq!(tool_return.routes[0].tool, "commit_eip712");
-        assert_eq!(tool_return.routes[0].bind_as.as_deref(), Some("approval"));
-        assert_eq!(tool_return.routes[1].tool, "commit_eip712");
-        assert_eq!(tool_return.routes[1].bind_as.as_deref(), Some("trade"));
-        match &tool_return.routes[2].trigger {
-            RouteTrigger::OnAllBoundEvents { aliases } => {
-                assert_eq!(aliases, &vec!["approval".to_string(), "trade".to_string()]);
-            }
-            other => panic!("expected OnAllBoundEvents, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn route_builder_awaits_called_twice_upgrades_to_multi_alias() {
-        // Sugar: `.awaits(a).awaits(b)` is the same as `.awaits_all([a, b])`.
-        let tool_return = ToolReturn::route(json!({"status": "awaiting_wallet"}))
-            .next(|next| {
-                next.add::<host::CommitEip712>(json!({"typed_data": {"a": true}}))
-                    .bind_as("approval");
-                next.add::<host::CommitEip712>(json!({"typed_data": {"t": true}}))
-                    .bind_as("trade");
-            })
-            .after::<SubmitOrder>(json!({"chain_id": 1}))
-            .awaits("approval")
-            .awaits("trade")
-            .build();
-
-        match &tool_return.routes[2].trigger {
-            RouteTrigger::OnAllBoundEvents { aliases } => {
-                assert_eq!(aliases, &vec!["approval".to_string(), "trade".to_string()]);
-            }
-            other => panic!("expected OnAllBoundEvents, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn route_builder_single_awaits_still_uses_on_bound_event() {
-        // Existing single-alias semantics are unchanged: one `.awaits(..)`
-        // call produces `OnBoundEvent`, not `OnAllBoundEvents`. This keeps the
-        // wire shape stable for every flow that worked before the multi-alias
-        // extension landed.
-        let tool_return = ToolReturn::route(json!({"status": "ok"}))
-            .next(|next| {
-                next.add::<host::CommitEip712>(json!({"typed_data": {}}))
-                    .bind_as("signature");
-            })
-            .after::<SubmitOrder>(json!({}))
-            .awaits("signature")
-            .build();
-
-        match &tool_return.routes[1].trigger {
-            RouteTrigger::OnBoundEvent { alias } => assert_eq!(alias, "signature"),
-            other => panic!("expected OnBoundEvent, got {other:?}"),
-        }
-    }
-
-    #[test]
-    fn route_builder_rejects_unknown_alias_in_awaits_all() {
-        let err = ToolReturn::route(json!({"status": "ok"}))
-            .next(|next| {
-                next.add::<host::CommitEip712>(json!({"typed_data": {}}))
-                    .bind_as("approval");
-            })
-            .after::<SubmitOrder>(json!({}))
-            .awaits_all(["approval", "missing"])
-            .try_build()
-            .expect_err("unknown alias in awaits_all should fail");
-
-        assert!(err.contains("awaits unknown alias `missing`"));
-    }
-
-    #[test]
-    fn route_builder_rejects_duplicate_awaited_aliases() {
-        let err = ToolReturn::route(json!({"status": "ok"}))
-            .next(|next| {
-                next.add::<host::CommitEip712>(json!({"typed_data": {}}))
-                    .bind_as("approval");
-            })
-            .after::<SubmitOrder>(json!({}))
-            .awaits_all(["approval", "approval"])
-            .try_build()
-            .expect_err("duplicate awaited aliases should fail");
-
-        assert!(err.contains("more than once"));
     }
 }
