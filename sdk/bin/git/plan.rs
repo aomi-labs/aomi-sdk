@@ -14,6 +14,31 @@ use crate::platform::{
 };
 use crate::stage::{manifest_path_in, write_manifest, write_source_tree};
 
+/// Read the app's pinned `aomi-sdk` version from `app_dir/Cargo.toml`. Returns
+/// the version with any leading comparator (`=`, `^`, `~`) stripped, or `None`
+/// when the file or dependency is absent/unparseable. Preflight compares this
+/// against the backend host so a mismatch is caught before deploy rather than
+/// at activation.
+fn read_app_sdk_version(app_dir: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(app_dir.join("Cargo.toml")).ok()?;
+    parse_aomi_sdk_req(&text)
+}
+
+/// Extract the `aomi-sdk` dependency requirement from `Cargo.toml` text.
+/// Handles the string form (`aomi-sdk = "=0.1.21"`) and the table form
+/// (`aomi-sdk = { version = "=0.1.21" }`), stripping a leading comparator.
+fn parse_aomi_sdk_req(cargo_toml: &str) -> Option<String> {
+    let value: toml::Value = cargo_toml.parse().ok()?;
+    let dep = value.get("dependencies")?.get("aomi-sdk")?;
+    let req = match dep {
+        toml::Value::String(s) => s.as_str(),
+        toml::Value::Table(t) => t.get("version")?.as_str()?,
+        _ => return None,
+    };
+    let trimmed = req.trim().trim_start_matches(['=', '^', '~', ' ']).trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Mode {
@@ -221,6 +246,12 @@ impl Deployment {
 
         state.stages = vec![workspace, manifest, platform, backend];
 
+        // Record the app's declared aomi-sdk version (offline, from Cargo.toml)
+        // so preflight can compare it against the backend host and block a
+        // deploy whose bundle would be rejected at activation.
+        state.app_sdk_version =
+            read_app_sdk_version(&self.source.git_root.join(&self.source.source_path));
+
         // State flags start false; preflight + deploy flip them.
         state.state = StateFlags::default();
         state
@@ -322,4 +353,27 @@ fn guard_overlap(app_dir: &Path, source: &Source) -> Result<()> {
 
 pub(crate) fn short_hash(commit: &str) -> String {
     commit.chars().take(12).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_aomi_sdk_req;
+
+    #[test]
+    fn parses_exact_pin_string_form() {
+        let toml = "[dependencies]\naomi-sdk = \"=0.1.21\"\nserde = \"1\"\n";
+        assert_eq!(parse_aomi_sdk_req(toml).as_deref(), Some("0.1.21"));
+    }
+
+    #[test]
+    fn parses_table_form_and_strips_caret() {
+        let toml = "[dependencies]\naomi-sdk = { version = \"^0.1.21\", features = [] }\n";
+        assert_eq!(parse_aomi_sdk_req(toml).as_deref(), Some("0.1.21"));
+    }
+
+    #[test]
+    fn none_when_absent_or_unparseable() {
+        assert_eq!(parse_aomi_sdk_req("[dependencies]\nserde = \"1\"\n"), None);
+        assert_eq!(parse_aomi_sdk_req("not valid toml ["), None);
+    }
 }

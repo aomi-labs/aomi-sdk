@@ -31,6 +31,12 @@ pub struct DeploymentState {
     pub source: Source,
     pub platform: PlatformIntent,
     pub target: TargetSpec,
+    /// The app's declared `aomi-sdk` version, parsed from its `Cargo.toml`.
+    /// Compared against the backend host's SDK version at preflight to catch a
+    /// mismatch before deploy (the bundle would otherwise be rejected at
+    /// activation). `None` when it can't be read or parsed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_sdk_version: Option<String>,
     pub state: StateFlags,
     #[serde(default)]
     pub files: Vec<StagedFile>,
@@ -61,6 +67,7 @@ impl DeploymentState {
             source,
             platform,
             target,
+            app_sdk_version: None,
             state: StateFlags::default(),
             files: Vec::new(),
             stages: Vec::new(),
