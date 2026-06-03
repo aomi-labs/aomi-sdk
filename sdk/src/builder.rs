@@ -91,15 +91,16 @@ pub mod host {
     //   - Stage / sim / commit (lane-symmetric per ADR 0003 § Decision A):
     //       `SvmStageIx`     → `svm_stage_ix`     (Lane 1 producer)
     //       `SvmStageTx`     → `svm_stage_tx`     (Lane 2 producer)
-    //       `SvmSimulateIx`  → `svm_simulate_ix`  (Lane 1 consumer; takes
-    //                          `ix_ids` + assembly args)
-    //       `SvmSimulateTx`  → `svm_simulate_tx`  (Lane 2 consumer; takes
-    //                          `tx_id`; blob's metadata is authoritative)
-    //       `SvmCommitTx`    → `svm_commit_tx` (carries
-    //                          `mode: "wallet" | "internal-rpc"` arg;
-    //                          internal-rpc errors loud until host
-    //                          #38-pipeline-c lands the broadcast loop;
-    //                          Lane 2 `tx_id` arm lands with that row)
+    //       `SvmSimulateIx`  → `svm_simulate_ix`  (Lane 1 sim consumer)
+    //       `SvmSimulateTx`  → `svm_simulate_tx`  (Lane 2 sim consumer)
+    //       `SvmCommitIx`    → `svm_commit_ix`    (Lane 1 commit; takes
+    //                          `ix_ids` + assembly args + `mode`)
+    //       `SvmCommitTx`    → `svm_commit_tx`    (Lane 2 commit; takes
+    //                          `tx_id` + `mode`; blob authoritative)
+    //                          Both commit tools carry `mode: "wallet" |
+    //                          "internal-rpc"`; internal-rpc errors loud
+    //                          on both until host #38-pipeline-c lands
+    //                          the runtime broadcast loop.
     //   - Sign-only (app-broadcast pattern, ADR 0004 § C.2):
     //       `SvmSignTx`      → `svm_sign_tx` (blocked on
     //                          host #39-svm-apps-c; marker shipped
@@ -183,12 +184,36 @@ pub mod host {
     // with a "use svm_simulate_ix" hint.
     host_target!(SvmSimulateTx, "svm_simulate_tx");
 
-    // Wallet- or runtime-broadcast commit. Carries
-    // `mode: "wallet" | "internal-rpc"` per ADR 0003 § Decision B.
-    // Wallet mode pushes a `SvmTxApproval` envelope through the host
-    // wallet plumbing; internal-rpc returns a loud not-implemented
-    // error until host #38-pipeline-c lands the broadcast loop +
-    // `WalletCallback::Tx*` variants.
+    // Lane 1 commit consumer — assemble the staged ix list into one
+    // VersionedTransaction and request wallet approval. Args contract:
+    //   { "ix_ids": [<u32>, ...],
+    //     "version": "legacy" | "v0",                 // optional
+    //     "address_lookup_tables": ["<pubkey>", ...], // optional (v0 only)
+    //     "compute_units": <u32>,                     // optional
+    //     "priority_microlamports": <u64>,            // optional
+    //     "mode": "wallet" | "internal-rpc" }         // optional, see below
+    //
+    // Mode (shared with `SvmCommitTx` Lane 2):
+    //   - `wallet` (default): host wallet SDK signs + broadcasts via
+    //     signAndSendTransaction. The only working path today.
+    //   - `internal-rpc`: runtime signs and submits via its own RPC +
+    //     confirm loop. Errors loud until host #38-pipeline-c lands
+    //     the broadcast loop + `WalletCallback::Tx*` variants.
+    //
+    // Rejects ids that resolve to `svm_stage_tx`-staged blobs with a
+    // "use svm_commit_tx" hint.
+    host_target!(SvmCommitIx, "svm_commit_ix");
+
+    // Lane 2 commit consumer — request wallet approval for a
+    // `svm_stage_tx`-staged transaction blob. The blob's version / ALTs /
+    // blockhash / compute budget are preserved; there are no assembly
+    // args, because the blob's metadata is authoritative. Args contract:
+    //   { "tx_id": <u32>,
+    //     "mode": "wallet" | "internal-rpc" }         // optional
+    //
+    // Same `mode` semantics as `SvmCommitIx`. Rejects ids that resolve
+    // to `svm_stage_ix`-staged instructions with a "use svm_commit_ix"
+    // hint.
     host_target!(SvmCommitTx, "svm_commit_tx");
 
     // Sign-only verb for the **app-broadcast** pattern (ADR 0004 §

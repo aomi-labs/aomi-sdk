@@ -10,11 +10,11 @@
 //!   `variant.default_namespaces()` once `DynManifest.variant`
 //!   consumption lands (filed against product-mono ralph).
 //! - **Self-broadcast pipeline**: build_* tools emit route plans that
-//!   drive `host::SvmStageIx → host::SvmCommitTx({mode: "wallet"})`.
+//!   drive `host::SvmStageIx → host::SvmCommitIx({mode: "wallet"})`.
 //!   The runtime owns the broadcast loop in the `internal-rpc` future;
 //!   today wallet mode is the only functional path.
 //! - **First consumer of the new SVM `host::*` markers** shipped in
-//!   SDK 0.1.23 (`SvmStageIx`, `SvmCommitTx`, etc.).
+//!   SDK 0.1.23 (`SvmStageIx`, `SvmCommitIx`, etc.).
 //!
 //! ## Why Marinade
 //!
@@ -59,7 +59,7 @@ mSOL is interest-bearing: the token *count* never changes, but the mSOL:SOL exch
 
 Every `build_*` returns a routed plan:
 
-    build_* → svm_stage_ix → svm_commit_tx(mode="wallet") → submit_*
+    build_* → svm_stage_ix → svm_commit_ix(mode="wallet") → submit_*
 
 The host wallet signs and broadcasts. `submit_*` is a synchronous continuation anchor for the route — by the time it runs, the tx has been submitted (landing is the wallet's responsibility for wallet-broadcast flows).
 
@@ -116,7 +116,7 @@ dyn_aomi_app!(
         tool::reads::GetTvl,
         tool::reads::GetExchangeRate,
         tool::reads::GetValidators,
-        // writes (route plans through host::SvmStageIx + host::SvmCommitTx)
+        // writes (route plans through host::SvmStageIx + host::SvmCommitIx)
         tool::writes::BuildStake,
         tool::writes::BuildLiquidUnstake,
     ],
@@ -160,7 +160,7 @@ pub mod testing {
                 names.len(),
                 6,
                 "marinade exposes 4 reads + 2 writes; no submit_* because \
-                 svm_commit_tx(mode=wallet) IS the broadcast",
+                 svm_commit_ix(mode=wallet) IS the broadcast",
             );
         }
 
@@ -170,7 +170,7 @@ pub mod testing {
             // knows which tools chain together. Frozen check; if you
             // rewrite the preamble, update this.
             assert!(PREAMBLE.contains("svm_stage_ix"));
-            assert!(PREAMBLE.contains("svm_commit_tx"));
+            assert!(PREAMBLE.contains("svm_commit_ix"));
             assert!(PREAMBLE.contains("build_"));
             assert!(PREAMBLE.contains("submit_"));
         }

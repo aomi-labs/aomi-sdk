@@ -79,6 +79,10 @@ fn svm_host_route_target_names_match_host_tools() {
         "svm_simulate_tx"
     );
     assert_eq!(
+        <host::SvmCommitIx as RouteTarget>::tool_name(),
+        "svm_commit_ix"
+    );
+    assert_eq!(
         <host::SvmCommitTx as RouteTarget>::tool_name(),
         "svm_commit_tx"
     );
@@ -90,7 +94,9 @@ fn svm_host_route_target_names_match_host_tools() {
 }
 
 #[test]
-fn svm_stage_commit_route_plan_serializes() {
+fn svm_lane_1_stage_commit_route_plan_serializes() {
+    // Lane 1 canonical chain — stage_ix → commit_ix. Mirrors what
+    // Marinade's build_stake emits (wallet-mode broadcast).
     let plan = ToolReturn::route(json!({"status": "previewed"}))
         .next(|next| {
             next.add::<host::SvmStageIx>(json!({
@@ -99,7 +105,7 @@ fn svm_stage_commit_route_plan_serializes() {
             }))
             .bind_as("ix_ids");
         })
-        .after::<host::SvmCommitTx>(json!({
+        .after::<host::SvmCommitIx>(json!({
             "mode": "wallet",
             "version": "v0",
         }))
@@ -114,7 +120,43 @@ fn svm_stage_commit_route_plan_serializes() {
         .iter()
         .filter_map(|route| route.get("tool").and_then(Value::as_str))
         .collect();
-    assert_eq!(tools, vec!["svm_stage_ix", "svm_commit_tx"]);
+    assert_eq!(tools, vec!["svm_stage_ix", "svm_commit_ix"]);
+}
+
+#[test]
+fn svm_lane_2_stage_commit_route_plan_serializes() {
+    // Lane 2 canonical chain — stage_tx → commit_tx. Future shape for
+    // venue blob → wallet sign once apps adopt Lane 2 commit.
+    let plan = ToolReturn::route(json!({"status": "previewed"}))
+        .next(|next| {
+            next.add::<host::SvmStageTx>(json!({
+                "tx": "AgAB...base64...",
+                "description": "swap via byreal RFQ",
+            }))
+            .bind_as("tx_id");
+        })
+        .after::<host::SvmCommitTx>(json!({"mode": "wallet"}))
+        .awaits("tx_id")
+        .build();
+
+    let routes = serde_json::to_value(&plan).unwrap()["__aomi_tool_routes"]
+        .as_array()
+        .expect("routes present")
+        .clone();
+    let tools: Vec<&str> = routes
+        .iter()
+        .filter_map(|route| route.get("tool").and_then(Value::as_str))
+        .collect();
+    assert_eq!(tools, vec!["svm_stage_tx", "svm_commit_tx"]);
+
+    // Lane 2 commit takes only `tx_id` + `mode` — assert no
+    // accidental Lane 1 args leaked into the after step's payload.
+    let commit_args = routes[1].get("args").expect("args present");
+    let args_obj = commit_args.as_object().expect("args object");
+    assert!(!args_obj.contains_key("ix_ids"));
+    assert!(!args_obj.contains_key("version"));
+    assert!(!args_obj.contains_key("address_lookup_tables"));
+    assert!(!args_obj.contains_key("compute_units"));
 }
 
 #[test]

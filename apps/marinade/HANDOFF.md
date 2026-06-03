@@ -1,7 +1,7 @@
 # Marinade aomi-app — handoff
 
 Reference SVM app demonstrating `BuiltinApp::SvmSelfBroadcast` variant
-declaration + the new `host::SvmStageIx` / `host::SvmCommitTx` route
+declaration + the new `host::SvmStageIx` / `host::SvmCommitIx` route
 markers (SDK 0.1.23). Second reference app after byreal; the contrast
 is intentional:
 
@@ -11,7 +11,7 @@ is intentional:
 | Broadcaster | venue HTTP submit (byreal `/dex/v2/send-swap-tx`) | wallet (today) / runtime RPC (post-#38-pipeline-c) |
 | Chain mix | cross-chain (Hyperliquid + Solana) | SVM-only |
 | Tx production | venue-built unsigned tx blob (Lane 2) | app-composed ix list (Lane 1) |
-| Route markers used | `host::SvmSignTx` | `host::SvmStageIx` + `host::SvmCommitTx` |
+| Route markers used | `host::SvmSignTx` | `host::SvmStageIx` + `host::SvmCommitIx` |
 
 The full matrix of pipeline shapes lives in
 `product-mono/docs/topics/solana/ralph/state/svm-evm-gap-39.md` § Variant-
@@ -26,7 +26,7 @@ by-variant gap audit.
   `src/lib.rs::testing::tests`.
 - **Write tools** (`marinade_build_stake`,
   `marinade_build_liquid_unstake`) produce a structurally correct route
-  plan: preview → `host::SvmStageIx` → `host::SvmCommitTx({mode: "wallet"})`
+  plan: preview → `host::SvmStageIx` → `host::SvmCommitIx({mode: "wallet"})`
   → `submit_*` continuation. The plan shape is end-to-end correct against
   the route-builder contract (verified in the
   `route_builder_serializes_*` tests on the SDK side too).
