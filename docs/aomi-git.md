@@ -12,7 +12,7 @@ aomi-git activate -> backend fetches + loads the release
 
 | Command | What it does | Who runs it |
 |---|---|---|
-| `request` | Posts an access request to the Aomi apps Discord so ops can invite your GitHub account to the platform repo and issue you a per-app activation code. Run once, before your first deploy. | The app author |
+| `request` | Posts an activation request to the Aomi apps Discord so ops can invite your GitHub account to the platform repo and issue you a per-app activation code. Run once, before your first deploy. | The app author |
 | `deploy` | Snapshots your source repo, stages it under `apps/<slug>/` in the platform repo, commits, and pushes to the publish branch. CI then builds the cdylib and cuts a GitHub release. | The app author (a collaborator) |
 | `status` | Reads `.aomi/deployment.json`, polls GitHub Actions and release state, then reports whether activation is ready. | The app author |
 | `activate` | Tells a backend to fetch a published release, validate it, and load it. | The app author, using their per-app activation code |

@@ -32,7 +32,7 @@
 //!   --dry-run
 //!   --json
 //!
-//! request                    # ask ops for access (invite + activation code)
+//! request                    # ask ops for activation (invite + activation code)
 //!   --email <EMAIL>          # where ops sends your activation code
 //!   --git-account <USER>     # GitHub account to invite as a collaborator
 //!   --app <NAME>             # aomi.toml [app].name (default)
@@ -108,7 +108,7 @@ impl Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Ask platform ops for access: a collaborator invite for your GitHub
+    /// Ask platform ops for activation: a collaborator invite for your GitHub
     /// account plus a per-app activation code, delivered out-of-band. Run this
     /// once before your first deploy.
     Request(RequestArgs),
@@ -227,7 +227,7 @@ impl RequestArgs {
 
         request.post().await?;
         println!(
-            "Posted access request for `{}` to the Aomi apps Discord.",
+            "Posted activation request for `{}` to the Aomi apps Discord.",
             request.app
         );
         println!(
@@ -471,7 +471,7 @@ impl DeployArgs {
         println!("     Set AOMI_APP_ACTIVATION_TOKEN (or pass --activation-token) to the");
         println!("     per-app code platform ops issued you.");
         println!();
-        println!("     First time? Request access before deploying:");
+        println!("     First time? Request activation before deploying:");
         println!("       aomi-git request --email <you@example.com> --git-account <github-user>");
     }
 }

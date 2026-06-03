@@ -1,9 +1,9 @@
-//! Discord access-request delivery.
+//! Discord activation-request delivery.
 //!
 //! A new contributor can't deploy until ops invites their GitHub account to the
 //! platform repo, and can't self-activate until ops issues them a per-app
 //! activation code (ADR 0009 + per-app token model). So the first step is to
-//! *ask* ops for access. This module posts that ask to the Aomi apps Discord
+//! *ask* ops for activation. This module posts that ask to the Aomi apps Discord
 //! via an incoming webhook, tagging ops and carrying the requester's GitHub
 //! account + email + app so ops can act without a round-trip.
 //!
@@ -17,7 +17,7 @@
 //!
 //! ## Delivery configuration
 //! The Discord target is intentionally code-owned: contributors should not
-//! configure where access requests go. Update the constants below when the
+//! configure where activation requests go. Update the constants below when the
 //! request channel or ops mention changes.
 
 use anyhow::{Result, anyhow, bail};
@@ -28,7 +28,7 @@ use serde_json::json;
 /// only lets someone *join*; it can't post or read.
 pub const DISCORD_INVITE: &str = "https://discord.gg/VF5Zq8ddu";
 
-/// Incoming webhook for the access-request channel.
+/// Incoming webhook for the activation-request channel.
 const DISCORD_WEBHOOK: &str = "https://discord.com/api/webhooks/1510784125009657876/DVnF_g6TgBsnrzRBBu5hKfvsRvA6U7fYFfJnDTQMWT5pkn6uxGJ1io4LyN9E7CrPDfWp";
 
 /// Ops role/user mention (`<@&ID>` or `<@ID>`).
@@ -40,7 +40,7 @@ const EMBED_COLOR: u32 = 5_793_266;
 /// Provenance stamp on the structured payload.
 const SOURCE: &str = concat!("aomi-git/", env!("CARGO_PKG_VERSION"));
 
-/// The onboarding/access ask, independent of how it's delivered.
+/// The onboarding/activation ask, independent of how it's delivered.
 ///
 /// Carries the requester identity ops (and the downstream automation consuming
 /// the webhook) need to act: the GitHub account to invite as a platform
@@ -64,7 +64,7 @@ impl ActivationRequest {
     /// token.
     pub fn payload(&self) -> serde_json::Value {
         json!({
-            "kind": "access_request",
+            "kind": "activation_request",
             "email": self.email,
             "github_account": self.git_account,
             "app": self.app,
@@ -86,7 +86,7 @@ impl ActivationRequest {
             "content": DISCORD_ADMIN,
             "allowed_mentions": { "parse": ["users", "roles"] },
             "embeds": [{
-                "title": "Access request",
+                "title": "Activation request",
                 "color": EMBED_COLOR,
                 "fields": [
                     { "name": "Requester", "value": self.email, "inline": true },
@@ -100,7 +100,7 @@ impl ActivationRequest {
         })
     }
 
-    /// POST this access request to the code-owned Discord webhook. Returns
+    /// POST this activation request to the code-owned Discord webhook. Returns
     /// `Ok` on any 2xx (Discord answers 204 No Content on success).
     pub async fn post(&self) -> Result<()> {
         if DISCORD_WEBHOOK.contains("REPLACE_ME") || DISCORD_ADMIN.contains("REPLACE_ME") {
@@ -144,7 +144,7 @@ mod tests {
     #[test]
     fn payload_carries_the_canonical_fields() {
         let p = sample().payload();
-        assert_eq!(p["kind"], "access_request");
+        assert_eq!(p["kind"], "activation_request");
         assert_eq!(p["email"], "alice@gmail.com");
         assert_eq!(p["github_account"], "alice-git-acc");
         assert_eq!(p["app"], "my-bot");
@@ -185,7 +185,7 @@ mod tests {
         let body = sample().webhook_body();
         assert_eq!(body["content"], DISCORD_ADMIN);
         let embed = &body["embeds"][0];
-        assert_eq!(embed["title"], "Access request");
+        assert_eq!(embed["title"], "Activation request");
 
         // Human-readable fields carry the same values as the payload.
         let field_values: Vec<&str> = embed["fields"]
@@ -212,7 +212,7 @@ mod tests {
             .trim_end_matches("\n```");
         let parsed: serde_json::Value =
             serde_json::from_str(inner).expect("description json parses");
-        assert_eq!(parsed["kind"], "access_request");
+        assert_eq!(parsed["kind"], "activation_request");
         assert_eq!(parsed["github_account"], "alice-git-acc");
     }
 }
