@@ -1270,11 +1270,15 @@ fn git_transport_allows_owned_dirty_platform_files() {
     let source = TestRepo::new();
     source.write_aomi_toml("", "zora", "git@github.com:aomi-labs/community-apps.git");
     source.commit("initial app");
+    let existing_state = Deployment::dry_run(source.root(), Platform::new("community"), false)
+        .expect("existing deployment")
+        .to_state();
 
     let platform = TestRepo::new();
     platform.set_origin("git@github.com:aomi-labs/community-apps.git");
     platform.write("README.md", "community apps\n");
     platform.commit("initial platform repo");
+    platform.write_deployment_state("apps/zora", &existing_state);
     platform.write("apps/zora/stale.txt", "owned dirty file\n");
 
     let outcome = Deployment::git_transport(
@@ -1288,6 +1292,65 @@ fn git_transport_allows_owned_dirty_platform_files() {
     assert!(outcome.commit.is_some());
     assert!(!platform.path("apps/zora/stale.txt").exists());
     assert!(platform.path("apps/zora/aomi.toml").is_file());
+}
+
+#[test]
+fn git_transport_rejects_existing_app_without_ownership_manifest() {
+    let source = TestRepo::new();
+    source.write_aomi_toml("", "zora", "git@github.com:aomi-labs/community-apps.git");
+    source.commit("initial app");
+
+    let platform = TestRepo::new();
+    platform.set_origin("git@github.com:aomi-labs/community-apps.git");
+    platform.write("README.md", "community apps\n");
+    platform.write("apps/zora/stale.txt", "existing app without manifest\n");
+    platform.commit("initial platform repo");
+
+    let error = Deployment::git_transport(
+        source.root(),
+        Platform::new("community"),
+        platform.root(),
+        false,
+    )
+    .expect_err("existing app without owner manifest should fail");
+
+    let message = error.to_string();
+    assert!(message.contains("unknown ownership"), "{message}");
+    assert!(message.contains("apps/zora"), "{message}");
+}
+
+#[test]
+fn git_transport_rejects_existing_app_owned_by_another_checkout() {
+    let source = TestRepo::new();
+    source.write_aomi_toml("", "zora", "git@github.com:aomi-labs/community-apps.git");
+    source.commit("initial app");
+
+    let owner = TestRepo::new();
+    owner.write_aomi_toml("", "zora", "git@github.com:aomi-labs/community-apps.git");
+    owner.commit("initial owner app");
+    let existing_state = Deployment::dry_run(owner.root(), Platform::new("community"), false)
+        .expect("existing deployment")
+        .to_state();
+
+    let platform = TestRepo::new();
+    platform.set_origin("git@github.com:aomi-labs/community-apps.git");
+    platform.write("README.md", "community apps\n");
+    platform.write("apps/zora/src/lib.rs", "pub fn existing() {}\n");
+    platform.write_deployment_state("apps/zora", &existing_state);
+    platform.commit("initial platform repo");
+
+    let error = Deployment::git_transport(
+        source.root(),
+        Platform::new("community"),
+        platform.root(),
+        false,
+    )
+    .expect_err("existing app owned by another checkout should fail");
+
+    let message = error.to_string();
+    assert!(message.contains("already deployed"), "{message}");
+    assert!(message.contains("apps/zora"), "{message}");
+    assert!(message.contains("another source checkout"), "{message}");
 }
 
 #[tokio::test]
@@ -1605,6 +1668,14 @@ impl TestRepo {
         self.write(
             &path,
             &format!("[app]\nname = \"{name}\"\nplatform = \"community\"\ngit = \"{git}\"\n"),
+        );
+    }
+
+    fn write_deployment_state(&self, app_dir: &str, state: &DeploymentState) {
+        let json = serde_json::to_string_pretty(state).expect("deployment state json");
+        self.write(
+            &format!("{app_dir}/.aomi/deployment.json"),
+            &format!("{json}\n"),
         );
     }
 }

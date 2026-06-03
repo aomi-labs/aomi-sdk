@@ -6,13 +6,13 @@
 //! signs it, and `submit_swap` forwards the signed bytes to byreal's
 //! AMM-or-RFQ submission endpoint depending on the quote's `routerType`.
 
-use crate::client::spot::spot_client;
 use crate::client::ByrealApp;
+use crate::client::spot::spot_client;
 use crate::tool::{build_svm_sign_tx_routes, ok, resolve_address, validate_confirmation};
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const DEFAULT_PAGE_SIZE: u32 = 20;
 const DEFAULT_SLIPPAGE_BPS: u32 = 100; // 1% — matches byreal's frontend default
@@ -487,9 +487,7 @@ mod tests {
         assert_eq!(env["__aomi_tool_return"], json!(true));
         assert_eq!(env["__aomi_tool_value"], preview);
 
-        let routes = env["__aomi_tool_routes"]
-            .as_array()
-            .expect("routes array");
+        let routes = env["__aomi_tool_routes"].as_array().expect("routes array");
         assert_eq!(
             routes.len(),
             2,
@@ -507,12 +505,14 @@ mod tests {
             "sign fires immediately after build_swap returns"
         );
         assert_eq!(
-            sign_step["bind_as"], json!("signed_tx"),
+            sign_step["bind_as"],
+            json!("signed_tx"),
             "sign result must bind to `signed_tx` — the alias submit_swap awaits"
         );
         let sign_args = &sign_step["args"];
         assert_eq!(
-            sign_args["unsigned_tx"], json!(unsigned_tx),
+            sign_args["unsigned_tx"],
+            json!(unsigned_tx),
             "the venue-supplied tx blob is what gets signed"
         );
         assert_eq!(sign_args["description"], json!(description));
@@ -523,7 +523,8 @@ mod tests {
             "continuation must point at the matched submit tool"
         );
         assert_eq!(
-            continuation["artifact_field"], json!("signed_tx"),
+            continuation["artifact_field"],
+            json!("signed_tx"),
             "runtime splices the signed bytes into submit_swap.signed_tx"
         );
         assert_eq!(
@@ -544,11 +545,15 @@ mod tests {
         assert_eq!(submit_args["confirmation"], json!("confirm"));
         assert_eq!(submit_args["router_type"], json!("AMM"));
         assert_eq!(
-            submit_args["unsigned_tx"], json!(unsigned_tx),
+            submit_args["unsigned_tx"],
+            json!(unsigned_tx),
             "AMM endpoint needs the original unsigned tx as `preData`"
         );
         assert!(
-            submit_args.get("signed_tx").map(Value::is_null).unwrap_or(true),
+            submit_args
+                .get("signed_tx")
+                .map(Value::is_null)
+                .unwrap_or(true),
             "signed_tx must be null at route-emit time; the runtime fills it from the bind"
         );
     }
@@ -571,9 +576,18 @@ mod tests {
 
         // The runtime expects to find `signed_tx` (target of splice)
         // and `unsigned_tx` (AMM endpoint dependency) on the template.
-        assert!(template.get("signed_tx").is_some(), "template missing `signed_tx`");
-        assert!(template.get("unsigned_tx").is_some(), "template missing `unsigned_tx`");
-        assert!(template.get("router_type").is_some(), "template missing `router_type`");
+        assert!(
+            template.get("signed_tx").is_some(),
+            "template missing `signed_tx`"
+        );
+        assert!(
+            template.get("unsigned_tx").is_some(),
+            "template missing `unsigned_tx`"
+        );
+        assert!(
+            template.get("router_type").is_some(),
+            "template missing `router_type`"
+        );
         // confirmation is what gates the submit tool's local validation.
         assert_eq!(template["confirmation"], json!("confirm"));
     }

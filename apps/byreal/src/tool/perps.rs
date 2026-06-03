@@ -1,16 +1,16 @@
-use crate::client::perps::{
-    build_cancel_action, build_exchange_body, build_order_action, build_update_leverage_action,
-    parse_signature, perps_client, prepare_l1_action, OrderInputs,
-};
 use crate::client::ByrealApp;
+use crate::client::perps::{
+    OrderInputs, build_cancel_action, build_exchange_body, build_order_action,
+    build_update_leverage_action, parse_signature, perps_client, prepare_l1_action,
+};
 use crate::tool::{build_evm_signed_routes, ok, resolve_address, validate_confirmation};
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 const DEFAULT_MARKET_SLIPPAGE_PCT: f64 = 5.0;

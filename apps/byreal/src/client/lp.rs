@@ -18,8 +18,8 @@
 //! v1 supports the single-tx case explicitly; multi-tx batches are left for
 //! the LLM to drive by claiming positions in smaller groups.
 
-use crate::client::{byreal_get, byreal_post, http_client, BYREAL_API_BASE};
-use serde_json::{json, Value};
+use crate::client::{BYREAL_API_BASE, byreal_get, byreal_post, http_client};
+use serde_json::{Value, json};
 use std::sync::OnceLock;
 
 const PATH_POSITIONS_LIST: &str = "/byreal/api/dex/v2/position/list";

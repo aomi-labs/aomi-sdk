@@ -24,6 +24,12 @@ pub struct Source {
     pub dirty: bool,
 }
 
+impl Source {
+    pub(crate) fn same_checkout(&self, other: &Self) -> bool {
+        self.git_root == other.git_root && self.source_path == other.source_path
+    }
+}
+
 impl GitRepo {
     pub fn discover(start: impl AsRef<Path>) -> Result<Self> {
         let start_dir = normalize_start_dir(start.as_ref())?;

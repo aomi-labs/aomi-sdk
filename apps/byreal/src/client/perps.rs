@@ -3,10 +3,10 @@ use hl_ranger::{
     Actions, BulkCancel, BulkOrder, CancelRequest, ClientLimit, ClientOrder, ClientOrderRequest,
     UpdateLeverage,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub(crate) const DEFAULT_API_URL: &str = "https://api.hyperliquid.xyz";

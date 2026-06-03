@@ -7,6 +7,7 @@ use serde_json::json;
 use crate::app::App;
 use crate::deployment_state::{
     Check, DeploymentState, Stage, StageId, StagedFile, StateFlags, TargetSpec,
+    read as read_deployment_state,
 };
 use crate::git::{GitRepo, Source};
 use crate::platform::{
@@ -131,6 +132,7 @@ impl Deployment {
 
         let app_dir = platform_repo.root().join(&deployment.publish.app_path);
         guard_overlap(&app_dir, &deployment.source)?;
+        guard_existing_app_owner(&app_dir, &deployment)?;
 
         deployment.files = write_source_tree(&repo, &deployment.source.source_path, &app_dir)?;
         let manifest_path = manifest_path_in(&app_dir);
@@ -348,6 +350,28 @@ fn guard_overlap(app_dir: &Path, source: &Source) -> Result<()> {
     if app_dir == source.git_root.join(&source.source_path) {
         anyhow::bail!("refusing to stage over the source app directory");
     }
+    Ok(())
+}
+
+fn guard_existing_app_owner(app_dir: &Path, deployment: &Deployment) -> Result<()> {
+    if !app_dir.exists() {
+        return Ok(());
+    }
+
+    let existing = read_deployment_state(app_dir)?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "app path `{}` already exists but has no `.aomi/deployment.json`; refusing to overwrite an app with unknown ownership",
+            deployment.publish.app_path
+        )
+    })?;
+    if !existing.source.same_checkout(&deployment.source) {
+        anyhow::bail!(
+            "app slug `{}` is already deployed at `{}` by another source checkout; choose a unique app name or redeploy from the original checkout",
+            deployment.app.name,
+            deployment.publish.app_path
+        );
+    }
+
     Ok(())
 }
 

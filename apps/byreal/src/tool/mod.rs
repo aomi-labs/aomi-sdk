@@ -14,7 +14,7 @@ pub(crate) mod spot;
 
 use aomi_sdk::*;
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Wrap a tool's response value with the `"source": "byreal"` tag so the
 /// LLM can disambiguate provider when multiple read tools' outputs are
