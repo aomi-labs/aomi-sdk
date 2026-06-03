@@ -219,19 +219,6 @@ const STUB_REGISTRY: &[(&str, &str, &str)] = &[
     ),
 ];
 
-fn variant_namespaces(variant: &str) -> Option<&'static [&'static str]> {
-    match variant {
-        "evm" => Some(&["evm-core"]),
-        "svm" => Some(SVM_CORE_NAMESPACES),
-        "svm-self-broadcast" => Some(&["svm-reads", "svm-ix-broadcast", "svm-tx-broadcast"]),
-        "svm-app-broadcast" => Some(&["svm-reads", "svm-tx-sign"]),
-        "svm-bundle-broadcast" => Some(&["svm-reads", "svm-ix-broadcast", "svm-bundle"]),
-        "svm-off-chain-sign" => Some(&["svm-reads", "svm-sign-data"]),
-        "svm-read-only" => Some(&["svm-reads"]),
-        _ => None,
-    }
-}
-
 const SVM_CORE_NAMESPACES: &[&str] = &[
     "svm-reads",
     "svm-ix-broadcast",
@@ -252,19 +239,6 @@ fn insert_namespace(set: &mut BTreeSet<String>, namespace: &str) {
 
 pub fn namespaces_for_manifest(manifest: &DynManifest) -> Vec<String> {
     let mut namespaces = BTreeSet::new();
-
-    if let Some(variant) = manifest.variant.as_deref() {
-        match variant_namespaces(variant) {
-            Some(defaults) => {
-                for namespace in defaults {
-                    insert_namespace(&mut namespaces, namespace);
-                }
-            }
-            None => eprintln!(
-                "  ⚠ variant '{variant}' has no dev-runtime namespace mapping; only explicit namespaces will be stubbed"
-            ),
-        }
-    }
 
     if let Some(explicit) = manifest.namespaces.as_deref() {
         for namespace in explicit {

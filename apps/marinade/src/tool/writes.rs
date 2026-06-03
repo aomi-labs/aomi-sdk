@@ -52,14 +52,14 @@
 //!
 //! `HANDOFF.md` tracks the production-readiness gap.
 
-use crate::client::stats;
 use crate::client::MarinadeApp;
-use crate::tool::{require_svm_wallet, MarinadeAcct, MarinadeIx};
+use crate::client::stats;
+use crate::tool::{MarinadeAcct, MarinadeIx, require_svm_wallet};
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
-use base64::{engine::general_purpose::STANDARD as B64, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD as B64};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 // ===========================================================================
@@ -217,10 +217,7 @@ impl DynAomiTool for BuildLiquidUnstake {
         build_marinade_route_plan(
             preview,
             vec![ix],
-            format!(
-                "Marinade liquid unstake: {} mSOL → SOL",
-                args.msol_amount
-            ),
+            format!("Marinade liquid unstake: {} mSOL → SOL", args.msol_amount),
         )
     }
 }
@@ -266,8 +263,8 @@ fn deposit_accounts_stub(user: &str) -> Vec<MarinadeAcct> {
         acct("__TODO_liq_pool_msol_leg", false, true),
         acct("__TODO_liq_pool_msol_leg_authority", false, false),
         acct("__TODO_reserve_pda", false, true),
-        acct(user, true, true),                          // transfer_from
-        acct("__TODO_user_msol_ata", false, true),       // mint_to (derive via ATA)
+        acct(user, true, true),                    // transfer_from
+        acct("__TODO_user_msol_ata", false, true), // mint_to (derive via ATA)
         acct("__TODO_msol_mint_authority", false, false),
         acct(SYSTEM_PROGRAM, false, false),
         acct(TOKEN_PROGRAM, false, false),
@@ -388,10 +385,8 @@ mod tests {
 
     #[test]
     fn liquid_unstake_ix_data_starts_with_discriminator() {
-        let ix = build_liquid_unstake_ix(
-            "So11111111111111111111111111111111111111112",
-            500_000_000,
-        );
+        let ix =
+            build_liquid_unstake_ix("So11111111111111111111111111111111111111112", 500_000_000);
         let data = B64.decode(ix.data_base64).expect("data is base64");
         assert_eq!(&data[..8], &liquid_unstake_discriminator());
         let amount = u64::from_le_bytes(data[8..16].try_into().unwrap());
@@ -465,10 +460,7 @@ mod tests {
 
         // The stage step binds the alias the commit step awaits.
         let stage = &routes[0];
-        assert_eq!(
-            stage.get("bind_as").and_then(Value::as_str),
-            Some("ix_ids")
-        );
+        assert_eq!(stage.get("bind_as").and_then(Value::as_str), Some("ix_ids"));
 
         // The commit step carries wallet mode (today; flips to
         // internal-rpc when host #38-pipeline-c lands).

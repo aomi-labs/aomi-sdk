@@ -101,7 +101,7 @@ dyn_aomi_app!(
         tool::transfer_ix::TransferSolViaIx,
         tool::transfer_tx::TransferSolViaTx,
     ],
-    variant = AppVariant::SvmSelfBroadcast,
+    namespaces = ["svm-reads", "svm-ix-broadcast", "svm-tx-broadcast"],
 );
 
 pub mod testing {
@@ -114,15 +114,18 @@ pub mod testing {
         use super::super::*;
 
         #[test]
-        fn manifest_declares_svm_self_broadcast_variant() {
+        fn manifest_declares_svm_self_broadcast_namespaces() {
             let app = client::SvmTransferApp::default();
             let manifest = app.manifest();
             assert_eq!(manifest.name, "svm-transfer");
-            assert_eq!(manifest.variant, Some("svm-self-broadcast".to_string()));
-            // No explicit namespaces — the variant arm of the macro sets
-            // namespaces() → None, host loader uses
-            // `variant.default_namespaces()` as source of truth.
-            assert_eq!(manifest.namespaces, None);
+            assert_eq!(
+                manifest.namespaces,
+                Some(vec![
+                    "svm-reads".to_string(),
+                    "svm-ix-broadcast".to_string(),
+                    "svm-tx-broadcast".to_string(),
+                ])
+            );
         }
 
         #[test]
@@ -149,13 +152,15 @@ pub mod testing {
         }
 
         #[test]
-        fn variant_default_namespaces_match_host_self_broadcast() {
+        fn namespace_list_matches_host_self_broadcast_surface() {
             let app = client::SvmTransferApp::default();
-            let variant = app.variant().expect("svm-transfer declares a variant");
-            assert_eq!(variant.as_str(), "svm-self-broadcast");
             assert_eq!(
-                variant.default_namespaces(),
-                &["svm-reads", "svm-ix-broadcast", "svm-tx-broadcast"]
+                app.namespaces(),
+                Some(vec![
+                    "svm-reads".to_string(),
+                    "svm-ix-broadcast".to_string(),
+                    "svm-tx-broadcast".to_string(),
+                ])
             );
         }
     }

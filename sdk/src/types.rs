@@ -112,94 +112,6 @@ pub struct DynToolMetadata {
 }
 
 // ============================================================================
-// App Variant
-// ============================================================================
-
-/// Pipeline-shape contract an app conforms to.
-///
-/// Mirrors the host's `BuiltinApp` enum (see `aomi/crates/runtime/src/loader/
-/// types.rs` on the product-mono side). Each variant corresponds to a durable
-/// transaction pipeline and resolves to a canonical namespace composition; an
-/// app declaring a variant inherits that composition automatically.
-///
-/// Apps may *additionally* declare explicit `namespaces()` to add host tool
-/// surfaces on top of what the variant provides — the host loader takes the
-/// union (`variant.default_namespaces() ∪ namespaces`). byreal-style
-/// cross-chain apps stay string-typed (no variant) because the variant set is
-/// SVM-shaped today.
-///
-/// **Sync contract with host**: the kebab strings returned by
-/// [`AppVariant::as_str`] must exactly match what host's `BuiltinApp::parse`
-/// accepts. Adding a host variant requires bumping the SDK in lockstep —
-/// there is no shared source of truth, by design (the SDK can't depend on
-/// product-mono).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum AppVariant {
-    /// EVM. Pairs with host `BuiltinApp::Evm`. Default namespace set:
-    /// `["evm-core"]`.
-    Evm,
-    /// SVM catch-all meta. Pairs with host `BuiltinApp::Svm`. Default
-    /// namespace set: `["svm-core"]` (the meta — expands to all five SVM
-    /// sub-namespaces on the host side).
-    Svm,
-    /// SVM pipelines A + B (wallet send / runtime broadcast). Default
-    /// namespace set: `["svm-reads", "svm-ix-broadcast",
-    /// "svm-tx-broadcast"]`.
-    SvmSelfBroadcast,
-    /// SVM pipeline C (venue HTTP submit — byreal-style, Jupiter
-    /// Meta-Aggregator, Raydium tx-API). Default namespace set:
-    /// `["svm-reads", "svm-tx-sign"]`; app's own `submit_*` tool
-    /// forwards signed bytes to a venue endpoint.
-    SvmAppBroadcast,
-    /// SVM pipeline D (Jito bundle). Default namespace set:
-    /// `["svm-reads", "svm-ix-broadcast", "svm-bundle"]`.
-    /// `svm-bundle` is a host-side stub today; bundle verbs land with
-    /// #39-svm-apps-d.
-    SvmBundleBroadcast,
-    /// SVM pipeline F (off-chain message signing). Default namespace set:
-    /// `["svm-reads", "svm-sign-data"]`.
-    SvmOffChainSign,
-    /// SVM pipeline R (reads only, analytics). Default namespace set:
-    /// `["svm-reads"]`.
-    SvmReadOnly,
-}
-
-impl AppVariant {
-    /// Kebab-case identifier the host's `BuiltinApp::parse` accepts and
-    /// `BuiltinApp::as_str` emits. Stable across the variant's lifetime —
-    /// rename here only if the host renames first.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Evm => "evm",
-            Self::Svm => "svm",
-            Self::SvmSelfBroadcast => "svm-self-broadcast",
-            Self::SvmAppBroadcast => "svm-app-broadcast",
-            Self::SvmBundleBroadcast => "svm-bundle-broadcast",
-            Self::SvmOffChainSign => "svm-off-chain-sign",
-            Self::SvmReadOnly => "svm-read-only",
-        }
-    }
-
-    /// Canonical namespace composition the host will register for this
-    /// variant. Mirror of host `BuiltinApp::default_namespaces()`.
-    ///
-    /// Returned as `&'static [&'static str]` for zero-allocation
-    /// inspection; the manifest builder converts to `Vec<String>` when
-    /// merging with the app's explicit `namespaces()`.
-    pub fn default_namespaces(self) -> &'static [&'static str] {
-        match self {
-            Self::Evm => &["evm-core"],
-            Self::Svm => &["svm-core"],
-            Self::SvmSelfBroadcast => &["svm-reads", "svm-ix-broadcast", "svm-tx-broadcast"],
-            Self::SvmAppBroadcast => &["svm-reads", "svm-tx-sign"],
-            Self::SvmBundleBroadcast => &["svm-reads", "svm-ix-broadcast", "svm-bundle"],
-            Self::SvmOffChainSign => &["svm-reads", "svm-sign-data"],
-            Self::SvmReadOnly => &["svm-reads"],
-        }
-    }
-}
-
-// ============================================================================
 // Plugin Manifest
 // ============================================================================
 
@@ -219,19 +131,8 @@ pub struct DynManifest {
     pub preamble: String,
     /// Tools provided by this plugin
     pub tools: Vec<DynToolMetadata>,
-    /// Pipeline-shape variant the app conforms to (see [`AppVariant`]).
-    /// When present, the host loader seeds the namespace set with
-    /// `AppVariant::default_namespaces()` and unions in any explicit
-    /// [`namespaces`](Self::namespaces). `None` means the app is
-    /// string-typed only — `namespaces` is the source of truth.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub variant: Option<String>,
-    /// Host-side namespaces the plugin needs (e.g. `["database"]`, `["forge"]`).
+    /// Host-side namespaces the plugin needs (e.g. `["svm-reads"]`).
     /// The host injects these namespaces' tools alongside the plugin's own tools.
-    ///
-    /// When [`variant`](Self::variant) is also set, the host loader takes the
-    /// union of variant defaults and this list. Apps that want a pure variant
-    /// declaration can leave this `None`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub namespaces: Option<Vec<String>>,
     /// Per-app secret slots this plugin declares (see [`crate::Secret`]).
@@ -494,21 +395,6 @@ pub trait DynAomiApp: Clone + Default + Send + Sync + 'static {
         sink: DynAsyncSink,
     ) -> DynToolDispatch;
 
-    /// Pipeline-shape variant this app conforms to (see [`AppVariant`]).
-    ///
-    /// Default is `None` — the app is string-typed via [`namespaces`](Self::namespaces).
-    /// SVM-only apps should prefer declaring a variant so the host loader
-    /// composes the canonical namespace set; cross-chain apps (e.g. byreal,
-    /// which spans Hyperliquid perps + Solana spot) stay string-typed.
-    ///
-    /// When both `variant` and `namespaces` are set, the host loader takes
-    /// the union (variant defaults + explicit namespaces), so apps can layer
-    /// extra surfaces on top of a variant — e.g. an SVM app that also needs
-    /// `["database"]` for admin metadata.
-    fn variant(&self) -> Option<AppVariant> {
-        None
-    }
-
     /// Host-side namespaces this plugin requires. Canonical names only:
     ///
     /// - EVM: `"evm-core"`
@@ -516,7 +402,7 @@ pub trait DynAomiApp: Clone + Default + Send + Sync + 'static {
     /// - SVM subs: `"svm-reads"`, `"svm-ix-broadcast"`,
     ///   `"svm-ix-sign"`, `"svm-tx-broadcast"`, `"svm-tx-sign"`,
     ///   `"svm-sign-data"`, `"svm-bundle"`
-    /// - Other: `"database"`, `"forge"`
+    /// - Other: `"database"` (host-private)
     ///
     /// Legacy aliases (`"solana-core"`, `"sol"`, `"solana"`, `"svm"`,
     /// `"common"`) were removed in host iter-39 — the loader logs
@@ -528,11 +414,6 @@ pub trait DynAomiApp: Clone + Default + Send + Sync + 'static {
     ///   "svm-tx-sign"]` for byreal's cross-chain pattern).
     /// - Replace entirely (e.g. `["database"]` for a namespace-only admin app).
     /// - Return `Some(vec![])` to opt out explicitly.
-    ///
-    /// For SVM-only apps, prefer declaring a [`variant`](Self::variant) instead
-    /// — it inherits the canonical namespace composition and signals the
-    /// pipeline-shape intent. See ADR 0004 on the product-mono side for the
-    /// variant table.
     fn namespaces(&self) -> Option<Vec<String>> {
         Some(vec!["evm-core".to_string()])
     }
@@ -552,7 +433,6 @@ pub trait DynAomiApp: Clone + Default + Send + Sync + 'static {
             version: self.version().to_string(),
             preamble: self.preamble().to_string(),
             tools: self.tools(),
-            variant: self.variant().map(|v| v.as_str().to_string()),
             namespaces: self.namespaces(),
             secrets: self.secrets(),
         }

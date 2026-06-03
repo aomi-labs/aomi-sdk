@@ -75,11 +75,6 @@ pub fn print_manifest_summary(manifest: &DynManifest) {
         );
     }
 
-    match manifest.variant.as_deref() {
-        None => {}
-        Some(variant) => eprintln!("  variant    : {variant}"),
-    }
-
     match manifest.namespaces.as_deref() {
         None | Some(&[]) => eprintln!("  namespaces : (none)"),
         Some(ns) => eprintln!("  namespaces : {} (stubbed)", ns.join(", ")),

@@ -19,7 +19,7 @@
 //!   `svm_sign_tx`, …) — host-side wallet UX is missing, so the agent
 //!   receives the envelope as opaque JSON and routes never fire.
 //! - Skill activation.
-//! - The host-side namespace toolsets (`evm-core`, `database`, `forge`, …)
+//! - The host-side namespace toolsets (`evm-core`, `database`, …)
 //!   are replaced with stub tools that return an "unavailable in dev
 //!   runtime" sentinel value. The LLM still sees the tools by name but any
 //!   call resolves to a no-op note rather than real behavior.

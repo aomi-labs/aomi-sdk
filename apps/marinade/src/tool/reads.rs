@@ -1,8 +1,8 @@
 //! Read-only Marinade tools. All four hit `api.marinade.finance` directly;
 //! no signing or chain interaction.
 
-use crate::client::stats;
 use crate::client::MarinadeApp;
+use crate::client::stats;
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
 use serde::Deserialize;

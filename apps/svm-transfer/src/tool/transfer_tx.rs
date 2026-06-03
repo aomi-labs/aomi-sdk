@@ -29,9 +29,9 @@
 
 use std::str::FromStr;
 
-use base64::{engine::general_purpose::STANDARD as B64, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD as B64};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use solana_sdk::{
     hash::Hash,
     instruction::{AccountMeta, Instruction},
@@ -44,9 +44,9 @@ use solana_sdk::{
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
 
-use crate::client::{fetch_recent_blockhash, SvmTransferApp};
+use crate::client::{SvmTransferApp, fetch_recent_blockhash};
 use crate::tool::{
-    require_svm_wallet, system_transfer_data, validate_base58_address, SYSTEM_PROGRAM_ID,
+    SYSTEM_PROGRAM_ID, require_svm_wallet, system_transfer_data, validate_base58_address,
 };
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -63,8 +63,7 @@ impl DynAomiTool for TransferSolViaTx {
     type App = SvmTransferApp;
     type Args = TransferSolViaTxArgs;
     const NAME: &'static str = "transfer_sol_via_tx";
-    const DESCRIPTION: &'static str =
-        "**Lane 2 smoke** — transfer SOL to `to` from the connected SVM wallet, building the \
+    const DESCRIPTION: &'static str = "**Lane 2 smoke** — transfer SOL to `to` from the connected SVM wallet, building the \
          full VersionedTransaction blob client-side and emitting it through the canonical \
          `svm_stage_tx` → `svm_commit_tx({mode: \"wallet\"})` route plan. The app fetches a \
          recent blockhash from the configured cluster RPC (devnet by default) before composing \
@@ -211,8 +210,8 @@ mod tests {
         // A real-looking devnet blockhash format; the value is arbitrary.
         let blockhash = "GfDqQwBxFqUNHNyEFwQRRYRb3MaAfDCYU1Q3vyfXVDwf";
 
-        let blob = build_legacy_transfer_blob(payer, to, 1_000_000, blockhash)
-            .expect("blob builds");
+        let blob =
+            build_legacy_transfer_blob(payer, to, 1_000_000, blockhash).expect("blob builds");
         let bytes = B64.decode(&blob).expect("base64 decodes");
         let vtx: VersionedTransaction =
             bincode::deserialize(&bytes).expect("bincode deserialize round-trips");
@@ -260,8 +259,8 @@ mod tests {
             amount_lamports: "0".to_string(),
         };
         let ctx = ctx_with_wallet("11111111111111111111111111111111");
-        let err = TransferSolViaTx::run_with_routes(&SvmTransferApp::default(), args, ctx)
-            .unwrap_err();
+        let err =
+            TransferSolViaTx::run_with_routes(&SvmTransferApp::default(), args, ctx).unwrap_err();
         assert!(err.contains("must be > 0"));
     }
 
@@ -272,8 +271,8 @@ mod tests {
             amount_lamports: "1000000".to_string(),
         };
         let ctx = ctx_with_wallet("11111111111111111111111111111111");
-        let err = TransferSolViaTx::run_with_routes(&SvmTransferApp::default(), args, ctx)
-            .unwrap_err();
+        let err =
+            TransferSolViaTx::run_with_routes(&SvmTransferApp::default(), args, ctx).unwrap_err();
         assert!(err.contains("invalid `to`"));
     }
 
@@ -286,8 +285,8 @@ mod tests {
         let ctx = TestCtxBuilder::new("transfer_sol_via_tx")
             .attribute("domain", serde_json::json!({}))
             .build();
-        let err = TransferSolViaTx::run_with_routes(&SvmTransferApp::default(), args, ctx)
-            .unwrap_err();
+        let err =
+            TransferSolViaTx::run_with_routes(&SvmTransferApp::default(), args, ctx).unwrap_err();
         assert!(err.contains("no SVM wallet connected"));
     }
 }

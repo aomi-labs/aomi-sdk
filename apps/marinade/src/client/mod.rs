@@ -48,8 +48,7 @@ pub(crate) struct MarinadeApp;
 pub(crate) fn marinade_get<T: serde::de::DeserializeOwned + serde::Serialize>(
     path: &str,
 ) -> Result<serde_json::Value, String> {
-    let base = std::env::var("MARINADE_API_URL")
-        .unwrap_or_else(|_| MARINADE_API_BASE.to_string());
+    let base = std::env::var("MARINADE_API_URL").unwrap_or_else(|_| MARINADE_API_BASE.to_string());
     let url = format!("{base}{path}");
     let client = http_client()?;
     let resp = client
@@ -65,8 +64,8 @@ pub(crate) fn marinade_get<T: serde::de::DeserializeOwned + serde::Serialize>(
     }
     let value: T = serde_json::from_str(&text)
         .map_err(|e| format!("[marinade] parse {url}: {e}; body: {text}"))?;
-    let mut tagged = serde_json::to_value(value)
-        .map_err(|e| format!("[marinade] re-serialize {url}: {e}"))?;
+    let mut tagged =
+        serde_json::to_value(value).map_err(|e| format!("[marinade] re-serialize {url}: {e}"))?;
     if let serde_json::Value::Object(ref mut map) = tagged {
         map.insert(
             "source".to_string(),

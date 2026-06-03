@@ -63,8 +63,8 @@ struct GetLatestBlockhashValue {
     blockhash: String,
     #[serde(default)]
     #[allow(dead_code)] // surfaced for future use; the host commit_tx
-                       // also fetches and stamps last_valid_block_height
-                       // when blob carries none.
+    // also fetches and stamps last_valid_block_height
+    // when blob carries none.
     last_valid_block_height: Option<u64>,
 }
 

@@ -1,13 +1,12 @@
 # Marinade aomi-app — handoff
 
-Reference SVM app demonstrating `BuiltinApp::SvmSelfBroadcast` variant
-declaration + the new `host::SvmStageIx` / `host::SvmCommitIx` route
-markers (SDK 0.1.23). Second reference app after byreal; the contrast
-is intentional:
+Reference SVM app demonstrating explicit self-broadcast namespaces plus
+the new `host::SvmStageIx` / `host::SvmCommitIx` route markers (SDK
+0.1.23). Second reference app after byreal; the contrast is intentional:
 
 | | byreal | marinade |
 |---|---|---|
-| Namespace declaration | string-typed (`["evm-core", "svm-reads"]`) | variant-typed (`variant = SvmSelfBroadcast`) |
+| Namespace declaration | `["evm-core", "svm-reads"]` | `["svm-reads", "svm-ix-broadcast", "svm-tx-broadcast"]` |
 | Broadcaster | venue HTTP submit (byreal `/dex/v2/send-swap-tx`) | wallet (today) / runtime RPC (post-#38-pipeline-c) |
 | Chain mix | cross-chain (Hyperliquid + Solana) | SVM-only |
 | Tx production | venue-built unsigned tx blob (Lane 2) | app-composed ix list (Lane 1) |
@@ -22,7 +21,7 @@ by-variant gap audit.
 - **All four read tools** hit `api.marinade.finance` directly and return
   live data: `marinade_get_apy`, `marinade_get_tvl`,
   `marinade_get_exchange_rate`, `marinade_get_validators`. Manifest +
-  variant declaration verified by the 4 smoke tests at
+  namespace declaration verified by the 4 smoke tests at
   `src/lib.rs::testing::tests`.
 - **Write tools** (`marinade_build_stake`,
   `marinade_build_liquid_unstake`) produce a structurally correct route
@@ -33,10 +32,9 @@ by-variant gap audit.
 - **Anchor discriminators** for `deposit` and `liquid_unstake` are
   computed from `sha256("global:<method>")[..8]` and pinned in tests.
   Production-correct against Marinade IDL.
-- **Variant + namespace composition**: `MarinadeApp.variant()` returns
-  `Some(SvmSelfBroadcast)`; `manifest.namespaces` is `None` because the
-  variant arm of `dyn_aomi_app!` sets the trait method to `None` and
-  expects the host to seed from `variant.default_namespaces()`.
+- **Namespace composition**: `manifest.namespaces` declares
+  `["svm-reads", "svm-ix-broadcast", "svm-tx-broadcast"]`, so the app
+  gets exactly the host read and self-broadcast tools it needs.
 
 ## What's stubbed (the production-readiness gap)
 
