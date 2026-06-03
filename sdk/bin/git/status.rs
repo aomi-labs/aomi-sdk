@@ -8,7 +8,7 @@
 //!
 //! This module answers both by polling the GitHub REST API for the source
 //! repo - the workflow run on the publish branch, and the release keyed on the
-//! deploy's release tag. No auth is needed for public platform repos; a token
+//! deploy's app_release_tag. No auth is needed for public platform repos; a token
 //! (`--access-token`, `$ENV` form supported) is used for private ones.
 //!
 //! All network failures are non-fatal: a probe that can't reach GitHub renders
@@ -36,8 +36,8 @@ pub struct StatusRequest {
     pub app_name: String,
     /// `owner/repo` (already normalized).
     pub repo: String,
-    /// Release tag this deploy created (`apps-{slug}-{shortcommit}`).
-    pub release_tag: String,
+    /// app_release_tag this deploy created (`apps-{slug}-{shortcommit}`).
+    pub app_release_tag: String,
     /// Publish branch CI runs on.
     pub branch: String,
     /// Optional GitHub token for private-repo API reads.
@@ -62,7 +62,7 @@ pub struct LocalState {
 #[derive(Debug, Serialize)]
 pub struct StatusReport {
     pub repo: String,
-    pub release_tag: String,
+    pub app_release_tag: String,
     pub branch: String,
     pub local: LocalState,
     pub ci: CiStatus,
@@ -93,9 +93,9 @@ pub enum CiStatus {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case", tag = "kind")]
 pub enum ReleaseStatus {
-    /// The release tag exists with at least one asset - activatable.
+    /// The app_release_tag exists with at least one asset - activatable.
     Available { url: String, assets: usize },
-    /// The release tag has no GitHub release yet.
+    /// The app_release_tag has no GitHub release yet.
     Pending,
     /// GitHub was unreachable / returned an unexpected response.
     Unknown { detail: String },
@@ -154,7 +154,7 @@ impl StatusReport {
         let mut out = String::new();
         let _ = writeln!(out, "Publication status");
         let _ = writeln!(out, "  repo          : {}", self.repo);
-        let _ = writeln!(out, "  release_tag   : {}", self.release_tag);
+        let _ = writeln!(out, "  app_release_tag : {}", self.app_release_tag);
         let _ = writeln!(out, "  branch        : {}", self.branch);
         let _ = writeln!(
             out,
@@ -244,9 +244,17 @@ impl StatusReport {
             let _ = writeln!(out);
             let _ = writeln!(
                 out,
-                "  Release is ready. Request activation from platform ops"
+                "  Release is ready. Activate it with your per-app code:"
             );
-            let _ = writeln!(out, "  (contributors don't hold the activation token).");
+            let _ = writeln!(out, "    aomi-git activate");
+            let _ = writeln!(
+                out,
+                "  (set AOMI_APP_ACTIVATION_TOKEN to the code ops issued you;"
+            );
+            let _ = writeln!(
+                out,
+                "   first time? run `aomi-git request` to get onboarded)."
+            );
         }
         out
     }
@@ -318,7 +326,7 @@ impl StatusProbe {
 
         StatusReport {
             repo: self.req.repo,
-            release_tag: self.req.release_tag,
+            app_release_tag: self.req.app_release_tag,
             branch: self.req.branch,
             local: self.req.local,
             ci,
@@ -367,7 +375,7 @@ impl StatusProbe {
     async fn release(&self) -> ReleaseStatus {
         let request = self.github_request(format!(
             "{GITHUB_API}/repos/{}/releases/tags/{}",
-            self.req.repo, self.req.release_tag
+            self.req.repo, self.req.app_release_tag
         ));
         let response = match request.send().await {
             Ok(r) => r,

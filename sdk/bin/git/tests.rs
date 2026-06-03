@@ -29,7 +29,7 @@ fn publish_target_uses_aomi_toml_git_as_source_repo() {
     assert_eq!(community.source_repo, "aomi-labs/community-apps");
     assert_eq!(community.publish_branch, "publish");
     assert_eq!(community.app_path, "apps/probe");
-    assert!(community.release_tag.starts_with("apps-probe-"));
+    assert!(community.app_release_tag.starts_with("apps-probe-"));
 
     let krexa_app = TestRepo::new();
     krexa_app.write(
@@ -50,7 +50,7 @@ git = "https://github.com/aomi-labs/krexa-hosted-apps"
     assert_eq!(krexa.source_repo, "aomi-labs/krexa-hosted-apps");
     assert_eq!(krexa.publish_branch, "publish");
     assert_eq!(krexa.app_path, "apps/probe");
-    assert!(krexa.release_tag.starts_with("apps-probe-"));
+    assert!(krexa.app_release_tag.starts_with("apps-probe-"));
 }
 
 #[test]
@@ -164,7 +164,7 @@ async fn activate_command_builds_activate_app_request() {
         "public",
         "--display-name",
         " Alpha Trader V2 ",
-        "--git",
+        "--source-repo",
         "aomi-labs/krexa-hosted-apps",
         "--source-commit",
         "abc1234def567890",
@@ -200,7 +200,13 @@ async fn activate_command_builds_activate_app_request() {
     );
     assert_eq!(plan.request.source_tree.as_deref(), Some("tree123"));
     assert_eq!(plan.request.source_digest.as_deref(), Some("sha256:source"));
-    assert_eq!(plan.request.target_tags, vec!["prod", "platform-x"]);
+    assert_eq!(plan.request.server_tags, vec!["prod", "platform-x"]);
+    let body = serde_json::to_value(&plan.request).expect("serialize activation request");
+    assert_eq!(
+        body["target_tags"],
+        serde_json::json!(["prod", "platform-x"])
+    );
+    assert!(body.get("server_tags").is_none());
     assert!(plan.request.is_active);
     assert!(plan.request.is_public);
     assert_eq!(plan.request.metadata["requested_by"], "aomi-git");
@@ -266,7 +272,7 @@ async fn activate_falls_back_to_deployment_json_when_flags_omitted() {
         .plan()
         .await
         .expect("plan resolves from deployment.json");
-    // release_tag pulled from deployment.json's target.release_tag.
+    // app_release_tag pulled from deployment.json's target.app_release_tag.
     assert!(
         plan.request
             .app_release_tag
@@ -276,13 +282,13 @@ async fn activate_falls_back_to_deployment_json_when_flags_omitted() {
     assert_eq!(plan.request.source_repo, "aomi-labs/community-apps");
     // platform pulled from deployment.json's app.platform.
     assert_eq!(plan.request.platform, Platform::new("community"));
-    assert_eq!(plan.request.target_tags, vec!["staging"]);
+    assert_eq!(plan.request.server_tags, vec!["staging"]);
 }
 
 #[tokio::test]
-async fn activate_release_tag_flag_overrides_deployment_json() {
+async fn activate_app_release_tag_flag_overrides_deployment_json() {
     // CLI flag wins over deployment.json — operators can re-activate a prior
-    // release tag without re-deploying.
+    // app_release_tag without re-deploying.
     let repo = TestRepo::new();
     repo.write_aomi_toml(
         "",
@@ -316,7 +322,7 @@ async fn activate_release_tag_flag_overrides_deployment_json() {
     };
 
     let plan = args.plan().await.expect("plan");
-    // CLI positional wins over deployment.json's target.release_tag.
+    // CLI positional wins over deployment.json's target.app_release_tag.
     assert_eq!(
         plan.request.app_release_tag,
         "apps-override-bot-deadbeef0123"
@@ -324,7 +330,71 @@ async fn activate_release_tag_flag_overrides_deployment_json() {
 }
 
 #[tokio::test]
-async fn activate_without_release_tag_and_without_deployment_json_errors_clearly() {
+async fn activate_dry_run_persists_effective_flag_overrides_to_deployment_json() {
+    let repo = TestRepo::new();
+    repo.write(
+        "aomi.toml",
+        r#"
+[app]
+name = "token-bot"
+platform = "community"
+git = "https://github.com/aomi-labs/community-apps"
+access_token = "$OLD_ACCESS_TOKEN"
+server_tags = ["staging", "prod"]
+"#,
+    );
+    repo.write("src/lib.rs", "pub fn marker() {}\n");
+    repo.commit("initial app");
+
+    let state = Deployment::dry_run(repo.root(), Platform::new("community"), false)
+        .expect("dry run")
+        .to_state();
+    crate::deployment_state::write(repo.root(), &state).expect("write state");
+
+    let cli = Cli::try_parse_from([
+        "aomi-git",
+        "activate",
+        "apps-token-bot-deadbeef0123",
+        "--backend",
+        "https://api.example.test",
+        "--activation-token",
+        "activation-secret",
+        "--access-token",
+        "34567",
+        "--target-tag",
+        "staging",
+        "--visibility",
+        "public",
+        "--display-name",
+        "Token Bot Live",
+        "--path",
+        repo.root().to_str().unwrap(),
+        "--dry-run",
+    ])
+    .expect("parse activate");
+    let CliCommand::Activate(args) = cli.command else {
+        panic!("expected activate");
+    };
+
+    args.run().await.expect("dry-run activate");
+
+    let updated = read_deployment_state(repo.root())
+        .expect("read state")
+        .expect("deployment state");
+    assert_eq!(
+        updated.target.app_release_tag,
+        "apps-token-bot-deadbeef0123"
+    );
+    assert_eq!(updated.app.access_token.as_deref(), Some("34567"));
+    assert_eq!(updated.target.server_tags, vec!["staging"]);
+    assert_eq!(updated.app.server_tags, vec!["staging"]);
+    assert_eq!(updated.app.public, Some(true));
+    assert_eq!(updated.app.display_name, "Token Bot Live");
+    assert!(!updated.state.activated);
+}
+
+#[tokio::test]
+async fn activate_without_app_release_tag_and_without_deployment_json_errors_clearly() {
     let repo = TestRepo::new();
     repo.write_aomi_toml(
         "",
@@ -344,7 +414,7 @@ async fn activate_without_release_tag_and_without_deployment_json_errors_clearly
         "activation-secret",
         "--target-tag",
         "staging",
-        "--git",
+        "--source-repo",
         "aomi-labs/community-apps",
         "--path",
         repo.root().to_str().unwrap(),
@@ -357,19 +427,19 @@ async fn activate_without_release_tag_and_without_deployment_json_errors_clearly
     let err = args
         .plan()
         .await
-        .expect_err("missing release tag should error");
+        .expect_err("missing app_release_tag should error");
     let msg = err.to_string();
     assert!(
-        msg.contains("release tag") && msg.contains("deployment.json"),
+        msg.contains("app_release_tag") && msg.contains("deployment.json"),
         "error should point at both fixes: {msg}"
     );
 }
 
 #[tokio::test]
-async fn activate_target_tags_default_from_deployment_json_server_tags() {
+async fn activate_server_tags_default_from_deployment_json_server_tags() {
     // Happy path: contributor declared `server_tags = ["staging"]` in
     // aomi.toml (or defaulted there), ops omits `--target-tag` on activate —
-    // target_tags should auto-fill from the build's declared intent.
+    // server_tags should auto-fill from the build's declared intent.
     let repo = TestRepo::new();
     repo.write_aomi_toml(
         "",
@@ -403,8 +473,8 @@ async fn activate_target_tags_default_from_deployment_json_server_tags() {
     let plan = args
         .plan()
         .await
-        .expect("plan resolves target_tags from deployment.json");
-    assert_eq!(plan.request.target_tags, vec!["staging"]);
+        .expect("plan resolves server_tags from deployment.json");
+    assert_eq!(plan.request.server_tags, vec!["staging"]);
 }
 
 #[tokio::test]
@@ -493,11 +563,11 @@ server_tags = ["staging", "prod"]
     };
 
     let plan = args.plan().await.expect("narrowing must be allowed");
-    assert_eq!(plan.request.target_tags, vec!["staging"]);
+    assert_eq!(plan.request.server_tags, vec!["staging"]);
 }
 
 #[tokio::test]
-async fn activate_without_target_tags_anywhere_errors_clearly() {
+async fn activate_without_server_tags_anywhere_errors_clearly() {
     // No --target-tag, no deployment.json — must fail with a message that
     // points at both fixes.
     let cli = Cli::try_parse_from([
@@ -510,7 +580,7 @@ async fn activate_without_target_tags_anywhere_errors_clearly() {
         "activation-secret",
         "--platform",
         "community",
-        "--git",
+        "--source-repo",
         "aomi-labs/community-apps",
         "--path",
         "/nonexistent/path/no/deployment-json/here",
@@ -587,15 +657,14 @@ fn deploy_platform_flag_defaults_from_aomi_toml() {
 
 #[test]
 fn deploy_kills_legacy_flags() {
-    // `--platform-repo-dir`, `--stage-dir`, `--no-push`, `--preflight`,
-    // `--backend-url` are gone in the unified surface. Each must reject at
-    // parse time so users get a clear error pointing them at the new flag.
+    // Retired flags must reject at parse time so users adopt the current surface.
     for legacy in [
         "--platform-repo-dir",
         "--stage-dir",
         "--no-push",
         "--preflight",
         "--backend-url",
+        "--git",
     ] {
         let err = Cli::command()
             .try_get_matches_from(["aomi-git", "deploy", legacy, "value"])
@@ -610,7 +679,30 @@ fn deploy_kills_legacy_flags() {
 }
 
 #[test]
-fn activation_plan_requires_apps_release_tag() {
+fn activate_and_status_reject_legacy_git_flag() {
+    for (subcommand, extra) in [
+        ("activate", &["apps-my-bot-abc1234"][..]),
+        ("status", &[][..]),
+    ] {
+        let err = Cli::command()
+            .try_get_matches_from(
+                std::iter::once("aomi-git")
+                    .chain(std::iter::once(subcommand))
+                    .chain(extra.iter().copied())
+                    .chain(["--git", "aomi-labs/community-apps"].into_iter()),
+            )
+            .expect_err("--git must not parse");
+        assert_eq!(
+            err.kind(),
+            clap::error::ErrorKind::UnknownArgument,
+            "{subcommand} --git should be UnknownArgument, got {:?}",
+            err.kind()
+        );
+    }
+}
+
+#[test]
+fn activation_plan_requires_apps_app_release_tag() {
     let error = ActivationPlan::new(
         "zora-abc1234",
         Platform::new("community"),
@@ -625,7 +717,7 @@ fn activation_plan_requires_apps_release_tag() {
         None,
         None,
     )
-    .expect_err("invalid release tag");
+    .expect_err("invalid app_release_tag");
 
     assert!(error.to_string().contains("must start with `apps-`"));
 }
@@ -650,7 +742,7 @@ fn dry_run_plan_uses_nearest_app_config() {
     assert_eq!(deployment.source.source_path, PathBuf::from("apps/zora"));
     assert_eq!(deployment.publish.source_repo, "aomi-labs/community-apps");
     assert_eq!(deployment.publish.app_path, "apps/zora");
-    assert!(deployment.publish.release_tag.starts_with("apps-zora-"));
+    assert!(deployment.publish.app_release_tag.starts_with("apps-zora-"));
     assert!(deployment.source.digest.starts_with("sha256:"));
     assert!(deployment.files.is_empty());
     assert!(!deployment.mode.stages_files());
@@ -681,7 +773,12 @@ git = "https://github.com/example/foo-hosted-apps"
     assert_eq!(deployment.publish.source_repo, "example/foo-hosted-apps");
     assert_eq!(deployment.publish.publish_branch, "publish");
     assert_eq!(deployment.publish.app_path, "apps/foo-bot");
-    assert!(deployment.publish.release_tag.starts_with("apps-foo-bot-"));
+    assert!(
+        deployment
+            .publish
+            .app_release_tag
+            .starts_with("apps-foo-bot-")
+    );
 }
 
 #[test]
@@ -839,7 +936,7 @@ server_tags = ["Prod", "community", "prod"]
     assert!(!state.state.deployed);
     assert!(!state.state.activated);
     assert_eq!(state.target.branch, "experiment");
-    assert!(state.target.release_tag.starts_with("apps-alice-bot-"));
+    assert!(state.target.app_release_tag.starts_with("apps-alice-bot-"));
     assert_eq!(state.target.server_tags, vec!["prod", "community"]);
     assert_eq!(state.platform.name.as_deref(), Some("community"));
     assert_eq!(state.platform.resolved_deploy_branch, None);
@@ -901,7 +998,7 @@ git = "https://github.com/aomi-labs/krexa-hosted-apps"
     assert!(
         deployment
             .publish
-            .release_tag
+            .app_release_tag
             .starts_with("apps-alpha-trader-v2-")
     );
 }
@@ -924,9 +1021,9 @@ fn dry_run_plan_serializes_to_json() {
     assert_eq!(json["platform"], "community");
     assert_eq!(json["publish"]["source_repo"], "aomi-labs/community-apps");
     assert!(
-        json["publish"]["release_tag"]
+        json["publish"]["app_release_tag"]
             .as_str()
-            .expect("release tag str")
+            .expect("app_release_tag str")
             .starts_with("apps-json-app-")
     );
 }
@@ -1109,7 +1206,7 @@ fn git_transport_commits_without_push() {
     assert!(message.contains("zora"));
     assert!(message.contains("community"));
     assert!(message.contains(&outcome.deployment.source.commit));
-    assert!(message.contains(&outcome.deployment.publish.release_tag));
+    assert!(message.contains(&outcome.deployment.publish.app_release_tag));
     assert_eq!(
         test_git_output(platform.root(), ["branch", "--show-current"]).trim(),
         "publish"
@@ -1221,39 +1318,10 @@ async fn status_errors_without_deployment_json() {
 }
 
 #[tokio::test]
-async fn activate_request_errors_without_deployment_json() {
-    // `aomi-git activate --request` needs the release tag / repo / app from a
-    // prior deploy. With no deployment.json and no flags it must fail with a
-    // message pointing at `aomi-git deploy` — never silently post nothing.
-    let repo = TestRepo::new();
-    let cli = Cli::try_parse_from([
-        "aomi-git",
-        "activate",
-        "--request",
-        "--path",
-        repo.root().to_str().unwrap(),
-    ])
-    .expect("parse activate --request");
-    let CliCommand::Activate(args) = cli.command else {
-        panic!("expected activate");
-    };
-
-    let err = args
-        .run()
-        .await
-        .expect_err("missing deployment.json must error");
-    let msg = err.to_string();
-    assert!(
-        msg.contains("deployment.json") && msg.contains("aomi-git deploy"),
-        "error should point at running deploy first: {msg}"
-    );
-}
-
-#[tokio::test]
-async fn activate_request_dry_run_succeeds_from_deployment_json() {
-    // With a staged deployment.json, `activate --request --dry-run` resolves
-    // app/repo/release and prints the message without posting — no backend,
-    // no activation token, no webhook needed.
+async fn request_dry_run_resolves_app_and_repo_from_aomi_toml() {
+    // `aomi-git request --dry-run` resolves app/platform/repo from aomi.toml
+    // (no deployment.json needed — it runs before the first deploy) and prints
+    // the ops message without posting.
     let repo = TestRepo::new();
     repo.write_aomi_toml(
         "",
@@ -1263,27 +1331,84 @@ async fn activate_request_dry_run_succeeds_from_deployment_json() {
     repo.write("src/lib.rs", "pub fn marker() {}\n");
     repo.commit("initial app");
 
-    let state = Deployment::dry_run(repo.root(), Platform::new("community"), false)
-        .expect("dry run")
-        .to_state();
-    crate::deployment_state::write(repo.root(), &state).expect("write state");
-
     let cli = Cli::try_parse_from([
         "aomi-git",
-        "activate",
-        "--request",
+        "request",
+        "--email",
+        "alice@gmail.com",
+        "--git-account",
+        "alice-git-acc",
         "--dry-run",
         "--path",
         repo.root().to_str().unwrap(),
     ])
-    .expect("parse activate --request --dry-run");
-    let CliCommand::Activate(args) = cli.command else {
-        panic!("expected activate");
+    .expect("parse request --dry-run");
+    let CliCommand::Request(args) = cli.command else {
+        panic!("expected request");
     };
 
     args.run()
         .await
-        .expect("dry-run should resolve from deployment.json and not post");
+        .expect("dry-run should resolve from aomi.toml and not post");
+}
+
+#[tokio::test]
+async fn request_rejects_a_malformed_email() {
+    let repo = TestRepo::new();
+    repo.write_aomi_toml(
+        "",
+        "request-bot",
+        "https://github.com/aomi-labs/community-apps",
+    );
+    repo.write("src/lib.rs", "pub fn marker() {}\n");
+    repo.commit("initial app");
+
+    let cli = Cli::try_parse_from([
+        "aomi-git",
+        "request",
+        "--email",
+        "not-an-email",
+        "--git-account",
+        "alice-git-acc",
+        "--dry-run",
+        "--path",
+        repo.root().to_str().unwrap(),
+    ])
+    .expect("parse request");
+    let CliCommand::Request(args) = cli.command else {
+        panic!("expected request");
+    };
+
+    let err = args.run().await.expect_err("malformed email must error");
+    assert!(err.to_string().contains("email"), "{err}");
+}
+
+#[tokio::test]
+async fn request_errors_when_app_slug_is_unknown() {
+    // No aomi.toml and no --app: nothing to identify the app, so it must fail
+    // rather than post a request for an unknown app.
+    let repo = TestRepo::new();
+    repo.write("src/lib.rs", "pub fn marker() {}\n");
+    repo.commit("initial app");
+
+    let cli = Cli::try_parse_from([
+        "aomi-git",
+        "request",
+        "--email",
+        "alice@gmail.com",
+        "--git-account",
+        "alice-git-acc",
+        "--dry-run",
+        "--path",
+        repo.root().to_str().unwrap(),
+    ])
+    .expect("parse request");
+    let CliCommand::Request(args) = cli.command else {
+        panic!("expected request");
+    };
+
+    let err = args.run().await.expect_err("unknown app slug must error");
+    assert!(err.to_string().contains("app slug"), "{err}");
 }
 
 #[test]
@@ -1294,7 +1419,7 @@ fn status_report_renders_ready_to_activate() {
 
     let report = StatusReport {
         repo: "aomi-labs/community-apps".to_string(),
-        release_tag: "apps-my-bot-abc1234".to_string(),
+        app_release_tag: "apps-my-bot-abc1234".to_string(),
         branch: "publish".to_string(),
         local: LocalState {
             pushed: true,
@@ -1317,7 +1442,7 @@ fn status_report_renders_ready_to_activate() {
     assert!(report.ready_to_activate());
     let rendered = report.render();
     assert!(rendered.contains("ready to activate"), "{rendered}");
-    assert!(rendered.contains("Request activation"), "{rendered}");
+    assert!(rendered.contains("aomi-git activate"), "{rendered}");
     assert!(rendered.contains("apps-my-bot-abc1234"), "{rendered}");
 }
 
@@ -1327,7 +1452,7 @@ fn status_report_pending_release_is_not_ready() {
 
     let report = StatusReport {
         repo: "aomi-labs/community-apps".to_string(),
-        release_tag: "apps-my-bot-abc1234".to_string(),
+        app_release_tag: "apps-my-bot-abc1234".to_string(),
         branch: "publish".to_string(),
         local: LocalState {
             pushed: true,
@@ -1358,7 +1483,7 @@ fn status_report_renders_backend_db_row_and_server_health() {
 
     let report = StatusReport {
         repo: "aomi-labs/community-apps".to_string(),
-        release_tag: "apps-my-bot-abc1234".to_string(),
+        app_release_tag: "apps-my-bot-abc1234".to_string(),
         branch: "publish".to_string(),
         local: LocalState {
             pushed: true,
@@ -1401,7 +1526,7 @@ fn status_report_renders_not_activated_when_backend_has_no_row() {
 
     let report = StatusReport {
         repo: "aomi-labs/community-apps".to_string(),
-        release_tag: "apps-my-bot-abc1234".to_string(),
+        app_release_tag: "apps-my-bot-abc1234".to_string(),
         branch: "publish".to_string(),
         local: LocalState {
             pushed: true,
