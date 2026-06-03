@@ -174,14 +174,11 @@ dyn_aomi_app!(
     // byreal is cross-chain (Hyperliquid perps + Solana spot/LP), so it
     // stays string-typed via `namespaces` rather than declaring a single
     // SVM `variant`. The SVM-side surface byreal touches is just the
-    // chain reads (`svm_get_*`); the actual signing flows through the
-    // host route target `host::SvmSignTx`, which the app's `submit_*`
-    // tools forward to byreal's own venue endpoints
+    // chain reads plus transaction signing. The actual signing flows
+    // through the host route target `host::SvmSignTx`, which the app's
+    // `submit_*` tools forward to byreal's own venue endpoints
     // (`/dex/v2/send-swap-tx` for AMM, `/rfq/v1/swap` for RFQ).
-    //
-    // End-to-end Solana signing depends on host-side `svm_sign_tx`
-    // (ADR 0004 § C.2 / row #39-svm-apps-c) — track that in product-mono
-    // ralph. The legacy `solana-core` alias was removed in host iter 39;
+    // The legacy `solana-core` alias was removed in host iter 39;
     // canonical names only.
-    namespaces = ["evm-core", "svm-reads"]
+    namespaces = ["evm-core", "svm-reads", "svm-tx-sign"]
 );

@@ -67,7 +67,8 @@ pub mod host {
     // ── SVM (Solana) primitives ──────────────────────────────────────────
     //
     // Route-target markers for the SVM verbs in the `svm-core` namespace
-    // family (split into `svm-reads`, `svm-stage`, `svm-commit`,
+    // family (split into `svm-reads`, `svm-ix-broadcast`,
+    // `svm-ix-sign`, `svm-tx-broadcast`, `svm-tx-sign`,
     // `svm-sign-data`, `svm-bundle` on the host side per ADR 0004
     // § Decision B). App `build_*` tools emit route plans that drive
     // these as continuations — mirroring how EVM apps use `CommitEip712`
@@ -97,16 +98,12 @@ pub mod host {
     //                          `ix_ids` + assembly args + `mode`)
     //       `SvmCommitTx`    → `svm_commit_tx`    (Lane 2 commit; takes
     //                          `tx_id` + `mode`; blob authoritative)
-    //                          Both commit tools carry `mode: "wallet" |
-    //                          "internal-rpc"`; internal-rpc errors loud
-    //                          on both until host #38-pipeline-c lands
-    //                          the runtime broadcast loop.
+    //                          Both commit tools carry a `mode`; wallet
+    //                          is the currently shipped app-facing path.
     //   - Sign-only (app-broadcast pattern, ADR 0004 § C.2):
-    //       `SvmSignTx`      → `svm_sign_tx` (blocked on
-    //                          host #39-svm-apps-c; marker shipped
-    //                          forward-compat — byreal-style apps wrap
+    //       `SvmSignTx`      → `svm_sign_tx`; byreal-style apps wrap
     //                          signing here, then POST signed bytes to
-    //                          their own venue endpoint)
+    //                          their own venue endpoint.
     //
     // Lane-symmetric note: stage / simulate split per tool name, NOT per
     // XOR arg. The lane lives in the tool the LLM picks; arg shapes are
@@ -141,16 +138,13 @@ pub mod host {
     //     "description": "...",          // optional, surfaces in UI
     //     "kind": "..." }                // optional, free-form tag
     //
-    // The pre-#39-svm-apps-b transitional inline form for
-    // `SvmSignTx`  (`{ "unsigned_tx": "<base64>", ... }`) remains
-    // supported but Lane 2 staging is now the preferred path — it
-    // unlocks simulate, lets the host re-attach a fresh blockhash
-    // (default), and gives the runtime a single `tx_id` to thread
-    // through any consumer.
+    // The direct inline form for `SvmSignTx`
+    // (`{ "unsigned_tx": "<base64>", ... }`) remains supported, but
+    // Lane 2 staging is the preferred path when the app also needs
+    // simulate or route a single `tx_id` through multiple consumers.
     //
-    // The `preserve_blockhash: bool` arg (default false, true for
-    // venue-validated flows like byreal preData/data byte-compare)
-    // lands with host #39-svm-apps-b.
+    // `preserve_blockhash: bool` defaults true for byte-stable
+    // venue-validated flows like byreal preData/data byte-compare.
     host_target!(SvmStageTx, "svm_stage_tx");
 
     // Lane 1 simulate consumer — assembles the staged ix list into a
@@ -176,7 +170,7 @@ pub mod host {
     // blob's metadata is authoritative. Args contract:
     //   { "tx_id": <u32>,
     //     "mode": "litesvm" | "rpc",          // optional
-    //     "replace_recent_blockhash": <bool>, // optional, default true
+    //     "replace_recent_blockhash": <bool>, // optional, default false
     //     "sig_verify": <bool>,               // optional, default false
     //     "accounts": ["<pubkey>", ...] }     // optional address filter
     //
@@ -225,11 +219,6 @@ pub mod host {
     // Args contract (Lane 2 staged, post-#39-svm-apps-b):
     //   { "tx_id": <u32>, "description": "..." }
     // Bound artifact (string): base64 signed tx bytes.
-    //
-    // Blocked on host #39-svm-apps-c — host tool `svm_sign_tx`
-    // doesn't exist yet. Marker ships forward-compat so apps can be
-    // authored against the right shape; runtime route dispatch will
-    // log warn-skip until the host catches up.
     //
     // Note: there is intentionally no `SvmSignTxs` (plural) — Solana
     // wallets sign one tx per user prompt. Apps that need multiple

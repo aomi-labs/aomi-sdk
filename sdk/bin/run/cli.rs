@@ -115,8 +115,9 @@ impl Cli {
         // 3. Build the rig tool set: one PluginTool per manifest tool, plus
         //    stub tools for any host namespaces the plugin asked for.
         let mut tools = tool::build_plugin_tools(&loaded, session_id.clone(), secrets);
-        if let Some(ns_list) = loaded.manifest.namespaces.as_deref() {
-            tools.extend(host_stubs::build_stub_tools(ns_list));
+        let host_namespaces = host_stubs::namespaces_for_manifest(&loaded.manifest);
+        if !host_namespaces.is_empty() {
+            tools.extend(host_stubs::build_stub_tools(&host_namespaces));
         }
 
         // 4. Build the agent for the chosen provider and start the REPL.

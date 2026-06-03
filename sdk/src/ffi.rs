@@ -334,7 +334,7 @@ macro_rules! declare_dyn {
 /// ```rust,ignore
 /// dyn_aomi_app!(app = ByrealApp, name = "byreal", version = "0.1.0",
 ///     preamble = "...", tools = [...],
-///     namespaces = ["evm-core", "svm-reads"]);
+///     namespaces = ["evm-core", "svm-reads", "svm-tx-sign"]);
 /// ```
 ///
 /// **SVM-only with pipeline variant** (preferred for new Solana apps —

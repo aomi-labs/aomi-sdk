@@ -5,7 +5,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use aomi_sdk::{DynFnHandle, DynManifest, AOMI_SDK_VERSION};
+use aomi_sdk::{AOMI_SDK_VERSION, DynFnHandle, DynManifest};
 
 // ── Known host-side namespace tools ──────────────────────────────────────────
 
@@ -29,10 +29,47 @@ fn namespace_tools() -> HashMap<&'static str, Vec<&'static str>> {
         ],
     );
 
-    // `solana-core` is reserved for app-specific Solana wallet flows (e.g. byreal).
-    // Most apps must NOT request this namespace — built-in EVM protocol skills
-    // are not Solana skills.
-    m.insert("solana-core", vec!["svm_sign_tx"]);
+    m.insert(
+        "svm-core",
+        vec![
+            "svm_commit_ix",
+            "svm_commit_tx",
+            "svm_get_account_info",
+            "svm_get_context",
+            "svm_get_program",
+            "svm_get_token_holdings",
+            "svm_sign_data",
+            "svm_sign_tx",
+            "svm_simulate_ix",
+            "svm_simulate_tx",
+            "svm_stage_ix",
+            "svm_stage_tx",
+        ],
+    );
+    m.insert(
+        "svm-reads",
+        vec![
+            "svm_get_account_info",
+            "svm_get_context",
+            "svm_get_program",
+            "svm_get_token_holdings",
+        ],
+    );
+    m.insert(
+        "svm-ix-broadcast",
+        vec!["svm_commit_ix", "svm_simulate_ix", "svm_stage_ix"],
+    );
+    m.insert("svm-ix-sign", vec!["svm_simulate_ix", "svm_stage_ix"]);
+    m.insert(
+        "svm-tx-broadcast",
+        vec!["svm_commit_tx", "svm_simulate_tx", "svm_stage_tx"],
+    );
+    m.insert(
+        "svm-tx-sign",
+        vec!["svm_sign_tx", "svm_simulate_tx", "svm_stage_tx"],
+    );
+    m.insert("svm-sign-data", vec!["svm_sign_data"]);
+    m.insert("svm-bundle", vec![]);
 
     m.insert(
         "database",
@@ -145,7 +182,7 @@ fn validate_manifest(manifest: &DynManifest) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use aomi_sdk::{DynManifest, DynToolMetadata, AOMI_SDK_VERSION};
+    use aomi_sdk::{AOMI_SDK_VERSION, DynManifest, DynToolMetadata};
 
     #[test]
     fn validate_rejects_private_host_namespaces() {

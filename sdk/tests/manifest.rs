@@ -87,15 +87,15 @@ fn app_variant_default_namespaces_match_host_composition() {
     assert_eq!(AppVariant::Svm.default_namespaces(), &["svm-core"]);
     assert_eq!(
         AppVariant::SvmSelfBroadcast.default_namespaces(),
-        &["svm-reads", "svm-stage", "svm-commit"]
+        &["svm-reads", "svm-ix-broadcast", "svm-tx-broadcast"]
     );
     assert_eq!(
         AppVariant::SvmAppBroadcast.default_namespaces(),
-        &["svm-reads", "svm-stage"]
+        &["svm-reads", "svm-tx-sign"]
     );
     assert_eq!(
         AppVariant::SvmBundleBroadcast.default_namespaces(),
-        &["svm-reads", "svm-stage", "svm-bundle"]
+        &["svm-reads", "svm-ix-broadcast", "svm-bundle"]
     );
     assert_eq!(
         AppVariant::SvmOffChainSign.default_namespaces(),

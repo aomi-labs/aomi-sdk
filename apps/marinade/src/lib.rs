@@ -186,7 +186,7 @@ pub mod testing {
             assert_eq!(variant.as_str(), "svm-self-broadcast");
             assert_eq!(
                 variant.default_namespaces(),
-                &["svm-reads", "svm-stage", "svm-commit"]
+                &["svm-reads", "svm-ix-broadcast", "svm-tx-broadcast"]
             );
         }
     }

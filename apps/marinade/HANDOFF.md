@@ -106,7 +106,7 @@ side.
 
 When host `#DynManifest variant consumption` lands (loader reads the
 field and composes `variant.default_namespaces() ∪ explicit_namespaces`),
-this app starts getting `svm-reads + svm-stage + svm-commit`
+this app starts getting `svm-reads + svm-ix-broadcast + svm-tx-broadcast`
 registered automatically from the variant declaration alone. No app-
 side change needed; just verify on the host side that variant-typed
 apps load with the expected namespace set.
@@ -129,8 +129,8 @@ for the variant-vs-tools gap audit and impl row order. As of iter 39:
 
 - `#38-pipeline-c` (runtime broadcast loop) — critical path; unblocks
   this app's `internal-rpc` mode.
-- `#39-svm-apps-c` (`svm_sign_tx`) — unblocks byreal end-to-end, not
-  this app (Marinade uses commit not sign-only).
+- `#39-svm-apps-c` (`svm_sign_tx`) — landed; relevant to byreal-style
+  sign-only apps, not this app (Marinade uses commit).
 - `#38-pipeline-b1/b2/b3` (Lane 2 storage + `svm_stage_tx`) — unblocks
   the `host::SvmStageTx` marker addition to SDK + apps that use
   venue-built tx blobs (byreal again, not Marinade).
@@ -146,7 +146,7 @@ cargo build         # produces target/debug/libmarinade.dylib (or .so)
 ```
 
 The dylib loads against any host that knows the new
-`svm-reads + svm-stage + svm-commit` sub-namespaces (host iter 39+) and
+`svm-reads + svm-ix-broadcast + svm-tx-broadcast` sub-namespaces and
 will surface 4 read tools + 4 write tools to the LLM. Read tools work
 immediately; write tools execute up through stage, then fail at simulate
 with `InvalidAccountData` until follow-up #1 lands.

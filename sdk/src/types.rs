@@ -143,16 +143,18 @@ pub enum AppVariant {
     /// sub-namespaces on the host side).
     Svm,
     /// SVM pipelines A + B (wallet send / runtime broadcast). Default
-    /// namespace set: `["svm-reads", "svm-stage", "svm-commit"]`.
+    /// namespace set: `["svm-reads", "svm-ix-broadcast",
+    /// "svm-tx-broadcast"]`.
     SvmSelfBroadcast,
     /// SVM pipeline C (venue HTTP submit — byreal-style, Jupiter
     /// Meta-Aggregator, Raydium tx-API). Default namespace set:
-    /// `["svm-reads", "svm-stage"]`; app's own `submit_*` tool forwards
-    /// signed bytes to a venue endpoint.
+    /// `["svm-reads", "svm-tx-sign"]`; app's own `submit_*` tool
+    /// forwards signed bytes to a venue endpoint.
     SvmAppBroadcast,
     /// SVM pipeline D (Jito bundle). Default namespace set:
-    /// `["svm-reads", "svm-stage", "svm-bundle"]`. `svm-bundle` is a
-    /// host-side stub today; bundle verbs land with #39-svm-apps-d.
+    /// `["svm-reads", "svm-ix-broadcast", "svm-bundle"]`.
+    /// `svm-bundle` is a host-side stub today; bundle verbs land with
+    /// #39-svm-apps-d.
     SvmBundleBroadcast,
     /// SVM pipeline F (off-chain message signing). Default namespace set:
     /// `["svm-reads", "svm-sign-data"]`.
@@ -188,9 +190,9 @@ impl AppVariant {
         match self {
             Self::Evm => &["evm-core"],
             Self::Svm => &["svm-core"],
-            Self::SvmSelfBroadcast => &["svm-reads", "svm-stage", "svm-commit"],
-            Self::SvmAppBroadcast => &["svm-reads", "svm-stage"],
-            Self::SvmBundleBroadcast => &["svm-reads", "svm-stage", "svm-bundle"],
+            Self::SvmSelfBroadcast => &["svm-reads", "svm-ix-broadcast", "svm-tx-broadcast"],
+            Self::SvmAppBroadcast => &["svm-reads", "svm-tx-sign"],
+            Self::SvmBundleBroadcast => &["svm-reads", "svm-ix-broadcast", "svm-bundle"],
             Self::SvmOffChainSign => &["svm-reads", "svm-sign-data"],
             Self::SvmReadOnly => &["svm-reads"],
         }
@@ -510,8 +512,9 @@ pub trait DynAomiApp: Clone + Default + Send + Sync + 'static {
     /// Host-side namespaces this plugin requires. Canonical names only:
     ///
     /// - EVM: `"evm-core"`
-    /// - SVM meta: `"svm-core"` (expands to all five sub-namespaces)
-    /// - SVM subs: `"svm-reads"`, `"svm-stage"`, `"svm-commit"`,
+    /// - SVM meta: `"svm-core"` (expands to the full SVM catalogue)
+    /// - SVM subs: `"svm-reads"`, `"svm-ix-broadcast"`,
+    ///   `"svm-ix-sign"`, `"svm-tx-broadcast"`, `"svm-tx-sign"`,
     ///   `"svm-sign-data"`, `"svm-bundle"`
     /// - Other: `"database"`, `"forge"`
     ///
@@ -521,8 +524,8 @@ pub trait DynAomiApp: Clone + Default + Send + Sync + 'static {
     /// nothing for them. Update existing plugins to canonical names.
     ///
     /// Default is `["evm-core"]`, which most apps want. Override to:
-    /// - Add SVM surfaces alongside (e.g. `["evm-core", "svm-reads"]`
-    ///   for byreal's cross-chain pattern).
+    /// - Add SVM surfaces alongside (e.g. `["evm-core", "svm-reads",
+    ///   "svm-tx-sign"]` for byreal's cross-chain pattern).
     /// - Replace entirely (e.g. `["database"]` for a namespace-only admin app).
     /// - Return `Some(vec![])` to opt out explicitly.
     ///
