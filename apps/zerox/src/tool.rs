@@ -531,7 +531,7 @@ impl DynAomiTool for ZeroxGetGaslessQuote {
 
         let builder = ToolReturn::route(ok(preview)?).next(|next| {
             if let Some(approval_typed_data) = approval_typed_data.clone() {
-                next.add::<host::CommitEip712>(json!({
+                next.add::<host::EvmCommitMessage>(json!({
                     "typed_data": approval_typed_data,
                     "description": format!(
                         "0x gasless: sign the Permit2 approval for {} on {}",
@@ -541,7 +541,7 @@ impl DynAomiTool for ZeroxGetGaslessQuote {
                 .bind_as("approval_signature")
                 .note("Sign the Permit2 approval first. The trade signature comes after this callback.");
             } else {
-                next.add::<host::CommitEip712>(json!({
+                next.add::<host::EvmCommitMessage>(json!({
                     "typed_data": trade_typed_data,
                     "description": format!(
                         "0x gasless trade: swap {} {} to {} on {}",
@@ -576,7 +576,7 @@ impl DynAomiTool for ZeroxGetGaslessQuote {
 pub(crate) struct ZeroxSubmitGaslessSwap;
 
 /// Routed continuation of `zerox_get_gasless_quote`. Signature fields are
-/// bound by the host wallet via `host::CommitEip712`; everything else is
+/// bound by the host wallet via `host::EvmCommitMessage`; everything else is
 /// pre-filled from the quote so the LLM never re-types order fields between
 /// sign and submit.
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
@@ -598,7 +598,7 @@ pub(crate) struct ZeroxSubmitGaslessSwapArgs {
     pub(crate) approval: Option<Value>,
     /// Wallet signature for the trade EIP-712, auto-filled by the route plan's
     /// `trade_signature` alias. Either the raw `0x...` signature string or the
-    /// full `commit_eip712` completion payload.
+    /// full `evm_commit_message` completion payload.
     #[serde(default)]
     pub(crate) trade_signature: Option<Value>,
     /// Wallet signature for the Permit2 approval EIP-712, auto-filled by the
@@ -694,7 +694,7 @@ impl DynAomiTool for ZeroxSubmitGaslessSwap {
             });
             return ToolReturn::route(preview)
                 .next(|next| {
-                    next.add::<host::CommitEip712>(json!({
+                    next.add::<host::EvmCommitMessage>(json!({
                         "typed_data": trade_typed_data,
                         "description": format!("0x gasless trade on chain {}", args.chain_id),
                     }))

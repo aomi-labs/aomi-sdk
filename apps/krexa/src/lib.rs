@@ -99,5 +99,5 @@ dyn_aomi_app!(
         tool::LookupAgent,
     ],
     secrets = [SECRET_API_KEY, SECRET_OWNER_SECRET_KEY],
-    namespaces = ["solana-core"]
+    namespaces = ["svm-reads", "svm-tx-broadcast"]
 );

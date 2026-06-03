@@ -29,7 +29,7 @@ Execution-oriented apps may assume a host runtime exposes some or all of the fol
   - Typical input: `pending_tx_id`.
   - Typical callback artifact: `transaction_hash`.
 
-- `commit_eip712`
+- `evm_commit_message`
   - Purpose: ask the user wallet to sign EIP-712 typed data.
   - Typical input: `typed_data`, human description.
   - Typical callback artifact: `signature`.
@@ -44,9 +44,9 @@ Builders are exposed in `aomi_sdk::route`:
 use aomi_sdk::{RouteStep, ToolReturn};
 
 ToolReturn::with_routes(value, [
-    RouteStep::on_return("commit_eip712", wallet_request)
+    RouteStep::on_return("evm_commit_message", wallet_request)
         .bind_as("clob_l1_signature")
-        .prompt("Suggested next step: call commit_eip712 with these args."),
+        .prompt("Suggested next step: call evm_commit_message with these args."),
     RouteStep::on_bound_event(
         "submit_polymarket_order",
         submit_template,

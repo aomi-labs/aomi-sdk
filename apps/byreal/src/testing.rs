@@ -1,7 +1,7 @@
 //! Live smoke-test helpers. NOT used at runtime — all paths gated behind
 //! integration tests that require an explicit private key in the environment.
 //!
-//! The helpers in this module bypass the `commit_eip712` host route and sign
+//! The helpers in this module bypass the `evm_commit_message` host route and sign
 //! the action locally, so we can verify the full build → sign → submit
 //! round-trip against the real `https://api.hyperliquid.xyz/exchange` endpoint
 //! without needing a host wallet runtime.
@@ -212,7 +212,7 @@ fn extract_resting_oid(response: &Value) -> Option<u64> {
 //
 // These hit the live `api2.byreal.io` API. No keys, no signing, no funds —
 // just verifies our envelope unwrap, URL construction, and response shape
-// work end-to-end. Useful before the runtime side of `sign_tx_solana` lands.
+// work end-to-end. Useful before the runtime side of `svm_sign_tx` lands.
 // ===========================================================================
 
 /// Hit the spot reads we'll exercise most: global overview, top-TVL pools,

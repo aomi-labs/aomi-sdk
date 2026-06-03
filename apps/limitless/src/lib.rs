@@ -34,15 +34,15 @@ Every Limitless market on Base is a **CLOB-style market** settled by a Polymarke
 
 The agent has two purpose-built tools that compose with the host wallet flow:
 
-1. `limitless_build_order` — builds the order struct, constructs the EIP-712 typed data, and **routes the wallet signing step automatically** (host's `commit_eip712`). After the user signs, the runtime continues to step 2 with the signature already bound.
+1. `limitless_build_order` — builds the order struct, constructs the EIP-712 typed data, and **routes the wallet signing step automatically** (host's `evm_commit_message`). After the user signs, the runtime continues to step 2 with the signature already bound.
 2. `limitless_submit_order` — POSTs the signed order body to `/orders` with HMAC headers. Returns the Limitless order id and settlement status.
 
-You never construct the typed data or call `commit_eip712` directly. Just call `limitless_build_order` with `(slug, outcome, side, price, size, wallet_address, owner_id)` — the routed flow handles the rest.
+You never construct the typed data or call `evm_commit_message` directly. Just call `limitless_build_order` with `(slug, outcome, side, price, size, wallet_address, owner_id)` — the routed flow handles the rest.
 
 ## Placing an order — what happens under the hood
 
 1. **Pre-req (one-time per exchange)**: ERC-20 `approve(EXCHANGE, max)` on USDC so the exchange can pull collateral when an order fills. Use the standard `stage_tx` → `simulate_batch` → `commit_txs` from `evm-core`. The exchange address is **per-market** — read it from `limitless_get_market` response.
-2. **Build the order** + **sign via wallet** + **POST to /orders**: all handled by `limitless_build_order` → routed `commit_eip712` → `limitless_submit_order` automatically. You just call `limitless_build_order` and follow the routed continuation.
+2. **Build the order** + **sign via wallet** + **POST to /orders**: all handled by `limitless_build_order` → routed `evm_commit_message` → `limitless_submit_order` automatically. You just call `limitless_build_order` and follow the routed continuation.
 3. **Settlement**: when matched, the exchange pulls USDC from the maker and mints/transfers conditional tokens. PnL appears in `limitless_get_my_positions`.
 
 ## Worked example — "Buy 10 YES at 0.55 on slug `eth-above-4k-eoy`"
@@ -66,7 +66,7 @@ You never construct the typed data or call `commit_eip712` directly. Just call `
      order_type="GTC"
    )
    → Returns the order_plan + EIP-712 typed_data, then automatically routes
-     to commit_eip712 → user signs in wallet → callback binds the signature
+     to evm_commit_message → user signs in wallet → callback binds the signature
      into the next step → limitless_submit_order runs → POSTs to /orders →
      returns Limitless order id + settlementStatus
 5. Confirm via limitless_get_my_trades or surface the returned txHash.

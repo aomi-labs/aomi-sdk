@@ -329,6 +329,14 @@ macro_rules! declare_dyn {
 /// dyn_aomi_app!(app = MyApp, name = "my", version = "0.1.0",
 ///     preamble = "...", tools = [ToolA], namespaces = []);
 /// ```
+///
+/// **Cross-chain** (byreal-style — EVM perps + SVM spot/LP, string-typed):
+/// ```rust,ignore
+/// dyn_aomi_app!(app = ByrealApp, name = "byreal", version = "0.1.0",
+///     preamble = "...", tools = [...],
+///     namespaces = ["evm-core", "svm-reads", "svm-tx-sign"]);
+/// ```
+///
 #[macro_export]
 macro_rules! dyn_aomi_app {
     // ── With secrets + namespaces ────────────────────────────────────────

@@ -1,0 +1,26 @@
+[package]
+name = "svm-transfer"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+aomi-sdk = { path = "../../sdk" }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
+schemars = "1.0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+base64 = "0.22"
+
+# Lane 2 only — building a real VersionedTransaction blob from the app.
+# Lane 1 doesn't need any of this; it emits ix shape as JSON and the host
+# composes the tx.
+#
+# solana-sdk 2.x cuts the kitchen-sink up, but for our purposes the
+# transaction + system_instruction + hash subcrates are all we touch.
+# We pin the umbrella crate to keep the smoke test simple; if compile
+# time becomes painful, we can split to the leaf crates.
+solana-sdk = { version = "2.1", default-features = false, features = ["full"] }
+bincode = "1.3"
