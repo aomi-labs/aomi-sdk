@@ -78,7 +78,7 @@ pub struct PublishTarget {
     pub source_repo: String,
     pub publish_branch: String,
     pub app_path: String,
-    pub release_tag: String,
+    pub app_release_tag: String,
 }
 
 impl PublishTarget {
@@ -100,7 +100,7 @@ impl PublishTarget {
         let source_repo = normalize_github_repo(raw_git)?;
 
         let app_path = format!("{}/{}", DEFAULT_APP_PATH_PREFIX, app.name.trim_matches('/'));
-        let release_tag = DEFAULT_RELEASE_TAG_TEMPLATE
+        let app_release_tag = DEFAULT_RELEASE_TAG_TEMPLATE
             .replace("{app_slug}", &app.name)
             .replace("{short_commit}", &short_hash(&source.commit));
 
@@ -108,7 +108,7 @@ impl PublishTarget {
             source_repo,
             publish_branch: DEFAULT_PUBLISH_BRANCH.to_string(),
             app_path,
-            release_tag,
+            app_release_tag,
         })
     }
 }
@@ -157,14 +157,14 @@ pub(crate) fn commit_message(deployment: &Deployment) -> (String, String) {
         deployment.app.name,
         deployment.platform,
         short_hash(&deployment.source.commit),
-        deployment.publish.release_tag
+        deployment.publish.app_release_tag
     );
     let body = format!(
-        "app_slug: {}\nplatform: {}\nsource_commit: {}\nrelease_tag: {}",
+        "app_slug: {}\nplatform: {}\nsource_commit: {}\napp_release_tag: {}",
         deployment.app.name,
         deployment.platform,
         deployment.source.commit,
-        deployment.publish.release_tag
+        deployment.publish.app_release_tag
     );
     (subject, body)
 }

@@ -4,22 +4,57 @@ CLI for publishing Aomi app source through a platform's Git policy, and for
 activating the resulting release on a backend.
 
 ```text
+aomi-git request  -> ask ops for a collaborator invite + a per-app activation code (once)
 aomi-git deploy   -> stage into platform repo -> push -> CI builds + cuts release
 aomi-git status   -> poll CI, release, and backend registry health
 aomi-git activate -> backend fetches + loads the release
 ```
 
-`aomi-git` has three subcommands:
-
 | Command | What it does | Who runs it |
 |---|---|---|
-| `deploy` | Snapshots your source repo, stages it under `apps/<slug>/` in the platform repo, commits, and pushes to the publish branch. CI then builds the cdylib and cuts a GitHub release. | The app author |
+| `request` | Posts an activation request to the Aomi apps Discord so ops can invite your GitHub account to the platform repo and issue you a per-app activation code. Run once, before your first deploy. | The app author |
+| `deploy` | Snapshots your source repo, stages it under `apps/<slug>/` in the platform repo, commits, and pushes to the publish branch. CI then builds the cdylib and cuts a GitHub release. | The app author (a collaborator) |
 | `status` | Reads `.aomi/deployment.json`, polls GitHub Actions and release state, then reports whether activation is ready. | The app author |
-| `activate` | Tells a backend to fetch a published release, validate it, and load it. | The platform operator (holds the activation token) |
+| `activate` | Tells a backend to fetch a published release, validate it, and load it. | The app author, using their per-app activation code |
 
 Everything `deploy` learns about your app is written to
 `.aomi/deployment.json` - a plan artifact whose centerpiece is the
 **validation pipeline** (see [Checks: the validation pipeline](#checks-the-validation-pipeline)).
+
+---
+
+## `aomi-git request`
+
+The **first step for a new contributor.** You can't deploy until ops invites your
+GitHub account to the platform repo, and you can't self-activate until ops issues
+you a per-app activation code. `request` posts that ask — carrying your GitHub
+account, email, and app — to the Aomi apps Discord, pinging the ops role.
+
+```bash
+# Resolves app / platform / repo from aomi.toml in --path.
+aomi-git request --email you@example.com --git-account your-github-user
+
+# Preview the exact Discord message without posting.
+aomi-git request --email you@example.com --git-account your-github-user --dry-run
+```
+
+Ops then (1) sends your GitHub account a collaborator invite and (2) issues a
+per-app activation code and delivers it to your email **out-of-band**. The code
+is never part of the request and never travels over Discord.
+
+### Flags
+
+| Flag | Mirrors | Meaning |
+|---|---|---|
+| `--email <EMAIL>` | - | Where ops sends your activation code. **Required.** |
+| `--git-account <USER>` | - | GitHub account to invite as a platform-repo collaborator. **Required.** |
+| `--app <NAME>` | `aomi.toml [app].name` | App slug. Defaults to the value in `aomi.toml`. |
+| `--platform <NAME>` | `aomi.toml [app].platform` | Platform tag. Falls back to `aomi.toml`, then `community`. |
+| `--path <DIR>` | - | Source repo for the `aomi.toml` lookup. Default: `.` |
+| `--dry-run` | - | Print the Discord message; post nothing. |
+
+> Community-tier only: B2B partners deploy through a server-side proxy
+> (ADR 0011) and don't get direct repo access, so they don't use `request`.
 
 ---
 
@@ -51,7 +86,7 @@ aomi-git deploy --platform-dir /path/to/platform-repo
 |---|---|---|
 | `[PATH]` (`--path`) | - | App source directory. Default: `.` |
 | `--platform <NAME>` | `aomi.toml [app].platform` | Platform tag. Default: aomi.toml's value, then `community`. |
-| `--git <URL\|owner/repo>` | `aomi.toml [app].git` | Platform repo location. When omitted, resolved from the backend's platform record. |
+| `--source-repo <URL\|owner/repo>` | `aomi.toml [app].git` | Platform repo location. When omitted, resolved from the backend's platform record. |
 | `--platform-dir <DIR>` | - | Escape hatch: hand-managed local clone to stage/push from. Skips the managed transit cache. |
 | `--backend <URL>` | `AOMI_BACKEND_URL` | Backend base URL for online checks. |
 | `--dry-run` | - | Plan + best-effort backend reads. No staging, push, or activation. Refreshes `.aomi/deployment.json`. |
@@ -79,8 +114,8 @@ aomi-git status --path /path/to/app
 
 | Flag | Mirrors | Meaning |
 |---|---|---|
-| `[RELEASE_TAG]` | - | Release to check. Falls back to `.aomi/deployment.json`'s `target.release_tag`. |
-| `--git <URL\|owner/repo>` | `aomi.toml [app].git` | Platform repo location. Falls back to deployment.json. |
+| `[APP_RELEASE_TAG]` | - | app_release_tag to check. Falls back to `.aomi/deployment.json`'s `target.app_release_tag`. |
+| `--source-repo <URL\|owner/repo>` | `aomi.toml [app].git` | Platform repo location. Falls back to deployment.json. |
 | `--backend <URL>` | `AOMI_BACKEND_URL` | Backend base URL for registry/health checks. Pass `--backend ''` to skip. |
 | `--access-token <$ENV\|VAL>` | `aomi.toml [app].access_token` | GitHub PAT for private-repo reads. Omit for public repos. |
 | `--path <DIR>` | - | Source repo for the deployment.json fallback. Default: `.` |
@@ -97,7 +132,7 @@ fetch a release by tag, validate it, and load it.
 aomi-git activate apps-my-bot-abc1234 \
   --backend https://staging-api.aomi.dev \
   --activation-token <platform-token> \
-  --git aomi-labs/community-apps \
+  --source-repo aomi-labs/community-apps \
   --target-tag staging \
   --visibility public
 ```
@@ -106,9 +141,9 @@ aomi-git activate apps-my-bot-abc1234 \
 
 | Flag | Mirrors | Meaning |
 |---|---|---|
-| `[RELEASE_TAG]` | - | Release to activate (e.g. `apps-my-bot-abc1234`). Falls back to `.aomi/deployment.json`'s `target.release_tag`. |
+| `[APP_RELEASE_TAG]` | - | app_release_tag to activate (e.g. `apps-my-bot-abc1234`). Falls back to `.aomi/deployment.json`'s `target.app_release_tag`. |
 | `--platform <NAME>` | `aomi.toml [app].platform` | Platform tag. Falls back to deployment.json, then `community`. |
-| `--git <URL\|owner/repo>` | `aomi.toml [app].git` | `source_repo` recorded on the app row. Falls back to deployment.json, then a backend lookup. |
+| `--source-repo <URL\|owner/repo>` | `aomi.toml [app].git` | `source_repo` recorded on the app row. Falls back to deployment.json, then a backend lookup. |
 | `--backend <URL>` | `AOMI_BACKEND_URL` | Backend base URL. **Required.** |
 | `--activation-token <T>` | `AOMI_APP_ACTIVATION_TOKEN` | Platform activation token. **Required.** |
 | `--access-token <$ENV\|VAL>` | `aomi.toml [app].access_token` | GitHub PAT (or `$ENV_VAR` ref) for the backend's one-shot release fetch. Only needed for **private** platform repos. |
@@ -119,9 +154,14 @@ aomi-git activate apps-my-bot-abc1234 \
 | `--source-tree <SHA>` | - | Provenance. Falls back to deployment.json. |
 | `--source-digest <SHA>` | - | Provenance. Falls back to deployment.json. |
 | `--path <DIR>` | - | Source repo for the deployment.json fallback. Default: `.` |
-| `--request` | - | Post an activation request to the code-owned Discord webhook instead of activating directly. |
 | `--dry-run` | - | Print the activation request that would be sent; no HTTP. |
 | `--json` | - | Print the backend response as JSON. |
+
+> **Where does the activation token come from?** Platform ops issue you a
+> **per-app** activation code (see [`aomi-git request`](#aomi-git-request)). Once
+> you hold it, you run `activate` yourself for every release — set
+> `AOMI_APP_ACTIVATION_TOKEN` or pass `--activation-token`. There is no longer a
+> "post a request to ops per release" step.
 
 ---
 
@@ -254,7 +294,7 @@ full** on each operation (via temp-file + rename, so partial writes are never
 observable). Beyond `stages`, it carries:
 
 - `app`, `source`, `platform`, `target` - the resolved plan (slug, commit,
-  release tag, server tags, etc.).
+  app_release_tag, server tags, etc.).
 - `state` - three independent flags that track progress:
   - `pushed` - the push to the platform repo succeeded.
   - `deployed` - the push landed on the contractual deploy branch (a strict
