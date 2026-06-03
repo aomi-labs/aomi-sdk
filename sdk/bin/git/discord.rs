@@ -3,7 +3,7 @@
 //! Contributors don't hold the activation token - platform ops do (ADR 0009).
 //! So after a deploy, the "next action" is to *ask* ops to activate. This
 //! module can post that ask to the Aomi apps Discord via an incoming webhook,
-//! tagging ops and carrying the repo / app / release tag so ops can act
+//! tagging ops and carrying the repo / app / app_release_tag so ops can act
 //! without a round-trip.
 //!
 //! ## Why a webhook, not a clickable link
@@ -33,7 +33,7 @@ const DISCORD_ADMIN: &str = "<@&1510790865520693348>";
 pub struct ActivationRequest {
     pub app: String,
     pub repo: String,
-    pub release_tag: String,
+    pub app_release_tag: String,
     pub server_tags: Vec<String>,
 }
 
@@ -52,7 +52,7 @@ impl ActivationRequest {
              - release: `{}`\n\
              - target tags: `{}`\n\
              Please activate when you have a chance.",
-            self.app, self.repo, self.release_tag, tags
+            self.app, self.repo, self.app_release_tag, tags
         )
     }
 
@@ -100,7 +100,7 @@ mod tests {
         ActivationRequest {
             app: "my-bot".to_string(),
             repo: "aomi-labs/community-apps".to_string(),
-            release_tag: "apps-my-bot-abc1234".to_string(),
+            app_release_tag: "apps-my-bot-abc1234".to_string(),
             server_tags: vec!["staging".to_string()],
         }
     }

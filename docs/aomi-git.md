@@ -51,7 +51,7 @@ aomi-git deploy --platform-dir /path/to/platform-repo
 |---|---|---|
 | `[PATH]` (`--path`) | - | App source directory. Default: `.` |
 | `--platform <NAME>` | `aomi.toml [app].platform` | Platform tag. Default: aomi.toml's value, then `community`. |
-| `--git <URL\|owner/repo>` | `aomi.toml [app].git` | Platform repo location. When omitted, resolved from the backend's platform record. |
+| `--source-repo <URL\|owner/repo>` | `aomi.toml [app].git` | Platform repo location. When omitted, resolved from the backend's platform record. |
 | `--platform-dir <DIR>` | - | Escape hatch: hand-managed local clone to stage/push from. Skips the managed transit cache. |
 | `--backend <URL>` | `AOMI_BACKEND_URL` | Backend base URL for online checks. |
 | `--dry-run` | - | Plan + best-effort backend reads. No staging, push, or activation. Refreshes `.aomi/deployment.json`. |
@@ -79,8 +79,8 @@ aomi-git status --path /path/to/app
 
 | Flag | Mirrors | Meaning |
 |---|---|---|
-| `[RELEASE_TAG]` | - | Release to check. Falls back to `.aomi/deployment.json`'s `target.release_tag`. |
-| `--git <URL\|owner/repo>` | `aomi.toml [app].git` | Platform repo location. Falls back to deployment.json. |
+| `[APP_RELEASE_TAG]` | - | app_release_tag to check. Falls back to `.aomi/deployment.json`'s `target.app_release_tag`. |
+| `--source-repo <URL\|owner/repo>` | `aomi.toml [app].git` | Platform repo location. Falls back to deployment.json. |
 | `--backend <URL>` | `AOMI_BACKEND_URL` | Backend base URL for registry/health checks. Pass `--backend ''` to skip. |
 | `--access-token <$ENV\|VAL>` | `aomi.toml [app].access_token` | GitHub PAT for private-repo reads. Omit for public repos. |
 | `--path <DIR>` | - | Source repo for the deployment.json fallback. Default: `.` |
@@ -97,7 +97,7 @@ fetch a release by tag, validate it, and load it.
 aomi-git activate apps-my-bot-abc1234 \
   --backend https://staging-api.aomi.dev \
   --activation-token <platform-token> \
-  --git aomi-labs/community-apps \
+  --source-repo aomi-labs/community-apps \
   --target-tag staging \
   --visibility public
 ```
@@ -106,9 +106,9 @@ aomi-git activate apps-my-bot-abc1234 \
 
 | Flag | Mirrors | Meaning |
 |---|---|---|
-| `[RELEASE_TAG]` | - | Release to activate (e.g. `apps-my-bot-abc1234`). Falls back to `.aomi/deployment.json`'s `target.release_tag`. |
+| `[APP_RELEASE_TAG]` | - | app_release_tag to activate (e.g. `apps-my-bot-abc1234`). Falls back to `.aomi/deployment.json`'s `target.app_release_tag`. |
 | `--platform <NAME>` | `aomi.toml [app].platform` | Platform tag. Falls back to deployment.json, then `community`. |
-| `--git <URL\|owner/repo>` | `aomi.toml [app].git` | `source_repo` recorded on the app row. Falls back to deployment.json, then a backend lookup. |
+| `--source-repo <URL\|owner/repo>` | `aomi.toml [app].git` | `source_repo` recorded on the app row. Falls back to deployment.json, then a backend lookup. |
 | `--backend <URL>` | `AOMI_BACKEND_URL` | Backend base URL. **Required.** |
 | `--activation-token <T>` | `AOMI_APP_ACTIVATION_TOKEN` | Platform activation token. **Required.** |
 | `--access-token <$ENV\|VAL>` | `aomi.toml [app].access_token` | GitHub PAT (or `$ENV_VAR` ref) for the backend's one-shot release fetch. Only needed for **private** platform repos. |
@@ -254,7 +254,7 @@ full** on each operation (via temp-file + rename, so partial writes are never
 observable). Beyond `stages`, it carries:
 
 - `app`, `source`, `platform`, `target` - the resolved plan (slug, commit,
-  release tag, server tags, etc.).
+  app_release_tag, server tags, etc.).
 - `state` - three independent flags that track progress:
   - `pushed` - the push to the platform repo succeeded.
   - `deployed` - the push landed on the contractual deploy branch (a strict

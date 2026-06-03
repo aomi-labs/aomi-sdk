@@ -28,6 +28,10 @@ struct ListResponse {
 #[derive(Debug, Deserialize)]
 struct ServerTagsResponse {
     server_tags: Vec<String>,
+    /// The backend host's compiled `aomi-sdk` version. Optional so an older
+    /// backend that doesn't report it degrades to a non-blocking warning.
+    #[serde(default)]
+    sdk_version: Option<String>,
 }
 
 /// Fetch the registered platforms from the backend's public control endpoint.
@@ -51,8 +55,10 @@ pub async fn fetch_platforms(backend_url: &str) -> Result<Vec<RemotePlatform>> {
     Ok(parsed.platforms)
 }
 
-/// Fetch the current backend instance's server tags from the public control endpoint.
-pub async fn fetch_server_tags(backend_url: &str) -> Result<Vec<String>> {
+/// Fetch the current backend instance's server tags and host `aomi-sdk`
+/// version from the public control endpoint. The version is `None` when the
+/// backend doesn't report it (older deploy).
+pub async fn fetch_server_tags(backend_url: &str) -> Result<(Vec<String>, Option<String>)> {
     let base = backend_url.trim().trim_end_matches('/');
     let url = format!("{base}/api/control/server-tags");
     let response = reqwest::Client::new()
@@ -69,11 +75,15 @@ pub async fn fetch_server_tags(backend_url: &str) -> Result<Vec<String>> {
         .json()
         .await
         .with_context(|| format!("failed to parse {url} response"))?;
-    Ok(normalize_tags(parsed.server_tags))
+    let sdk = parsed
+        .sdk_version
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty());
+    Ok((normalize_tags(parsed.server_tags), sdk))
 }
 
 /// Resolve `platform` to its GitHub repo URL via the backend registry. Used
-/// when neither `--git` nor `aomi.toml [app].git` was provided.
+/// when neither `--source-repo` nor `aomi.toml [app].git` was provided.
 pub async fn lookup_platform_git(backend_url: &str, platform: &Platform) -> Result<String> {
     let platforms = fetch_platforms(backend_url).await?;
     let needle = platform.as_str().trim().to_ascii_lowercase();
@@ -83,7 +93,7 @@ pub async fn lookup_platform_git(backend_url: &str, platform: &Platform) -> Resu
         .ok_or_else(|| {
             anyhow::anyhow!(
                 "backend does not know about platform `{needle}` — declare [app].git in aomi.toml \
-                 or pass --git <URL>"
+                 or pass --source-repo <URL>"
             )
         })?;
     normalize_github_repo(&matched.github_repo)
@@ -248,11 +258,11 @@ pub async fn run(state: &mut DeploymentState, backend_url: &str) -> Result<()> {
         return Ok(());
     }
 
-    let server_tags_subset = match fetch_server_tags(backend_url).await {
-        Ok(server_tags) => {
+    let mut backend_checks = match fetch_server_tags(backend_url).await {
+        Ok((server_tags, host_sdk)) => {
             let requested = normalize_tags(state.target.server_tags.clone());
             let matches = requested.iter().all(|tag| server_tags.contains(tag));
-            if matches {
+            let server_tags_subset = if matches {
                 Check::pass(
                     "server_tags_subset",
                     format!(
@@ -269,18 +279,67 @@ pub async fn run(state: &mut DeploymentState, backend_url: &str) -> Result<()> {
                 );
                 state.errors.push(detail.clone());
                 Check::fail("server_tags_subset", detail)
+            };
+
+            // Block a deploy whose pinned aomi-sdk won't match the host — the
+            // bundle would otherwise build, push, then fail at activation.
+            if let (Some(app), Some(host)) = (state.app_sdk_version.as_deref(), host_sdk.as_deref())
+                && app != host
+            {
+                state
+                    .errors
+                    .push(format!("aomi-sdk {app} (app) != {host} (backend host)"));
             }
+            let sdk_matches_host =
+                sdk_compat_check(state.app_sdk_version.as_deref(), host_sdk.as_deref());
+
+            vec![server_tags_subset, sdk_matches_host]
         }
         Err(e) => {
             let detail = format!("GET /api/control/server-tags failed: {e}");
             state.errors.push(detail.clone());
-            Check::fail("server_tags_subset", detail)
+            vec![Check::fail("server_tags_subset", detail)]
         }
     };
 
-    state.replace_stage(Stage::new(StageId::Backend, vec![server_tags_subset]));
+    state.replace_stage(Stage::new(
+        StageId::Backend,
+        std::mem::take(&mut backend_checks),
+    ));
     state.touch();
     Ok(())
+}
+
+/// Compare the app's declared `aomi-sdk` against the backend host's version.
+/// A mismatch is a blocking error (activation enforces an exact match); when
+/// either side is unknown, degrade to a non-blocking advisory so an older
+/// backend or an unreadable Cargo.toml never falsely blocks a deploy.
+fn sdk_compat_check(app_sdk: Option<&str>, host_sdk: Option<&str>) -> Check {
+    match (app_sdk, host_sdk) {
+        (Some(app), Some(host)) if app == host => Check::pass(
+            "sdk_version_matches_host",
+            format!("aomi-sdk {app} matches backend host"),
+        ),
+        (Some(app), Some(host)) => Check::fail(
+            "sdk_version_matches_host",
+            format!(
+                "app pins aomi-sdk {app} but the backend host runs {host}; \
+                 rebuild against ={host} (update Cargo.toml and the platform's \
+                 required_sdk_version) or activation will reject the bundle"
+            ),
+        ),
+        (Some(_), None) => Check::warn(
+            "sdk_version_matches_host",
+            true,
+            "backend did not report its SDK version; cannot verify aomi-sdk compatibility",
+        ),
+        (None, _) => Check::warn(
+            "sdk_version_matches_host",
+            true,
+            "could not read the app's aomi-sdk version from Cargo.toml; \
+             skipping SDK compatibility check",
+        ),
+    }
 }
 
 fn normalize_tags(values: Vec<String>) -> Vec<String> {
@@ -311,5 +370,35 @@ mod tests {
             ]),
             vec!["prod", "platform-x"]
         );
+    }
+
+    use crate::deployment_state::Severity;
+
+    #[test]
+    fn sdk_check_passes_when_versions_match() {
+        let c = sdk_compat_check(Some("0.1.21"), Some("0.1.21"));
+        assert_eq!(c.name, "sdk_version_matches_host");
+        assert!(c.passed);
+        assert_eq!(c.severity, Severity::Error);
+    }
+
+    #[test]
+    fn sdk_check_blocks_on_mismatch() {
+        let c = sdk_compat_check(Some("0.1.20"), Some("0.1.21"));
+        assert!(!c.passed);
+        assert_eq!(c.severity, Severity::Error); // blocking
+        assert!(c.detail.unwrap().contains("0.1.21"));
+    }
+
+    #[test]
+    fn sdk_check_is_advisory_when_either_side_unknown() {
+        // Old backend that doesn't report its version.
+        let no_host = sdk_compat_check(Some("0.1.21"), None);
+        assert!(no_host.passed);
+        assert_eq!(no_host.severity, Severity::Warn);
+        // App version couldn't be parsed from Cargo.toml.
+        let no_app = sdk_compat_check(None, Some("0.1.21"));
+        assert!(no_app.passed);
+        assert_eq!(no_app.severity, Severity::Warn);
     }
 }

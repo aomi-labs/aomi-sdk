@@ -37,24 +37,24 @@ impl fmt::Display for Visibility {
     }
 }
 
-pub(crate) fn parse_release_tag(value: &str) -> Result<(String, String)> {
+pub(crate) fn parse_app_release_tag(value: &str) -> Result<(String, String)> {
     let Some(stripped) = value.strip_prefix("apps-") else {
-        bail!("release tag must start with `apps-`");
+        bail!("app_release_tag must start with `apps-`");
     };
     let Some((app_slug, short_commit)) = stripped.rsplit_once('-') else {
-        bail!("release tag must follow apps-{{app_slug}}-{{short_commit}}");
+        bail!("app_release_tag must follow apps-{{app_slug}}-{{short_commit}}");
     };
     if app_slug.is_empty() || short_commit.is_empty() {
-        bail!("release tag must include app slug and short commit");
+        bail!("app_release_tag must include app slug and short commit");
     }
     if !app_slug
         .chars()
         .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
     {
-        bail!("release tag app slug contains unsupported characters");
+        bail!("app_release_tag app slug contains unsupported characters");
     }
     if !short_commit.chars().all(|ch| ch.is_ascii_hexdigit()) {
-        bail!("release tag short commit must be hexadecimal");
+        bail!("app_release_tag short commit must be hexadecimal");
     }
     Ok((app_slug.to_string(), short_commit.to_string()))
 }
@@ -69,20 +69,20 @@ pub struct ActivationPlan {
 impl ActivationPlan {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
-        release_tag: &str,
+        app_release_tag: &str,
         platform: Platform,
         backend_url: String,
         activation_token: String,
         visibility: Visibility,
         source_repo: String,
         github_token: Option<String>,
-        target_tags: Vec<String>,
+        server_tags: Vec<String>,
         label: Option<String>,
         source_commit: Option<String>,
         source_tree: Option<String>,
         source_digest: Option<String>,
     ) -> Result<Self> {
-        let (app_slug, short_commit) = parse_release_tag(release_tag)?;
+        let (app_slug, short_commit) = parse_app_release_tag(app_release_tag)?;
         let backend_url = backend_url.trim().trim_end_matches('/').to_string();
         if backend_url.is_empty() {
             bail!("backend URL is required via --backend or {BACKEND_URL_ENV}");
@@ -92,7 +92,7 @@ impl ActivationPlan {
         }
         let source_repo = source_repo.trim().to_string();
         if source_repo.is_empty() {
-            bail!("source_repo is required — pass --git or ensure aomi.toml declares [app].git");
+            bail!("source_repo is required — pass --source-repo or ensure aomi.toml declares [app].git");
         }
 
         let request = ActivateAppRequest {
@@ -100,7 +100,7 @@ impl ActivationPlan {
             label: label.and_then(non_empty),
             platform,
             source_repo,
-            app_release_tag: release_tag.to_string(),
+            app_release_tag: app_release_tag.to_string(),
             source_commit: source_commit.and_then(non_empty),
             source_tree: source_tree.and_then(non_empty),
             source_digest: source_digest.and_then(non_empty),
@@ -108,11 +108,11 @@ impl ActivationPlan {
             is_public: visibility.is_public(),
             metadata: json!({
                 "requested_by": "aomi-git",
-                "release_tag": release_tag,
+                "app_release_tag": app_release_tag,
                 "short_commit": short_commit,
             }),
             github_token: github_token.and_then(non_empty),
-            target_tags: normalize_tags(target_tags)?,
+            server_tags: normalize_tags(server_tags)?,
         };
 
         Ok(Self {
@@ -161,7 +161,7 @@ impl ActivationPlan {
 
 /// A metadata-only configuration edit, posted to the same
 /// `/api/admin/apps/activate` endpoint the `activate` subcommand uses, but
-/// keyed on the app **name** instead of a release tag and deliberately
+/// keyed on the app **name** instead of an app_release_tag and deliberately
 /// omitting `source_repo` / `app_release_tag`.
 ///
 /// Omitting those two fields is load-bearing: the backend only runs its
@@ -314,8 +314,12 @@ pub struct ActivateAppRequest {
     pub metadata: Value,
     /// Required backend server tags. The backend loads only when these tags are
     /// a subset of its configured AOMI_SERVER_TAGS.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub target_tags: Vec<String>,
+    #[serde(
+        default,
+        rename = "target_tags",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub server_tags: Vec<String>,
     /// Per ADR 0009 amended: transient GitHub read token resolved from
     /// `aomi.toml[app].access_token` (an env-var reference). Sent once, used
     /// once by the backend, never persisted. Skipped in serialization when
