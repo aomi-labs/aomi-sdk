@@ -6,13 +6,13 @@
 //! signs it, and `submit_swap` forwards the signed bytes to byreal's
 //! AMM-or-RFQ submission endpoint depending on the quote's `routerType`.
 
-use crate::client::ByrealApp;
 use crate::client::spot::spot_client;
-use crate::tool::{build_solana_signed_routes, ok, resolve_address, validate_confirmation};
+use crate::client::ByrealApp;
+use crate::tool::{build_svm_sign_tx_routes, ok, resolve_address, validate_confirmation};
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const DEFAULT_PAGE_SIZE: u32 = 20;
 const DEFAULT_SLIPPAGE_BPS: u32 = 100; // 1% — matches byreal's frontend default
@@ -321,8 +321,6 @@ impl DynAomiTool for BuildSwap {
                 "router_type": router_type,
                 "wallet": wallet,
             },
-            "requires_user_confirmation": true,
-            "confirmation_phrase": "confirm",
             "submit_args_template": submit_template.clone(),
         });
 
@@ -332,7 +330,7 @@ impl DynAomiTool for BuildSwap {
             short_mint(&args.output_mint),
         );
 
-        build_solana_signed_routes::<SubmitSwap>(preview, unsigned_tx, description, submit_template)
+        build_svm_sign_tx_routes::<SubmitSwap>(preview, unsigned_tx, description, submit_template)
     }
 }
 

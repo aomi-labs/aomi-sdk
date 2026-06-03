@@ -12,13 +12,13 @@
 //! always safe). Multi-tx orchestration can be added later once the
 //! happy-path is validated against live byreal state.
 
-use crate::client::ByrealApp;
 use crate::client::lp::lp_client;
-use crate::tool::{build_solana_signed_routes, ok, resolve_address, validate_confirmation};
+use crate::client::ByrealApp;
+use crate::tool::{build_svm_sign_tx_routes, ok, resolve_address, validate_confirmation};
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 const DEFAULT_PAGE_SIZE: u32 = 20;
 
@@ -236,8 +236,6 @@ impl DynAomiTool for BuildClaimRewards {
                 "order_code": order_code,
                 "encode_items": items,
             },
-            "requires_user_confirmation": true,
-            "confirmation_phrase": "confirm",
             "submit_args_template": submit_template.clone(),
         });
 
@@ -246,7 +244,7 @@ impl DynAomiTool for BuildClaimRewards {
             args.position_addresses.len()
         );
 
-        build_solana_signed_routes::<SubmitClaimRewards>(
+        build_svm_sign_tx_routes::<SubmitClaimRewards>(
             preview,
             unsigned_tx,
             description,

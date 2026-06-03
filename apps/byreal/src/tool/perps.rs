@@ -1,15 +1,124 @@
-use crate::client::ByrealApp;
 use crate::client::perps::{
-    OrderInputs, build_cancel_action, build_exchange_body, build_order_action,
-    build_update_leverage_action, parse_signature, perps_client, prepare_l1_action,
+    build_cancel_action, build_exchange_body, build_order_action, build_update_leverage_action,
+    parse_signature, perps_client, prepare_l1_action, OrderInputs,
 };
+use crate::client::ByrealApp;
 use crate::tool::{build_evm_signed_routes, ok, resolve_address, validate_confirmation};
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 const DEFAULT_MARKET_SLIPPAGE_PCT: f64 = 5.0;
+
+// ---------------------------------------------------------------------------
+// Server-side payload handle cache
+// ---------------------------------------------------------------------------
+//
+// Problem: even with a checksum-protected hex+JSON blob, LLMs occasionally
+// duplicate or drop single characters when copying long opaque strings
+// between tool calls (build → submit). The checksum catches the corruption
+// cleanly, but the model often gives up after one retry instead of forwarding
+// the original string verbatim. The result is a dead-ended order flow.
+//
+// Fix: the `build_*` tools stash the real `SubmissionPayload` in a
+// process-local cache keyed by a short handle (`hpl_<hex>`) and emit only
+// the handle into the route plan. The LLM only has to forward ~16 chars
+// instead of ~600, and even if it corrupts those, the symptom is a clean
+// "unknown payload handle" error rather than a silent signature mismatch.
+//
+// The full hex blob is still accepted by `resolve_payload` as a fallback —
+// useful when an op manually invokes a `submit_*` tool or when the cache
+// has expired (e.g. process restart between build and submit).
+
+const PAYLOAD_HANDLE_PREFIX: &str = "hpl_";
+/// Hard cap on cached entries. FIFO eviction once exceeded. 128 is plenty for
+/// any realistic interactive session — a build → sign → submit cycle is
+/// seconds long, and cross-session contamination isn't a concern (the cache
+/// is process-local and handles are unguessable monotonic ids).
+const PAYLOAD_CACHE_MAX: usize = 128;
+/// Entries older than this are dropped on insert. Hyperliquid signatures are
+/// nonce-stamped, so a 30-minute-old handle would never be valid anyway.
+const PAYLOAD_CACHE_TTL: Duration = Duration::from_secs(30 * 60);
+
+struct CachedPayload {
+    id: u64,
+    payload: SubmissionPayload,
+    inserted_at: Instant,
+}
+
+fn payload_cache() -> &'static Mutex<VecDeque<CachedPayload>> {
+    static CACHE: std::sync::OnceLock<Mutex<VecDeque<CachedPayload>>> = std::sync::OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(VecDeque::with_capacity(PAYLOAD_CACHE_MAX)))
+}
+
+fn next_payload_id() -> u64 {
+    static SEQ: AtomicU64 = AtomicU64::new(1);
+    SEQ.fetch_add(1, Ordering::SeqCst)
+}
+
+/// Stash `payload` in the cache and return a short handle the LLM can
+/// safely forward verbatim.
+fn store_payload(payload: SubmissionPayload) -> String {
+    let id = next_payload_id();
+    let entry = CachedPayload {
+        id,
+        payload,
+        inserted_at: Instant::now(),
+    };
+    let mut guard = payload_cache().lock().expect("payload cache poisoned");
+    let now = Instant::now();
+    // Expire stale entries opportunistically on insert. Cheap because the
+    // queue is bounded.
+    while let Some(front) = guard.front() {
+        if now.duration_since(front.inserted_at) > PAYLOAD_CACHE_TTL {
+            guard.pop_front();
+        } else {
+            break;
+        }
+    }
+    while guard.len() >= PAYLOAD_CACHE_MAX {
+        guard.pop_front();
+    }
+    guard.push_back(entry);
+    format!("{PAYLOAD_HANDLE_PREFIX}{id:x}")
+}
+
+fn lookup_payload(handle_body: &str) -> Result<SubmissionPayload, String> {
+    let id = u64::from_str_radix(handle_body, 16).map_err(|_| {
+        format!(
+            "[byreal] invalid payload handle `{PAYLOAD_HANDLE_PREFIX}{handle_body}` — \
+             forward the value from the build_* preview verbatim"
+        )
+    })?;
+    let guard = payload_cache().lock().expect("payload cache poisoned");
+    guard
+        .iter()
+        .find(|entry| entry.id == id)
+        .map(|entry| entry.payload.clone())
+        .ok_or_else(|| {
+            format!(
+                "[byreal] payload handle `{PAYLOAD_HANDLE_PREFIX}{handle_body}` not found \
+                 (expired, evicted, or never issued). Re-run the matching `byreal_perps_build_*` \
+                 tool to mint a fresh build → sign → submit chain."
+            )
+        })
+}
+
+/// Accept either a server-issued handle (`hpl_<hex>`) or a raw hex+checksum
+/// blob. The handle path is the fast, corruption-resistant default; the hex
+/// path is a fallback for backward compatibility and manual invocations.
+fn resolve_payload(input: &str) -> Result<SubmissionPayload, String> {
+    let trimmed = input.trim().trim_matches('"');
+    if let Some(rest) = trimmed.strip_prefix(PAYLOAD_HANDLE_PREFIX) {
+        return lookup_payload(rest);
+    }
+    SubmissionPayload::decode(trimmed)
+}
 
 // ---------------------------------------------------------------------------
 // build_order / submit_order
@@ -43,7 +152,7 @@ impl DynAomiTool for BuildOrder {
     type App = ByrealApp;
     type Args = BuildOrderArgs;
     const NAME: &'static str = "byreal_perps_build_order";
-    const DESCRIPTION: &'static str = "Build (do not submit) a Hyperliquid perpetual order. Returns a preview and a routed `commit_eip712` step the host wallet signs. The matched `byreal_perps_submit_order` continuation runs after the signature comes back. Always emit a confirmation summary and stop the turn before calling this.";
+    const DESCRIPTION: &'static str = "Build and immediately execute a Hyperliquid perpetual order. Returns a preview and routes directly to `commit_eip712` for the host wallet to sign. The matched `byreal_perps_submit_order` continuation runs after the signature comes back.";
 
     fn run_with_routes(
         _app: &Self::App,
@@ -104,12 +213,22 @@ impl DynAomiTool for BuildOrder {
         )?;
         let (action_json, nonce, typed_data) = prepare_l1_action(action, None)?;
 
-        let submit_template = serde_json::to_value(&SubmitOrderArgs {
-            confirmation: Some("confirm".to_string()),
+        // Bundle action+nonce+vault into one opaque hex blob so the LLM
+        // can't accidentally rewrite the 13-digit nonce or corrupt the
+        // pre-signed action JSON between build and submit. The submit-side
+        // tool decodes this verbatim.
+        // Stash the real payload server-side and emit only a short handle.
+        // The LLM never has to copy the full hex+JSON blob, which removes the
+        // single-char-corruption failure mode that plagued the raw hex path.
+        let payload = store_payload(SubmissionPayload {
             action: action_json.clone(),
             nonce,
-            master_signature: None,
             vault_address: None,
+        });
+        let submit_template = serde_json::to_value(&SubmitOrderArgs {
+            confirmation: Some("confirm".to_string()),
+            payload,
+            signature: None,
         })
         .map_err(|e| format!("[byreal] submit template serialize: {e}"))?;
 
@@ -130,8 +249,6 @@ impl DynAomiTool for BuildOrder {
                 } else { None },
             },
             "nonce": nonce,
-            "requires_user_confirmation": true,
-            "confirmation_phrase": "confirm",
             "submit_args_template": submit_template.clone(),
         });
 
@@ -149,18 +266,98 @@ impl DynAomiTool for BuildOrder {
     }
 }
 
+/// Decoded shape of the opaque `payload` blob carried through the
+/// build → sign → submit chain. Kept private to byreal — the LLM never
+/// touches the individual fields, it only forwards the hex-encoded blob.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct SubmissionPayload {
+    action: Value,
+    nonce: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    vault_address: Option<String>,
+}
+
+/// Length (hex chars) of the keccak256-based checksum suffix appended to
+/// every encoded payload. 8 hex chars = first 4 bytes of the digest = 32
+/// bits of collision resistance — enough to catch single-character drops or
+/// substitutions the LLM occasionally introduces while transcribing a
+/// long opaque blob, with a sub-microsecond verify cost.
+const PAYLOAD_CHECKSUM_HEX_LEN: usize = 8;
+
+impl SubmissionPayload {
+    /// Encode `(action, nonce, vault_address)` into `<hex(json)><checksum>`
+    /// so the LLM-transcribed blob has end-to-end integrity protection. If
+    /// even one hex char is dropped or substituted, the checksum no longer
+    /// matches and `decode` returns a clean "payload was modified" error
+    /// instead of letting a corrupted action through to the exchange where
+    /// it'd surface as an opaque 422 or a "User does not exist" (signature
+    /// recovers to a wrong address).
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn encode(action: Value, nonce: u64, vault_address: Option<String>) -> Result<String, String> {
+        let payload = Self {
+            action,
+            nonce,
+            vault_address,
+        };
+        let bytes = serde_json::to_vec(&payload)
+            .map_err(|e| format!("[byreal] payload encode failed: {e}"))?;
+        let mut out = hex::encode(&bytes);
+        out.push_str(&payload_checksum_hex(&bytes));
+        Ok(out)
+    }
+
+    fn decode(s: &str) -> Result<Self, String> {
+        let trimmed_owned = s
+            .trim()
+            .trim_matches('"')
+            .chars()
+            .filter(|c| !c.is_ascii_whitespace())
+            .collect::<String>();
+        let trimmed = trimmed_owned
+            .strip_prefix("0x")
+            .or_else(|| trimmed_owned.strip_prefix("0X"))
+            .unwrap_or(&trimmed_owned);
+        if trimmed.len() <= PAYLOAD_CHECKSUM_HEX_LEN {
+            return Err(format!(
+                "[byreal] payload too short ({} chars) — forward the full blob verbatim",
+                trimmed.len()
+            ));
+        }
+        let split_at = trimmed.len() - PAYLOAD_CHECKSUM_HEX_LEN;
+        let (body_hex, checksum_hex) = trimmed.split_at(split_at);
+        let bytes = hex::decode(body_hex)
+            .map_err(|e| format!("[byreal] payload not valid hex — forward verbatim: {e}"))?;
+        let expected = payload_checksum_hex(&bytes);
+        if !checksum_hex.eq_ignore_ascii_case(&expected) {
+            return Err(format!(
+                "[byreal] payload checksum mismatch — the blob was modified in transit. \
+                 Forward the value from the build_* preview CHARACTER BY CHARACTER \
+                 without inserting, dropping, or substituting any hex digit. \
+                 (expected suffix `{expected}`, got `{checksum_hex}`)"
+            ));
+        }
+        serde_json::from_slice(&bytes).map_err(|e| format!("[byreal] payload decode failed: {e}"))
+    }
+}
+
+fn payload_checksum_hex(bytes: &[u8]) -> String {
+    use ethers::utils::keccak256;
+    let digest = keccak256(bytes);
+    hex::encode(&digest[..PAYLOAD_CHECKSUM_HEX_LEN / 2])
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct SubmitOrderArgs {
     /// Must be the literal string "confirm". Forwarded from the build_* preview.
     pub confirmation: Option<String>,
-    /// The signed Hyperliquid action JSON. Forward verbatim from the build_* output.
-    pub action: Value,
-    /// The nonce that was hashed into the EIP-712 connection_id.
-    pub nonce: u64,
+    /// OPAQUE pre-signed submission handle (`hpl_<hex>`, ~16 chars) from the
+    /// `build_*` preview's `submit_args_template.payload`. Forward verbatim —
+    /// the host resolves it back to the full pre-signed action. Do not modify
+    /// or regenerate. A raw hex+checksum blob is also accepted for backward
+    /// compatibility, but the handle is what `build_*` emits today.
+    pub payload: String,
     /// EIP-712 signature (65-byte hex). Filled in by the host wallet via `commit_eip712`.
-    pub master_signature: Option<String>,
-    /// Optional vault address for sub-account / vault trading.
-    pub vault_address: Option<String>,
+    pub signature: Option<String>,
 }
 
 pub(crate) struct SubmitOrder;
@@ -169,16 +366,21 @@ impl DynAomiTool for SubmitOrder {
     type App = ByrealApp;
     type Args = SubmitOrderArgs;
     const NAME: &'static str = "byreal_perps_submit_order";
-    const DESCRIPTION: &'static str = "Submit a Hyperliquid order that was previously prepared by `byreal_perps_build_order` and signed via `commit_eip712`. The `master_signature` field is filled in automatically by the runtime — never invent one.";
+    const DESCRIPTION: &'static str = "Submit a Hyperliquid order that was previously prepared by `byreal_perps_build_order` and signed via `commit_eip712`. Pass the opaque `payload` blob verbatim from the build preview; the `signature` field is filled in by the runtime — never invent one.";
 
     fn run(_app: &Self::App, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         validate_confirmation(args.confirmation.as_deref())?;
-        let sig_hex = args.master_signature.as_deref().ok_or_else(|| {
-            "[byreal] master_signature missing — wait for commit_eip712 callback".to_string()
+        let sig_hex = args.signature.as_deref().ok_or_else(|| {
+            "[byreal] signature missing — wait for commit_eip712 callback".to_string()
         })?;
         let sig = parse_signature(sig_hex)?;
-        let body =
-            build_exchange_body(args.action, args.nonce, &sig, args.vault_address.as_deref());
+        let decoded = resolve_payload(&args.payload)?;
+        let body = build_exchange_body(
+            decoded.action,
+            decoded.nonce,
+            &sig,
+            decoded.vault_address.as_deref(),
+        );
         ok(perps_client()?.post_exchange(body)?)
     }
 }
@@ -213,12 +415,18 @@ impl DynAomiTool for BuildCancel {
         let action = build_cancel_action(asset_index, args.oid);
         let (action_json, nonce, typed_data) = prepare_l1_action(action, None)?;
 
-        let submit_template = serde_json::to_value(&SubmitCancelArgs {
-            confirmation: Some("confirm".to_string()),
+        // Stash the real payload server-side and emit only a short handle.
+        // The LLM never has to copy the full hex+JSON blob, which removes the
+        // single-char-corruption failure mode that plagued the raw hex path.
+        let payload = store_payload(SubmissionPayload {
             action: action_json.clone(),
             nonce,
-            master_signature: None,
             vault_address: None,
+        });
+        let submit_template = serde_json::to_value(&SubmitCancelArgs {
+            confirmation: Some("confirm".to_string()),
+            payload,
+            signature: None,
         })
         .map_err(|e| format!("[byreal] submit template serialize: {e}"))?;
 
@@ -230,8 +438,6 @@ impl DynAomiTool for BuildCancel {
                 "oid": args.oid,
             },
             "nonce": nonce,
-            "requires_user_confirmation": true,
-            "confirmation_phrase": "confirm",
             "submit_args_template": submit_template.clone(),
         });
 
@@ -244,10 +450,10 @@ impl DynAomiTool for BuildCancel {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct SubmitCancelArgs {
     pub confirmation: Option<String>,
-    pub action: Value,
-    pub nonce: u64,
-    pub master_signature: Option<String>,
-    pub vault_address: Option<String>,
+    /// OPAQUE pre-signed submission handle. Forward verbatim — see
+    /// [`SubmitOrderArgs::payload`] for the contract.
+    pub payload: String,
+    pub signature: Option<String>,
 }
 
 pub(crate) struct SubmitCancel;
@@ -256,17 +462,22 @@ impl DynAomiTool for SubmitCancel {
     type App = ByrealApp;
     type Args = SubmitCancelArgs;
     const NAME: &'static str = "byreal_perps_submit_cancel";
-    const DESCRIPTION: &'static str = "Submit a Hyperliquid cancel that was prepared by `byreal_perps_build_cancel` and signed via `commit_eip712`.";
+    const DESCRIPTION: &'static str = "Submit a Hyperliquid cancel that was prepared by `byreal_perps_build_cancel` and signed via `commit_eip712`. Forward the opaque `payload` blob verbatim from the build preview.";
 
     fn run(_app: &Self::App, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         validate_confirmation(args.confirmation.as_deref())?;
         let sig_hex = args
-            .master_signature
+            .signature
             .as_deref()
-            .ok_or_else(|| "[byreal] master_signature missing".to_string())?;
+            .ok_or_else(|| "[byreal] signature missing".to_string())?;
         let sig = parse_signature(sig_hex)?;
-        let body =
-            build_exchange_body(args.action, args.nonce, &sig, args.vault_address.as_deref());
+        let decoded = resolve_payload(&args.payload)?;
+        let body = build_exchange_body(
+            decoded.action,
+            decoded.nonce,
+            &sig,
+            decoded.vault_address.as_deref(),
+        );
         ok(perps_client()?.post_exchange(body)?)
     }
 }
@@ -306,12 +517,18 @@ impl DynAomiTool for BuildUpdateLeverage {
         let action = build_update_leverage_action(asset_index, args.is_cross, args.leverage);
         let (action_json, nonce, typed_data) = prepare_l1_action(action, None)?;
 
-        let submit_template = serde_json::to_value(&SubmitUpdateLeverageArgs {
-            confirmation: Some("confirm".to_string()),
+        // Stash the real payload server-side and emit only a short handle.
+        // The LLM never has to copy the full hex+JSON blob, which removes the
+        // single-char-corruption failure mode that plagued the raw hex path.
+        let payload = store_payload(SubmissionPayload {
             action: action_json.clone(),
             nonce,
-            master_signature: None,
             vault_address: None,
+        });
+        let submit_template = serde_json::to_value(&SubmitUpdateLeverageArgs {
+            confirmation: Some("confirm".to_string()),
+            payload,
+            signature: None,
         })
         .map_err(|e| format!("[byreal] submit template serialize: {e}"))?;
 
@@ -324,8 +541,6 @@ impl DynAomiTool for BuildUpdateLeverage {
                 "margin_mode": if args.is_cross { "cross" } else { "isolated" },
             },
             "nonce": nonce,
-            "requires_user_confirmation": true,
-            "confirmation_phrase": "confirm",
             "submit_args_template": submit_template.clone(),
         });
 
@@ -348,10 +563,10 @@ impl DynAomiTool for BuildUpdateLeverage {
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct SubmitUpdateLeverageArgs {
     pub confirmation: Option<String>,
-    pub action: Value,
-    pub nonce: u64,
-    pub master_signature: Option<String>,
-    pub vault_address: Option<String>,
+    /// OPAQUE pre-signed submission handle. Forward verbatim — see
+    /// [`SubmitOrderArgs::payload`] for the contract.
+    pub payload: String,
+    pub signature: Option<String>,
 }
 
 pub(crate) struct SubmitUpdateLeverage;
@@ -360,17 +575,22 @@ impl DynAomiTool for SubmitUpdateLeverage {
     type App = ByrealApp;
     type Args = SubmitUpdateLeverageArgs;
     const NAME: &'static str = "byreal_perps_submit_update_leverage";
-    const DESCRIPTION: &'static str = "Submit a Hyperliquid leverage update prepared by `byreal_perps_build_update_leverage` and signed via `commit_eip712`.";
+    const DESCRIPTION: &'static str = "Submit a Hyperliquid leverage update prepared by `byreal_perps_build_update_leverage` and signed via `commit_eip712`. Forward the opaque `payload` blob verbatim from the build preview.";
 
     fn run(_app: &Self::App, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         validate_confirmation(args.confirmation.as_deref())?;
         let sig_hex = args
-            .master_signature
+            .signature
             .as_deref()
-            .ok_or_else(|| "[byreal] master_signature missing".to_string())?;
+            .ok_or_else(|| "[byreal] signature missing".to_string())?;
         let sig = parse_signature(sig_hex)?;
-        let body =
-            build_exchange_body(args.action, args.nonce, &sig, args.vault_address.as_deref());
+        let decoded = resolve_payload(&args.payload)?;
+        let body = build_exchange_body(
+            decoded.action,
+            decoded.nonce,
+            &sig,
+            decoded.vault_address.as_deref(),
+        );
         ok(perps_client()?.post_exchange(body)?)
     }
 }
@@ -579,20 +799,104 @@ mod tests {
     }
 
     #[test]
+    fn submission_payload_round_trip() {
+        let encoded = SubmissionPayload::encode(
+            json!({"type": "order", "asset": 0}),
+            1779522523508_u64,
+            None,
+        )
+        .expect("encode");
+        // Hex output, no JSON braces leaking out — that's the whole point.
+        assert!(encoded.chars().all(|c| c.is_ascii_hexdigit()));
+        let back = SubmissionPayload::decode(&encoded).expect("decode");
+        assert_eq!(back.nonce, 1779522523508_u64);
+        assert_eq!(back.action["type"], "order");
+        assert!(back.vault_address.is_none());
+    }
+
+    #[test]
+    fn submission_payload_accepts_0x_prefix() {
+        let encoded = SubmissionPayload::encode(json!({"a": 1}), 42, None).unwrap();
+        let with_prefix = format!("0x{encoded}");
+        SubmissionPayload::decode(&with_prefix).expect("0x prefix tolerated");
+    }
+
+    #[test]
+    fn submission_payload_rejects_garbage() {
+        assert!(SubmissionPayload::decode("not-hex-data").is_err());
+        // Valid hex but no checksum, and not valid JSON anyway
+        assert!(SubmissionPayload::decode("ffeeddcc").is_err());
+    }
+
+    #[test]
+    fn submission_payload_detects_single_char_mutation() {
+        // Regression: the LLM occasionally drops or substitutes ONE hex char
+        // while transcribing a long opaque blob (e.g. `tif` → `if`). Without
+        // the checksum suffix that would slip through as a corrupted but
+        // still-valid-JSON action, and the exchange would reject with an
+        // opaque 422 / wrong-signer error. The checksum makes mutations
+        // surface as a clean local "payload was modified" error.
+        let encoded =
+            SubmissionPayload::encode(json!({"type": "order"}), 1779547086366_u64, None).unwrap();
+        // Drop a single hex char from the BODY (before the checksum suffix).
+        // Choose a position safely inside the body so the suffix length stays
+        // intact — the decode then computes the checksum on slightly-different
+        // bytes and rejects.
+        let mut mutated = encoded.clone();
+        mutated.remove(20);
+        // Pad back so the checksum suffix lands at the right position again,
+        // emulating "LLM kept length but flipped a char somewhere".
+        mutated.insert(20, '0');
+        let err = SubmissionPayload::decode(&mutated).unwrap_err();
+        assert!(
+            err.contains("checksum mismatch") || err.contains("not valid hex"),
+            "expected checksum/hex error, got: {err}"
+        );
+    }
+
+    #[test]
     fn submit_order_args_round_trip() {
+        let payload =
+            SubmissionPayload::encode(json!({"type": "order"}), 12345, None).expect("encode");
         let args = SubmitOrderArgs {
             confirmation: Some("confirm".to_string()),
-            action: json!({"type": "order"}),
-            nonce: 12345,
-            master_signature: Some("0xdead".to_string()),
-            vault_address: None,
+            payload: payload.clone(),
+            signature: Some("0xdead".to_string()),
         };
         let v = serde_json::to_value(&args).unwrap();
         assert_eq!(v["confirmation"], "confirm");
-        assert_eq!(v["nonce"], 12345);
-        assert_eq!(v["master_signature"], "0xdead");
+        assert_eq!(v["payload"], payload);
+        assert_eq!(v["signature"], "0xdead");
 
         let back: SubmitOrderArgs = serde_json::from_value(v).unwrap();
-        assert_eq!(back.nonce, 12345);
+        let decoded = SubmissionPayload::decode(&back.payload).unwrap();
+        assert_eq!(decoded.nonce, 12345);
+    }
+
+    #[test]
+    fn handle_round_trip_and_unknown_handle_errors_cleanly() {
+        let handle = store_payload(SubmissionPayload {
+            action: json!({"type": "order", "asset": 99}),
+            nonce: 1779600000000_u64,
+            vault_address: None,
+        });
+        assert!(handle.starts_with("hpl_"), "got {handle}");
+        // resolve_payload should follow the handle
+        let resolved = resolve_payload(&handle).expect("resolve handle");
+        assert_eq!(resolved.nonce, 1779600000000_u64);
+        // Whitespace + stray quoting that an LLM might add must not break it
+        let noisy = format!(" \"{handle}\"\n");
+        let resolved2 = resolve_payload(&noisy).expect("resolve noisy handle");
+        assert_eq!(resolved2.nonce, 1779600000000_u64);
+        // Unknown handle id surfaces a clear error, not a panic
+        let err = resolve_payload("hpl_deadbeefdeadbeef").unwrap_err();
+        assert!(err.contains("not found"), "got {err}");
+        // Malformed handle body errors with a clear message
+        let err2 = resolve_payload("hpl_NOTHEX").unwrap_err();
+        assert!(err2.contains("invalid payload handle"), "got {err2}");
+        // Raw hex fallback still works
+        let raw = SubmissionPayload::encode(json!({"type": "x"}), 1, None).unwrap();
+        let decoded_raw = resolve_payload(&raw).expect("hex fallback");
+        assert_eq!(decoded_raw.nonce, 1);
     }
 }

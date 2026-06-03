@@ -3,10 +3,10 @@ use hl_ranger::{
     Actions, BulkCancel, BulkOrder, CancelRequest, ClientLimit, ClientOrder, ClientOrderRequest,
     UpdateLeverage,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub(crate) const DEFAULT_API_URL: &str = "https://api.hyperliquid.xyz";
@@ -209,11 +209,22 @@ static LAST_NONCE_MS: AtomicU64 = AtomicU64::new(0);
 
 pub(crate) fn next_nonce_ms() -> u64 {
     let now = now_ms();
+    // `fetch_update` returns the *previous* value of the atomic — which on
+    // the very first invocation in a fresh process is the initializer (0),
+    // not the timestamp we just stored. That gave us a nonce=0 on the very
+    // first order-build per process restart, which Hyperliquid then rejects
+    // ("nonce too low 0 < <real-ts>"). Compute the new value explicitly and
+    // return *that*; the atomic still serves as the monotonic high-water
+    // mark for collision-free subsequent calls.
+    let mut new_nonce = now;
     LAST_NONCE_MS
         .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |prev| {
-            Some(std::cmp::max(now, prev.saturating_add(1)))
+            let candidate = std::cmp::max(now, prev.saturating_add(1));
+            new_nonce = candidate;
+            Some(candidate)
         })
-        .expect("fetch_update with always-Some closure is infallible")
+        .expect("fetch_update with always-Some closure is infallible");
+    new_nonce
 }
 
 // ---------------------------------------------------------------------------
@@ -341,7 +352,33 @@ pub(crate) struct ExchangeSignature {
 }
 
 pub(crate) fn parse_signature(hex_sig: &str) -> Result<ExchangeSignature, String> {
-    let trimmed = hex_sig.trim_start_matches("0x");
+    // Defensive normalization. The LLM occasionally passes the signature with
+    // surrounding whitespace, a stray quote, or with the `0x` prefix on each
+    // r/s/v chunk after concatenation. Strip all that before validating.
+    let cleaned: String = hex_sig
+        .trim()
+        .trim_matches('"')
+        .chars()
+        .filter(|c| !c.is_ascii_whitespace())
+        .collect();
+    let trimmed = cleaned
+        .strip_prefix("0x")
+        .or_else(|| cleaned.strip_prefix("0X"))
+        .unwrap_or(&cleaned);
+    // Reject any non-hex characters early with a clearer error than hex::decode's
+    // generic "Odd number of digits".
+    if !trimmed.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(format!(
+            "[byreal] signature has non-hex characters (len {})",
+            trimmed.len()
+        ));
+    }
+    if trimmed.len() != 130 {
+        return Err(format!(
+            "[byreal] signature must be 65 bytes / 130 hex chars (got {} chars)",
+            trimmed.len()
+        ));
+    }
     let bytes =
         hex::decode(trimmed).map_err(|e| format!("[byreal] signature is not valid hex: {e}"))?;
     if bytes.len() != 65 {
@@ -386,6 +423,25 @@ pub(crate) fn build_exchange_body(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn next_nonce_ms_returns_current_timestamp_on_first_call() {
+        // Regression: previously returned the AtomicU64 initializer (0)
+        // because fetch_update returns the *old* value.
+        let n = super::next_nonce_ms();
+        assert!(
+            n > 1_700_000_000_000,
+            "next_nonce_ms must be a recent ms timestamp, got {n}"
+        );
+    }
+
+    #[test]
+    fn next_nonce_ms_is_monotonic() {
+        let a = super::next_nonce_ms();
+        let b = super::next_nonce_ms();
+        let c = super::next_nonce_ms();
+        assert!(a < b && b < c, "nonces must increase: {a}, {b}, {c}");
+    }
 
     #[test]
     fn parse_signature_splits_65_byte_hex() {

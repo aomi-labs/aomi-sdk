@@ -5,7 +5,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use aomi_sdk::{AOMI_SDK_VERSION, DynFnHandle, DynManifest};
+use aomi_sdk::{DynFnHandle, DynManifest, AOMI_SDK_VERSION};
 
 // ── Known host-side namespace tools ──────────────────────────────────────────
 
@@ -17,7 +17,7 @@ fn namespace_tools() -> HashMap<&'static str, Vec<&'static str>> {
         vec![
             "brave_search",
             "commit_tx",
-            "commit_eip712",
+            "commit_message",
             "stage_tx",
             "simulate_batch",
             "view_state",
@@ -32,7 +32,7 @@ fn namespace_tools() -> HashMap<&'static str, Vec<&'static str>> {
     // `solana-core` is reserved for app-specific Solana wallet flows (e.g. byreal).
     // Most apps must NOT request this namespace — built-in EVM protocol skills
     // are not Solana skills.
-    m.insert("solana-core", vec!["sign_tx_solana"]);
+    m.insert("solana-core", vec!["svm_sign_tx"]);
 
     m.insert(
         "database",
@@ -145,7 +145,7 @@ fn validate_manifest(manifest: &DynManifest) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use aomi_sdk::{AOMI_SDK_VERSION, DynManifest, DynToolMetadata};
+    use aomi_sdk::{DynManifest, DynToolMetadata, AOMI_SDK_VERSION};
 
     #[test]
     fn validate_rejects_private_host_namespaces() {

@@ -39,7 +39,7 @@ apps/byreal/
 │   │   ├── mod.rs                   # shared helpers (ok, resolve_address,
 │   │   │                            #   validate_confirmation,
 │   │   │                            #   build_evm_signed_routes,
-│   │   │                            #   build_solana_signed_routes)
+│   │   │                            #   build_svm_sign_tx_routes)
 │   │   ├── perps.rs                 # 14 tools (8 read + 3 build/submit pairs)
 │   │   ├── spot.rs                  # 9 tools (7 read + 1 build/submit pair)
 │   │   └── lp.rs                    # 7 tools (5 read + 1 build/submit pair)
@@ -214,7 +214,7 @@ Bare minimum to declare spot/lp writes working end-to-end:
 2. [`BYREAL_CLI_FLOWS.md`](BYREAL_CLI_FLOWS.md) — the mermaid diagrams. Easier
    to absorb than reading 1500 lines of Rust.
 3. [`src/tool/mod.rs`](src/tool/mod.rs) — `build_evm_signed_routes` /
-   `build_solana_signed_routes`. Once you grok these, every write tool reads
+   `build_svm_sign_tx_routes`. Once you grok these, every write tool reads
    the same way.
 4. [`docs/sign-tx-solana-runtime.md`](../../docs/sign-tx-solana-runtime.md) — if
    you're picking up the runtime piece.
