@@ -12,7 +12,7 @@ This app is self-contained. Every read and write across all of byreal lives here
 
 | Namespace | Venue | Signing | Use case |
 |---|---|---|---|
-| `byreal_perps_*` | Hyperliquid L1 (EVM-flavored) | `commit_eip712` (master EVM wallet) | Perpetual futures |
+| `byreal_perps_*` | Hyperliquid L1 (EVM-flavored) | `evm_commit_message` (master EVM wallet) | Perpetual futures |
 | `byreal_spot_*`  | byreal Solana (CLMM + RFQ)    | `svm_sign_tx` (SVM wallet)       | Spot swaps + pool discovery |
 | `byreal_lp_*`    | byreal Solana (Copy Farming)  | `svm_sign_tx` (SVM wallet)       | LP analytics + reward claims |
 
@@ -25,7 +25,7 @@ The two trust models are independent. A single user can have a connected EVM wal
 `byreal_perps_get_account_state`, `byreal_perps_get_open_orders`, `byreal_perps_get_user_fills`,
 `byreal_perps_get_funding_history`, `byreal_perps_get_candles`.
 
-**Writes (build/submit pairs, signed via `commit_eip712`):**
+**Writes (build/submit pairs, signed via `evm_commit_message`):**
 `byreal_perps_build_order` / `byreal_perps_submit_order`,
 `byreal_perps_build_cancel` / `byreal_perps_submit_cancel`,
 `byreal_perps_build_update_leverage` / `byreal_perps_submit_update_leverage`.
@@ -51,7 +51,7 @@ incentives. v1 supports single-tx claims; for large batches, claim positions in 
 
 Each `build_*` tool returns a structured action preview AND a routed signing step:
 
-- **EVM (perps):** routes to `commit_eip712` with EIP-712 typed-data; signature comes back as
+- **EVM (perps):** routes to `evm_commit_message` with EIP-712 typed-data; signature comes back as
   `master_signature` and feeds the matching `byreal_perps_submit_*` continuation.
 - **Solana (spot, lp):** routes to `svm_sign_tx` with a base64 versioned tx; signed bytes come
   back as `signed_tx` and feed the matching `byreal_spot_submit_*` / `byreal_lp_submit_*` continuation.
@@ -137,7 +137,7 @@ dyn_aomi_app!(
     version = "0.1.0",
     preamble = PREAMBLE,
     tools = [
-        // perps (Hyperliquid via commit_eip712)
+        // perps (Hyperliquid via evm_commit_message)
         tool::perps::GetMeta,
         tool::perps::GetAllMids,
         tool::perps::GetL2Book,

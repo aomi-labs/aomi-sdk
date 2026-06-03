@@ -63,7 +63,7 @@ pub(crate) fn validate_confirmation(token: Option<&str>) -> Result<(), String> {
     }
 }
 
-/// Build a `commit_eip712` route plan: app emits the typed-data + a
+/// Build a `evm_commit_message` route plan: app emits the typed-data + a
 /// continuation, host wallet signs, runtime splices the signature into the
 /// `submit_*` tool args under `signature`.
 ///
@@ -82,7 +82,7 @@ pub(crate) fn build_evm_signed_routes<Submit: RouteTarget>(
     });
     ToolReturn::route(value)
         .next(|next| {
-            next.add::<host::CommitEip712>(json!({
+            next.add::<host::EvmCommitMessage>(json!({
                 "typed_data": typed_data,
                 "description": description,
                 "continuation": continuation,

@@ -1,5 +1,5 @@
 {
-  "user_story": "Comprehensive Limitless lifecycle from a real user's perspective: discover politics/macro markets, drill into liquidity, check portfolio, surface the group-vs-child slug distinction, then place a real limit order end-to-end. Validates that limitless_build_order resolves real-time market data (via the live API), constructs canonical EIP-712 typed data against the NegRisk CTF Exchange v3 domain on Base, routes the wallet signing step to host::commit_eip712, and that limitless_submit_order POSTs the signed envelope with HMAC headers to the live /orders endpoint.",
+  "user_story": "Comprehensive Limitless lifecycle from a real user's perspective: discover politics/macro markets, drill into liquidity, check portfolio, surface the group-vs-child slug distinction, then place a real limit order end-to-end. Validates that limitless_build_order resolves real-time market data (via the live API), constructs canonical EIP-712 typed data against the NegRisk CTF Exchange v3 domain on Base, routes the wallet signing step to host::evm_commit_message, and that limitless_submit_order POSTs the signed envelope with HMAC headers to the live /orders endpoint.",
   "wallet_seed": {
     "address": "0x000000000000000000000000000000000000dEaD",
     "chain_id": 8453

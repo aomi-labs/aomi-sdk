@@ -20,7 +20,7 @@ fn routed_tool_return_serializes_to_envelope() {
     let tool_return = ToolReturn::with_routes(
         json!({"status": "awaiting_wallet"}),
         [
-            RouteStep::on_return("commit_eip712", json!({"typed_data": {}}))
+            RouteStep::on_return("evm_commit_message", json!({"typed_data": {}}))
                 .bind_as("clob_l1_signature"),
             RouteStep::on_bound_event(
                 "submit_polymarket_order",
@@ -38,7 +38,7 @@ fn routed_tool_return_serializes_to_envelope() {
             "__aomi_tool_value": {"status": "awaiting_wallet"},
             "__aomi_tool_routes": [
                 {
-                    "tool": "commit_eip712",
+                    "tool": "evm_commit_message",
                     "args": {"typed_data": {}},
                     "trigger": {"type": "on_sync_return"},
                     "bind_as": "clob_l1_signature",
@@ -239,7 +239,7 @@ fn svm_lane_2_stage_simulate_route_plan_serializes() {
 fn route_builder_serializes_bound_artifact_plan() {
     let tool_return = ToolReturn::route(json!({"status": "awaiting_wallet"}))
         .next(|next| {
-            next.add::<host::CommitEip712>(json!({"typed_data": {}}))
+            next.add::<host::EvmCommitMessage>(json!({"typed_data": {}}))
                 .bind_as("clob_l1_signature")
                 .note("sign this first");
         })
@@ -255,7 +255,7 @@ fn route_builder_serializes_bound_artifact_plan() {
             "__aomi_tool_value": {"status": "awaiting_wallet"},
             "__aomi_tool_routes": [
                 {
-                    "tool": "commit_eip712",
+                    "tool": "evm_commit_message",
                     "args": {"typed_data": {}},
                     "trigger": {"type": "on_sync_return"},
                     "bind_as": "clob_l1_signature",
@@ -409,7 +409,7 @@ fn route_builder_rejects_invalid_aliases() {
 fn route_builder_rejects_duplicate_aliases() {
     let err = ToolReturn::route(json!({"status": "ok"}))
         .next(|next| {
-            next.add::<host::CommitEip712>(json!({"typed_data": {}}))
+            next.add::<host::EvmCommitMessage>(json!({"typed_data": {}}))
                 .bind_as("dup");
             next.add::<SyncTool>(json!({"x": 1})).bind_as("dup");
         })
@@ -450,10 +450,10 @@ fn route_builder_rejects_invalid_enforced_producers() {
 fn route_builder_allows_repeated_tool_with_distinct_binds() {
     let tool_return = ToolReturn::route(json!({"status": "awaiting_wallet"}))
         .next(|next| {
-            next.add::<host::CommitEip712>(json!({"typed_data": {"approval": true}}))
+            next.add::<host::EvmCommitMessage>(json!({"typed_data": {"approval": true}}))
                 .bind_as("approval")
                 .note("Sign the Permit2 approval first.");
-            next.add::<host::CommitEip712>(json!({"typed_data": {"trade": true}}))
+            next.add::<host::EvmCommitMessage>(json!({"typed_data": {"trade": true}}))
                 .bind_as("trade")
                 .note("Then sign the gasless trade.");
         })
@@ -462,9 +462,9 @@ fn route_builder_allows_repeated_tool_with_distinct_binds() {
         .build();
 
     assert_eq!(tool_return.routes.len(), 3);
-    assert_eq!(tool_return.routes[0].tool, "commit_eip712");
+    assert_eq!(tool_return.routes[0].tool, "evm_commit_message");
     assert_eq!(tool_return.routes[0].bind_as.as_deref(), Some("approval"));
-    assert_eq!(tool_return.routes[1].tool, "commit_eip712");
+    assert_eq!(tool_return.routes[1].tool, "evm_commit_message");
     assert_eq!(tool_return.routes[1].bind_as.as_deref(), Some("trade"));
     assert_all_bound(&tool_return, &["approval", "trade"]);
 }
@@ -473,9 +473,9 @@ fn route_builder_allows_repeated_tool_with_distinct_binds() {
 fn route_builder_awaits_called_twice_upgrades_to_multi_alias() {
     let tool_return = ToolReturn::route(json!({"status": "awaiting_wallet"}))
         .next(|next| {
-            next.add::<host::CommitEip712>(json!({"typed_data": {"a": true}}))
+            next.add::<host::EvmCommitMessage>(json!({"typed_data": {"a": true}}))
                 .bind_as("approval");
-            next.add::<host::CommitEip712>(json!({"typed_data": {"t": true}}))
+            next.add::<host::EvmCommitMessage>(json!({"typed_data": {"t": true}}))
                 .bind_as("trade");
         })
         .after::<SubmitOrder>(json!({"chain_id": 1}))
@@ -490,7 +490,7 @@ fn route_builder_awaits_called_twice_upgrades_to_multi_alias() {
 fn route_builder_single_awaits_still_uses_on_bound_event() {
     let tool_return = ToolReturn::route(json!({"status": "ok"}))
         .next(|next| {
-            next.add::<host::CommitEip712>(json!({"typed_data": {}}))
+            next.add::<host::EvmCommitMessage>(json!({"typed_data": {}}))
                 .bind_as("signature");
         })
         .after::<SubmitOrder>(json!({}))
@@ -512,7 +512,7 @@ fn route_builder_rejects_invalid_awaits_all_aliases() {
         assert_err_contains(
             ToolReturn::route(json!({"status": "ok"}))
                 .next(|next| {
-                    next.add::<host::CommitEip712>(json!({"typed_data": {}}))
+                    next.add::<host::EvmCommitMessage>(json!({"typed_data": {}}))
                         .bind_as("approval");
                 })
                 .after::<SubmitOrder>(json!({}))

@@ -152,7 +152,7 @@ impl DynAomiTool for BuildOrder {
     type App = ByrealApp;
     type Args = BuildOrderArgs;
     const NAME: &'static str = "byreal_perps_build_order";
-    const DESCRIPTION: &'static str = "Build and immediately execute a Hyperliquid perpetual order. Returns a preview and routes directly to `commit_eip712` for the host wallet to sign. The matched `byreal_perps_submit_order` continuation runs after the signature comes back.";
+    const DESCRIPTION: &'static str = "Build and immediately execute a Hyperliquid perpetual order. Returns a preview and routes directly to `evm_commit_message` for the host wallet to sign. The matched `byreal_perps_submit_order` continuation runs after the signature comes back.";
 
     fn run_with_routes(
         _app: &Self::App,
@@ -356,7 +356,7 @@ pub(crate) struct SubmitOrderArgs {
     /// or regenerate. A raw hex+checksum blob is also accepted for backward
     /// compatibility, but the handle is what `build_*` emits today.
     pub payload: String,
-    /// EIP-712 signature (65-byte hex). Filled in by the host wallet via `commit_eip712`.
+    /// EIP-712 signature (65-byte hex). Filled in by the host wallet via `evm_commit_message`.
     pub signature: Option<String>,
 }
 
@@ -366,12 +366,12 @@ impl DynAomiTool for SubmitOrder {
     type App = ByrealApp;
     type Args = SubmitOrderArgs;
     const NAME: &'static str = "byreal_perps_submit_order";
-    const DESCRIPTION: &'static str = "Submit a Hyperliquid order that was previously prepared by `byreal_perps_build_order` and signed via `commit_eip712`. Pass the opaque `payload` blob verbatim from the build preview; the `signature` field is filled in by the runtime — never invent one.";
+    const DESCRIPTION: &'static str = "Submit a Hyperliquid order that was previously prepared by `byreal_perps_build_order` and signed via `evm_commit_message`. Pass the opaque `payload` blob verbatim from the build preview; the `signature` field is filled in by the runtime — never invent one.";
 
     fn run(_app: &Self::App, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         validate_confirmation(args.confirmation.as_deref())?;
         let sig_hex = args.signature.as_deref().ok_or_else(|| {
-            "[byreal] signature missing — wait for commit_eip712 callback".to_string()
+            "[byreal] signature missing — wait for evm_commit_message callback".to_string()
         })?;
         let sig = parse_signature(sig_hex)?;
         let decoded = resolve_payload(&args.payload)?;
@@ -403,7 +403,7 @@ impl DynAomiTool for BuildCancel {
     type App = ByrealApp;
     type Args = BuildCancelArgs;
     const NAME: &'static str = "byreal_perps_build_cancel";
-    const DESCRIPTION: &'static str = "Build (do not submit) a cancel for a single resting order. Returns a preview and a routed `commit_eip712` step the host wallet signs.";
+    const DESCRIPTION: &'static str = "Build (do not submit) a cancel for a single resting order. Returns a preview and a routed `evm_commit_message` step the host wallet signs.";
 
     fn run_with_routes(
         _app: &Self::App,
@@ -462,7 +462,7 @@ impl DynAomiTool for SubmitCancel {
     type App = ByrealApp;
     type Args = SubmitCancelArgs;
     const NAME: &'static str = "byreal_perps_submit_cancel";
-    const DESCRIPTION: &'static str = "Submit a Hyperliquid cancel that was prepared by `byreal_perps_build_cancel` and signed via `commit_eip712`. Forward the opaque `payload` blob verbatim from the build preview.";
+    const DESCRIPTION: &'static str = "Submit a Hyperliquid cancel that was prepared by `byreal_perps_build_cancel` and signed via `evm_commit_message`. Forward the opaque `payload` blob verbatim from the build preview.";
 
     fn run(_app: &Self::App, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         validate_confirmation(args.confirmation.as_deref())?;
@@ -575,7 +575,7 @@ impl DynAomiTool for SubmitUpdateLeverage {
     type App = ByrealApp;
     type Args = SubmitUpdateLeverageArgs;
     const NAME: &'static str = "byreal_perps_submit_update_leverage";
-    const DESCRIPTION: &'static str = "Submit a Hyperliquid leverage update prepared by `byreal_perps_build_update_leverage` and signed via `commit_eip712`. Forward the opaque `payload` blob verbatim from the build preview.";
+    const DESCRIPTION: &'static str = "Submit a Hyperliquid leverage update prepared by `byreal_perps_build_update_leverage` and signed via `evm_commit_message`. Forward the opaque `payload` blob verbatim from the build preview.";
 
     fn run(_app: &Self::App, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         validate_confirmation(args.confirmation.as_deref())?;

@@ -54,7 +54,7 @@ pub mod host {
     host_target!(BraveSearch, "brave_search");
     host_target!(CommitTx, "commit_tx");
     host_target!(CommitTxs, "commit_txs");
-    host_target!(CommitEip712, "commit_eip712");
+    host_target!(EvmCommitMessage, "evm_commit_message");
     host_target!(StageTx, "stage_tx");
     host_target!(SimulateBatch, "simulate_batch");
     host_target!(ViewState, "view_state");
@@ -71,7 +71,7 @@ pub mod host {
     // `svm-ix-sign`, `svm-tx-broadcast`, `svm-tx-sign`,
     // `svm-sign-data`, `svm-bundle` on the host side per ADR 0004
     // § Decision B). App `build_*` tools emit route plans that drive
-    // these as continuations — mirroring how EVM apps use `CommitEip712`
+    // these as continuations — mirroring how EVM apps use `EvmCommitMessage`
     // for the typed-data signing step.
     //
     // Three lanes from ADR 0003 § Decision A:
@@ -468,7 +468,7 @@ impl<'a> NextStepBuilder<'a> {
     /// `after(...).awaits_all([..])` consume it.
     ///
     /// Aliases must be unique within a route plan, but the *tool name* does not
-    /// have to be — a single plan may have multiple `commit_eip712` / `stage_tx`
+    /// have to be — a single plan may have multiple `evm_commit_message` / `stage_tx`
     /// / `svm_sign_tx` steps each binding to a distinct alias. The runtime
     /// consumes aliases in FIFO order per tool name, so list the steps in the
     /// order you expect the LLM/user to drive them (use `.note(...)` to

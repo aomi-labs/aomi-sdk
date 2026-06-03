@@ -93,7 +93,7 @@ const STUB_REGISTRY: &[(&str, &str, &str)] = &[
     ),
     (
         "evm-core",
-        "commit_eip712",
+        "evm_commit_message",
         "(stub) Request an EIP-712 typed-data signature.",
     ),
     (

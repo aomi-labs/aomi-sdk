@@ -13,7 +13,7 @@ If you're adding a venue and don't recognise its auth from the list in [auth-pra
 | OAuth 2.0 / JWT refresh | IBKR Web API, Coinbase Prime, Robinhood, GCP SA JWT | ❌ | `TokenStore` cache in `auth.rs` |
 | WebSocket `listenKey` | Binance UDS, Bybit private WS, Kraken private feed | ❌ | Background task next to `client.rs`, not in `auth.rs` |
 | EIP-712 monotonic nonces | dYdX v4, Hyperliquid signed actions, some 0x flows | 🟡 | `auth::next_nonce(signer)` helper + persistence |
-| SIWE / wallet-auth sessions | OpenSea, Blur, Lens, Farcaster (gated) | ❌ | `TokenStore` + EIP-4361 bootstrap via `host::CommitEip712` |
+| SIWE / wallet-auth sessions | OpenSea, Blur, Lens, Farcaster (gated) | ❌ | `TokenStore` + EIP-4361 bootstrap via `host::EvmCommitMessage` |
 | FIX sessions | Institutional prime brokers, some CEX FIX gateways | ❌ | Separate engine crate, not REST at all |
 
 ---
@@ -214,7 +214,7 @@ sequenceDiagram
     participant Auth as auth.rs
     participant Counter as static<br/>HashMap<Addr, AtomicU64>
     participant Bootstrap as GET /accounts/{signer}
-    participant Host as host::CommitEip712
+    participant Host as host::EvmCommitMessage
     participant API as Venue REST
 
     par Tool A path
@@ -286,7 +286,7 @@ fn fetch_starting_nonce(signer: &str) -> Result<u64, String> {
 
 ### Verdict
 
-Extends the pattern with one helper. The shim still owns the EIP-712 prehash (handed off to `host::CommitEip712` via the route); the tool layer calls `auth::next_nonce(signer)?` once before constructing the order. **No venue currently in `apps/` needs this** — the existing EIP-712 venues use random salts or don't have a nonce field — but dYdX v4 or Hyperliquid trading would.
+Extends the pattern with one helper. The shim still owns the EIP-712 prehash (handed off to `host::EvmCommitMessage` via the route); the tool layer calls `auth::next_nonce(signer)?` once before constructing the order. **No venue currently in `apps/` needs this** — the existing EIP-712 venues use random salts or don't have a nonce field — but dYdX v4 or Hyperliquid trading would.
 
 ---
 
@@ -309,7 +309,7 @@ sequenceDiagram
     participant Auth as auth.rs<br/>(SessionStore)
     participant Cache as static OnceCell<Mutex>
     participant ChallengeApi as GET /auth/challenge
-    participant Host as host::CommitEip712<br/>(or sign_message)
+    participant Host as host::EvmCommitMessage<br/>(or sign_message)
     participant LoginApi as POST /auth/login
     participant Client as client.rs (generated)
     participant API as Venue REST
@@ -337,7 +337,7 @@ sequenceDiagram
 
 ### Extension shape
 
-Same `TokenStore` skeleton as case 1, plus a `bootstrap()` step that drives the host's `CommitEip712`. The bootstrap is the only new wrinkle:
+Same `TokenStore` skeleton as case 1, plus a `bootstrap()` step that drives the host's `EvmCommitMessage`. The bootstrap is the only new wrinkle:
 
 ```rust
 // apps/<platform>/src/auth.rs
@@ -370,7 +370,7 @@ fn bootstrap(wallet: &str) -> Result<CachedSession, String> {
 
 ### Verdict
 
-Same `TokenStore` infrastructure as case 1, but the cold-start path routes through `host::CommitEip712`. Implementable but more elaborate than OAuth — the bootstrap can't happen synchronously inside the shim function because wallet signing is async / interactive. The cleanest version uses a routed `ToolReturn` for the first tool call per session.
+Same `TokenStore` infrastructure as case 1, but the cold-start path routes through `host::EvmCommitMessage`. Implementable but more elaborate than OAuth — the bootstrap can't happen synchronously inside the shim function because wallet signing is async / interactive. The cleanest version uses a routed `ToolReturn` for the first tool call per session.
 
 ---
 

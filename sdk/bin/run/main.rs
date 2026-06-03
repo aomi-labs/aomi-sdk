@@ -15,7 +15,7 @@
 //!
 //! # What is intentionally NOT supported in v1
 //!
-//! - Routed `ToolReturn` envelopes (`commit_eip712`, `stage_tx`,
+//! - Routed `ToolReturn` envelopes (`evm_commit_message`, `stage_tx`,
 //!   `svm_sign_tx`, …) — host-side wallet UX is missing, so the agent
 //!   receives the envelope as opaque JSON and routes never fire.
 //! - Skill activation.

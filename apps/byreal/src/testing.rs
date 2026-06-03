@@ -1,7 +1,7 @@
 //! Live smoke-test helpers. NOT used at runtime — all paths gated behind
 //! integration tests that require an explicit private key in the environment.
 //!
-//! The helpers in this module bypass the `commit_eip712` host route and sign
+//! The helpers in this module bypass the `evm_commit_message` host route and sign
 //! the action locally, so we can verify the full build → sign → submit
 //! round-trip against the real `https://api.hyperliquid.xyz/exchange` endpoint
 //! without needing a host wallet runtime.
