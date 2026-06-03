@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+pub mod fixtures;
+
 use aomi_sdk::DynFnHandle;
 use std::path::PathBuf;
 use std::process::Command;

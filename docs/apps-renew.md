@@ -109,7 +109,7 @@ Module ships with 5 unit tests including the RFC 4231 HMAC-SHA256 vector. **All 
 
 ### Local rebuild + bundle (2026-05-11)
 
-After the SDK 0.1.15 → 0.1.16 bump and the migrations above, ran `cargo xtask build-aomi --release --target aarch64-apple-darwin` to produce a fresh plugin set:
+After the SDK 0.1.15 → 0.1.16 bump and the migrations above, ran `cargo xtask compile --release --target aarch64-apple-darwin` (formerly `cargo xtask build-aomi …`) to produce a fresh plugin set:
 
 - **30 / 31 plugins built clean** — failure: `para-consumer` (long-tail uncurated, hand-written, expected unstable). `admin` and `l2beat` deliberately skipped (`metadata.aomi.skip = true`).
 - Generated `plugins/manifest.json` mirroring the CI workflow's Python script: `version: 0.1.18`, `app_release_tag: apps-v0.1.18`, `sdk_version: 0.1.16`, `target: aarch64-apple-darwin`.

@@ -137,7 +137,7 @@ fn appdata_hash_for_signing(_quote: &OrderParameters) -> String {
     STUB_APPDATA_HASH.to_string()
 }
 
-/// What the host wallet's `commit_eip712` step needs to render and sign.
+/// What the host wallet's `evm_commit_message` step needs to render and sign.
 /// Matches CoW's GPv2Order EIP-712 schema exactly.
 fn build_cow_order_typed_data(chain: &str, prepared: &PreparedCowOrder) -> Result<Value, String> {
     let chain_id = chain_id_for_cow(chain)?;
@@ -483,7 +483,7 @@ impl DynAomiTool for GetCowSwapQuote {
 
         Ok(ToolReturn::route(preview)
             .next(|next| {
-                next.add::<host::CommitEip712>(wallet_request)
+                next.add::<host::EvmCommitMessage>(wallet_request)
                     .bind_as("signature")
                     .note(
                         "Sign the CoW order EIP-712 payload byte-for-byte. \
@@ -505,7 +505,7 @@ impl DynAomiTool for GetCowSwapQuote {
 pub(crate) struct PlaceCowOrder;
 
 /// Continuation step invoked by `get_cow_swap_quote`'s routed flow. The
-/// `signature` field is bound by the host wallet via `host::CommitEip712`;
+/// `signature` field is bound by the host wallet via `host::EvmCommitMessage`;
 /// the rest is pre-filled from the quote so the LLM never re-types order
 /// fields between sign and submit. Calling this tool directly without a
 /// `signature` returns an error — it's not a standalone primitive.
@@ -516,7 +516,7 @@ pub(crate) struct PlaceCowOrderArgs {
     /// Canonical order fields the wallet signed. Echoed back unchanged from
     /// the quote — mutating any field here invalidates the signature.
     pub(crate) order: PreparedCowOrder,
-    /// Wallet signature hex (`0x…`). Filled by the routed `commit_eip712`
+    /// Wallet signature hex (`0x…`). Filled by the routed `evm_commit_message`
     /// step; must be set when this tool runs.
     pub(crate) signature: Option<String>,
     /// `"eip712"` (default), `"ethsign"`, `"presign"`, or `"eip1271"`.
@@ -532,7 +532,7 @@ impl DynAomiTool for PlaceCowOrder {
     fn run(_app: &CowApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let signature = args.signature.ok_or_else(|| {
             "[cow] place_cow_order requires a signature; this tool is invoked automatically \
-             after get_cow_swap_quote's commit_eip712 step — don't call it manually"
+             after get_cow_swap_quote's evm_commit_message step — don't call it manually"
                 .to_string()
         })?;
         let signing_scheme = args

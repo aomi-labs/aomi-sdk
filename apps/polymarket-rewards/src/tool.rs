@@ -25,7 +25,7 @@ where
 
     Ok(ToolReturn::route(result)
         .next(|next| {
-            next.add::<host::CommitEip712>(wallet_request)
+            next.add::<host::EvmCommitMessage>(wallet_request)
                 .bind_as(callback_field);
         })
         .after::<T>(follow_up_args_template)
@@ -176,7 +176,7 @@ impl DynAomiTool for EnsureRewardClobCredentials {
     type App = PolymarketRewardsApp;
     type Args = EnsureRewardClobCredentialsArgs;
     const NAME: &'static str = "ensure_reward_clob_credentials";
-    const DESCRIPTION: &'static str = "Create or derive Polymarket CLOB credentials for the connected wallet. Preferred behavior: if no `clob_l1_signature` is provided, return the exact `commit_eip712` action needed to sign ClobAuth. After the wallet callback, call this tool again with `clob_auth` and `clob_l1_signature` to receive `api_key`, `api_secret`, and `passphrase`.";
+    const DESCRIPTION: &'static str = "Create or derive Polymarket CLOB credentials for the connected wallet. Preferred behavior: if no `clob_l1_signature` is provided, return the exact `evm_commit_message` action needed to sign ClobAuth. After the wallet callback, call this tool again with `clob_auth` and `clob_l1_signature` to receive `api_key`, `api_secret`, and `passphrase`.";
 
     fn run_with_routes(
         _app: &PolymarketRewardsApp,
@@ -213,7 +213,7 @@ impl DynAomiTool for EnsureRewardClobCredentials {
                 clob_auth: Some(clob_auth.clone()),
                 clob_l1_signature: None,
             })?,
-            "next_step_hint": "The host should call commit_eip712 with the exact typed_data below, then call ensure_reward_clob_credentials again with clob_auth and clob_l1_signature from the wallet callback.",
+            "next_step_hint": "The host should call evm_commit_message with the exact typed_data below, then call ensure_reward_clob_credentials again with clob_auth and clob_l1_signature from the wallet callback.",
         });
         let wallet_request = to_json_value(&WalletEip712Request {
             typed_data: build_reward_clob_auth_typed_data(&clob_auth),
@@ -808,7 +808,7 @@ impl DynAomiTool for BuildQuotePlan {
                 QuoteExecutionMode::FourLeg => (
                     vec!["yes_bid", "yes_ask", "no_bid", "no_ask"],
                     args.order_size_usd * 4.0,
-                    "If needed, call ensure_reward_clob_credentials first so the host can prompt for the ClobAuth signature and derive CLOB credentials automatically. If the user already confirmed this quote preview, do not stop for another approval during credential setup or order signing. Sign all four quote-leg orders via the host wallet (`commit_eip712`), call execute_quote_plan with simulate=true to review the exact signed orders, and only then wait for the user's reconfirmation before any live submission.".to_string(),
+                    "If needed, call ensure_reward_clob_credentials first so the host can prompt for the ClobAuth signature and derive CLOB credentials automatically. If the user already confirmed this quote preview, do not stop for another approval during credential setup or order signing. Sign all four quote-leg orders via the host wallet (`evm_commit_message`), call execute_quote_plan with simulate=true to review the exact signed orders, and only then wait for the user's reconfirmation before any live submission.".to_string(),
                     "Sign each quote-leg limit order for Polymarket reward deployment".to_string(),
                 ),
                 QuoteExecutionMode::TwoLegBidOnly => (
@@ -1334,6 +1334,7 @@ mod tests {
                 tool_name: "submit_reward_quote".to_string(),
                 call_id: "call".to_string(),
                 state_attributes: Default::default(),
+                secrets: Default::default(),
             },
         )
         .expect("submit_reward_quote should stage clob auth signing");

@@ -131,7 +131,7 @@ pub struct DynManifest {
     pub preamble: String,
     /// Tools provided by this plugin
     pub tools: Vec<DynToolMetadata>,
-    /// Host-side namespaces the plugin needs (e.g. `["database"]`, `["forge"]`).
+    /// Host-side namespaces the plugin needs (e.g. `["svm-reads"]`).
     /// The host injects these namespaces' tools alongside the plugin's own tools.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub namespaces: Option<Vec<String>>,
@@ -395,13 +395,23 @@ pub trait DynAomiApp: Clone + Default + Send + Sync + 'static {
         sink: DynAsyncSink,
     ) -> DynToolDispatch;
 
-    /// Host-side namespaces this plugin requires (e.g. `["evm-core"]`, `["database"]`,
-    /// `["solana-core"]`).
+    /// Host-side namespaces this plugin requires. Canonical names only:
+    ///
+    /// - EVM: `"evm-core"`
+    /// - SVM meta: `"svm-core"` (expands to the full SVM catalogue)
+    /// - SVM subs: `"svm-reads"`, `"svm-ix-broadcast"`,
+    ///   `"svm-ix-sign"`, `"svm-tx-broadcast"`, `"svm-tx-sign"`,
+    ///   `"svm-sign-data"`, `"svm-bundle"`
+    /// - Other: `"database"` (host-private)
+    ///
+    /// Legacy aliases (`"solana-core"`, `"sol"`, `"solana"`, `"svm"`,
+    /// `"common"`) were removed in host iter-39 — the loader logs
+    /// `"unknown namespace requested by plugin, skipping"` and registers
+    /// nothing for them. Update existing plugins to canonical names.
     ///
     /// Default is `["evm-core"]`, which most apps want. Override to:
-    /// - Add other namespaces alongside (e.g. `["evm-core", "solana-core"]` for an
-    ///   app that needs both EVM and Solana wallet flows — note that `"solana-core"`
-    ///   is reserved for app-specific Solana integrations).
+    /// - Add SVM surfaces alongside (e.g. `["evm-core", "svm-reads",
+    ///   "svm-tx-sign"]` for byreal's cross-chain pattern).
     /// - Replace entirely (e.g. `["database"]` for a namespace-only admin app).
     /// - Return `Some(vec![])` to opt out explicitly.
     fn namespaces(&self) -> Option<Vec<String>> {
@@ -541,243 +551,4 @@ pub fn parse_dyn_args<T: DeserializeOwned>(args_json: &str) -> Result<T, String>
 /// call this directly.
 pub fn parse_dyn_ctx(ctx_json: &str) -> Result<DynToolCallCtx, String> {
     serde_json::from_str(ctx_json).map_err(|e| format!("invalid ctx_json: {e}"))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde::Deserialize;
-    use serde_json::json;
-
-    #[derive(Debug, Clone, Deserialize, JsonSchema)]
-    struct Args {
-        name: String,
-    }
-
-    #[derive(Clone, Default)]
-    struct App;
-
-    impl DynAomiApp for App {
-        fn name(&self) -> &'static str {
-            "test"
-        }
-
-        fn version(&self) -> &'static str {
-            "0.0.0"
-        }
-
-        fn preamble(&self) -> &'static str {
-            "test preamble"
-        }
-
-        fn tools(&self) -> Vec<DynToolMetadata> {
-            vec![Tool::descriptor(self)]
-        }
-
-        fn start_tool(
-            &self,
-            _name: &str,
-            _args_json: &str,
-            _ctx_json: &str,
-            _sink: DynAsyncSink,
-        ) -> DynToolDispatch {
-            DynToolDispatch::Ready(DynToolResult::err("not needed in this test"))
-        }
-    }
-
-    struct Tool;
-
-    impl DynAomiTool for Tool {
-        type App = App;
-        type Args = Args;
-        const NAME: &'static str = "echo";
-        const DESCRIPTION: &'static str = "echo input";
-
-        fn run(_app: &Self::App, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-            Ok(serde_json::json!({"name": args.name}))
-        }
-    }
-
-    #[test]
-    fn test_descriptor_schema_generation() {
-        let descriptor = Tool::descriptor(&App);
-        assert_eq!(descriptor.name, "echo");
-        assert_eq!(descriptor.app, "test");
-        assert!(!descriptor.supports_async);
-        assert_eq!(
-            descriptor
-                .parameters_schema
-                .get("type")
-                .and_then(Value::as_str),
-            Some("object")
-        );
-    }
-
-    #[test]
-    fn test_exec_envelopes_roundtrip() {
-        let start = DynToolStart::AsyncQueued { execution_id: 42 };
-        let start_json = serde_json::to_string(&start).unwrap();
-        let parsed_start: DynToolStart = serde_json::from_str(&start_json).unwrap();
-        assert!(matches!(
-            parsed_start,
-            DynToolStart::AsyncQueued { execution_id: 42 }
-        ));
-
-        let poll = AsyncExecPool::Update {
-            value: serde_json::json!({"step": 1}),
-            has_more: false,
-        };
-        let poll_json = serde_json::to_string(&poll).unwrap();
-        let parsed_poll: AsyncExecPool = serde_json::from_str(&poll_json).unwrap();
-        assert!(matches!(
-            parsed_poll,
-            AsyncExecPool::Update {
-                has_more: false,
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn test_run_with_routes_wraps_legacy_run() {
-        let result = Tool::run_with_routes(
-            &App,
-            Args {
-                name: "cecilia".to_string(),
-            },
-            DynToolCallCtx {
-                session_id: "session".to_string(),
-                tool_name: "echo".to_string(),
-                call_id: "call".to_string(),
-                state_attributes: Default::default(),
-                secrets: Default::default(),
-            },
-        )
-        .unwrap();
-
-        assert_eq!(result.value, json!({"name": "cecilia"}));
-        assert!(result.routes.is_empty());
-    }
-
-    #[test]
-    fn test_async_sink_pushes_updates() {
-        let queue = Arc::new(AsyncExecQueue::default());
-        let sink = DynAsyncSink::__from_queue(queue.clone());
-
-        sink.emit(serde_json::json!({"n": 1})).unwrap();
-        sink.complete(serde_json::json!({"n": 2})).unwrap();
-
-        assert!(matches!(
-            queue.poll(),
-            AsyncExecPool::Update { has_more: true, .. }
-        ));
-        assert!(matches!(
-            queue.poll(),
-            AsyncExecPool::Update {
-                has_more: false,
-                ..
-            }
-        ));
-    }
-
-    #[test]
-    fn test_async_sink_complete_accepts_routed_tool_returns() {
-        let queue = Arc::new(AsyncExecQueue::default());
-        let sink = DynAsyncSink::__from_queue(queue.clone());
-
-        // Terminal complete() accepts a routed envelope — the wire shape is
-        // the SDK's serialized envelope, identical to what a sync tool's
-        // run_with_routes would produce.
-        sink.complete(crate::route::ToolReturn::with_route(
-            json!({"status": "awaiting_wallet"}),
-            crate::route::RouteStep::on_return("submit_polymarket_order", json!({"market": "btc"})),
-        ))
-        .expect("terminal complete should accept routed ToolReturn");
-
-        match queue.poll() {
-            AsyncExecPool::Update { value, has_more } => {
-                assert!(!has_more, "complete pushes terminal update");
-                let envelope = value.as_object().expect("envelope is a JSON object");
-                assert_eq!(
-                    envelope
-                        .get(crate::route::TOOL_RETURN_MARKER)
-                        .and_then(Value::as_bool),
-                    Some(true),
-                    "envelope marker present in queued value"
-                );
-                assert!(envelope.get(crate::route::TOOL_RETURN_ROUTES_KEY).is_some());
-            }
-            other => panic!("expected Update, got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn test_async_sink_emit_rejects_routed_tool_returns() {
-        let queue = Arc::new(AsyncExecQueue::default());
-        let sink = DynAsyncSink::__from_queue(queue);
-
-        // Intermediate emit() still rejects routed envelopes — there's no
-        // terminal anchor for routes mid-stream.
-        let err = sink
-            .emit(crate::route::ToolReturn::with_route(
-                json!({"progress": 0.5}),
-                crate::route::RouteStep::on_return(
-                    "submit_polymarket_order",
-                    json!({"market": "btc"}),
-                ),
-            ))
-            .expect_err("intermediate emits should reject routed envelopes");
-        assert!(
-            err.contains("intermediate async updates do not support routed ToolReturn"),
-            "error message should explain the emit-vs-complete distinction; got: {err}"
-        );
-    }
-
-    #[test]
-    fn test_manifest_defaults_to_evm_core_namespace() {
-        let manifest = App.manifest();
-        assert_eq!(manifest.sdk_version, crate::AOMI_SDK_VERSION);
-        assert_eq!(manifest.namespaces, Some(vec!["evm-core".to_string()]));
-    }
-
-    #[test]
-    fn test_manifest_can_opt_out_of_host_namespaces() {
-        #[derive(Clone, Default)]
-        struct NoHostNamespacesApp;
-
-        impl DynAomiApp for NoHostNamespacesApp {
-            fn name(&self) -> &'static str {
-                "no-host-namespaces"
-            }
-
-            fn version(&self) -> &'static str {
-                "0.0.0"
-            }
-
-            fn preamble(&self) -> &'static str {
-                "test preamble"
-            }
-
-            fn tools(&self) -> Vec<DynToolMetadata> {
-                vec![]
-            }
-
-            fn start_tool(
-                &self,
-                _name: &str,
-                _args_json: &str,
-                _ctx_json: &str,
-                _sink: DynAsyncSink,
-            ) -> DynToolDispatch {
-                DynToolDispatch::Ready(DynToolResult::err("not needed in this test"))
-            }
-
-            fn namespaces(&self) -> Option<Vec<String>> {
-                Some(vec![])
-            }
-        }
-
-        let manifest = NoHostNamespacesApp.manifest();
-        assert_eq!(manifest.namespaces, Some(vec![]));
-    }
 }

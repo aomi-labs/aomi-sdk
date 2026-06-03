@@ -95,7 +95,7 @@ Key points:
 
 ## How this maps to our aomi `byreal` app — perps
 
-Our app collapses Flow 2 into routed `build_*` / `submit_*` pairs and replaces the in-process ECDSA step with a hop through `commit_eip712` to the host wallet — same architecture, signer extracted into a separate trust domain. We deliberately skipped Flow 1 entirely (no agent approval), so today the host wallet signs every trade as if it were the master.
+Our app collapses Flow 2 into routed `build_*` / `submit_*` pairs and replaces the in-process ECDSA step with a hop through `evm_commit_message` to the host wallet — same architecture, signer extracted into a separate trust domain. We deliberately skipped Flow 1 entirely (no agent approval), so today the host wallet signs every trade as if it were the master.
 
 ```mermaid
 sequenceDiagram
@@ -111,9 +111,9 @@ sequenceDiagram
     App->>App: build Actions::Order via hl_ranger
     App->>App: nonce, connection_id, typed_data
     App-->>LLM: ToolReturn preview plus route
-    Note right of App: route adds host CommitEip712 then awaits master_signature
+    Note right of App: route adds host EvmCommitMessage then awaits master_signature
 
-    LLM->>Host: commit_eip712 typed_data
+    LLM->>Host: evm_commit_message typed_data
     Host->>Host: user approves and wallet signs
     Host-->>LLM: signature
 
@@ -144,9 +144,9 @@ sequenceDiagram
     Byreal-->>App: routerType, transaction (unsigned base64), quoteId, orderId
 
     App-->>LLM: ToolReturn preview plus route
-    Note right of App: route adds host SignTxSolana then awaits signed_tx
+    Note right of App: route adds host SvmSignTx then awaits signed_tx
 
-    LLM->>Host: sign_tx_solana unsigned_tx
+    LLM->>Host: svm_sign_tx unsigned_tx
     Host->>Host: wallet decodes versioned tx, user approves, ed25519 sign
     Host-->>LLM: signed_tx (base64)
 
@@ -191,7 +191,7 @@ sequenceDiagram
     Byreal-->>App: orderCode, rewardEncodeItems=[unsigned tx]
     App-->>LLM: ToolReturn preview plus route
 
-    LLM->>Host: sign_tx_solana unsigned_tx
+    LLM->>Host: svm_sign_tx unsigned_tx
     Host-->>LLM: signed_tx
 
     LLM->>App: byreal_lp_submit_claim_rewards order_code wallet signed_tx
@@ -218,11 +218,11 @@ flowchart LR
     LLM -->|byreal_spot_*| App
     LLM -->|byreal_lp_*| App
 
-    App -->|commit_eip712 typed_data| EVM
+    App -->|evm_commit_message typed_data| EVM
     EVM -->|signature| App
     App -->|POST /exchange| HL
 
-    App -->|sign_tx_solana base64 tx| SVM
+    App -->|svm_sign_tx base64 tx| SVM
     SVM -->|signed bytes| App
     App -->|POST /dex /router /rfq| Byreal
     Byreal -->|forward signed tx| Solana

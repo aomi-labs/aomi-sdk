@@ -147,7 +147,7 @@ Write to `apps/<platform>/test.json` as plain JSON (no JSONC comments — the ha
 ### 6. Run the harness
 
 ```
-cd /Users/cecilia/Code/aomi-apps && cargo test \
+cd /Users/cecilia/Code/aomi-sdk && cargo test \
   -p aomi-runtime --test local-app-e2e -- --nocapture <test-fn>
 ```
 

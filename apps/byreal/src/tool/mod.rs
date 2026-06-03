@@ -63,59 +63,86 @@ pub(crate) fn validate_confirmation(token: Option<&str>) -> Result<(), String> {
     }
 }
 
-/// Build a `commit_eip712` route plan: app emits the typed-data + a
+/// Build a `evm_commit_message` route plan: app emits the typed-data + a
 /// continuation, host wallet signs, runtime splices the signature into the
-/// `submit_*` tool args under `master_signature`.
+/// `submit_*` tool args under `signature`.
 ///
 /// Used by [`perps`] (Hyperliquid L1 actions). Solana flows use
-/// [`build_solana_signed_routes`] instead.
+/// [`build_svm_sign_tx_routes`] instead.
 pub(crate) fn build_evm_signed_routes<Submit: RouteTarget>(
     value: Value,
     typed_data: Value,
     description: String,
     submit_template: Value,
 ) -> Result<ToolReturn, String> {
+    let continuation = json!({
+        "tool": Submit::tool_name(),
+        "args": submit_template,
+        "artifact_field": "signature",
+    });
     ToolReturn::route(value)
         .next(|next| {
-            next.add::<host::CommitEip712>(json!({
+            next.add::<host::EvmCommitMessage>(json!({
                 "typed_data": typed_data,
                 "description": description,
+                "continuation": continuation,
             }))
-            .bind_as("master_signature")
-            .note("Wait for explicit user confirmation, then sign this Hyperliquid action with the master wallet.");
+            .bind_as("signature");
         })
-        .after::<Submit>(submit_template)
-        .awaits("master_signature")
-        .note("Wallet signed — submit the action to Hyperliquid.")
+        .after::<Submit>(continuation["args"].clone())
+        .awaits("signature")
+        .note(
+            "MANDATORY: Wallet just signed. You MUST call this tool RIGHT NOW. \
+             Do NOT generate a text response. Do NOT acknowledge or summarize. \
+             Make this function call immediately. \
+             \
+             CRITICAL — copy every arg EXACTLY as shown. In particular: \
+             • `payload` is a short server-issued handle of the form `hpl_<hex>` — \
+             copy it verbatim. The host resolves it to the real pre-signed action; \
+             a mistyped handle will fail to resolve and the order will not place. \
+             • `signature` is opaque — copy verbatim. \
+             • `confirmation` must remain the literal string `confirm`. \
+             Keep opaque continuation state unchanged.",
+        )
         .try_build()
         .map_err(|e| format!("[byreal] route build failed: {e}"))
 }
 
-/// Build a `sign_tx_solana` route plan: app emits an unsigned Solana tx
+/// Build a `svm_sign_tx` route plan: app emits an unsigned Solana tx
 /// (base64 versioned bytes) + a continuation, host wallet signs, runtime
 /// splices the signed bytes into the `submit_*` tool args under
 /// `signed_tx`.
 ///
 /// Used by spot and lp (byreal Solana endpoints).
 #[allow(dead_code)] // wired up in Stage 3; kept here so perps + spot share the same shape.
-pub(crate) fn build_solana_signed_routes<Submit: RouteTarget>(
+pub(crate) fn build_svm_sign_tx_routes<Submit: RouteTarget>(
     value: Value,
     unsigned_tx_b64: String,
     description: String,
     submit_template: Value,
 ) -> Result<ToolReturn, String> {
+    let continuation = json!({
+        "tool": Submit::tool_name(),
+        "args": submit_template,
+        "artifact_field": "signed_tx",
+    });
     ToolReturn::route(value)
         .next(|next| {
-            next.add::<host::SignTxSolana>(json!({
+            next.add::<host::SvmSignTx>(json!({
                 "unsigned_tx": unsigned_tx_b64,
                 "description": description,
+                "continuation": continuation,
             }))
-            .bind_as("signed_tx")
-            .note("Wait for explicit user confirmation, then sign this Solana transaction with the connected wallet.");
+            .bind_as("signed_tx");
         })
-        .after::<Submit>(submit_template)
+        .after::<Submit>(continuation["args"].clone())
         .awaits("signed_tx")
-        .note("Wallet signed — submit the signed transaction to byreal.")
+        .note(
+            "MANDATORY: Wallet just signed the Solana transaction. You MUST call this tool \
+             RIGHT NOW. Do NOT generate a text response. Do NOT acknowledge or summarize. \
+             Make this function call immediately. Pass all args exactly as shown. \
+             Keep opaque continuation state unchanged.",
+        )
         .try_build()
         .map_err(|e| format!("[byreal] route build failed: {e}"))
 }

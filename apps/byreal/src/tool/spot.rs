@@ -1,14 +1,14 @@
 //! `byreal_spot_*` tools — byreal CLMM / RFQ swap surface on Solana.
 //!
 //! Reads hit byreal's HTTP API directly, no signing. The single write pair
-//! (`build_swap` / `submit_swap`) routes through `host::SignTxSolana`: the
+//! (`build_swap` / `submit_swap`) routes through `host::SvmSignTx`: the
 //! quote response carries the unsigned base64 versioned tx, the host wallet
 //! signs it, and `submit_swap` forwards the signed bytes to byreal's
 //! AMM-or-RFQ submission endpoint depending on the quote's `routerType`.
 
 use crate::client::ByrealApp;
 use crate::client::spot::spot_client;
-use crate::tool::{build_solana_signed_routes, ok, resolve_address, validate_confirmation};
+use crate::tool::{build_svm_sign_tx_routes, ok, resolve_address, validate_confirmation};
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
 use serde::{Deserialize, Serialize};
@@ -224,7 +224,7 @@ impl DynAomiTool for GetSwapQuote {
 }
 
 // ===========================================================================
-// WRITE TOOLS — build/submit pair routed via host::SignTxSolana
+// WRITE TOOLS — build/submit pair routed via host::SvmSignTx
 // ===========================================================================
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -246,7 +246,7 @@ impl DynAomiTool for BuildSwap {
     type App = ByrealApp;
     type Args = BuildSwapArgs;
     const NAME: &'static str = "byreal_spot_build_swap";
-    const DESCRIPTION: &'static str = "Build (do not submit) a byreal swap. Internally fetches a router quote and returns a preview + a routed `sign_tx_solana` step the host wallet signs. The matched `byreal_spot_submit_swap` continuation runs after the wallet returns the signed bytes. Always emit a one-screen confirmation summary (in/out amount, slippage, router type) and stop the turn before calling this.";
+    const DESCRIPTION: &'static str = "Build (do not submit) a byreal swap. Internally fetches a router quote and returns a preview + a routed `svm_sign_tx` step the host wallet signs. The matched `byreal_spot_submit_swap` continuation runs after the wallet returns the signed bytes. Always emit a one-screen confirmation summary (in/out amount, slippage, router type) and stop the turn before calling this.";
 
     fn run_with_routes(
         _app: &Self::App,
@@ -321,8 +321,6 @@ impl DynAomiTool for BuildSwap {
                 "router_type": router_type,
                 "wallet": wallet,
             },
-            "requires_user_confirmation": true,
-            "confirmation_phrase": "confirm",
             "submit_args_template": submit_template.clone(),
         });
 
@@ -332,7 +330,7 @@ impl DynAomiTool for BuildSwap {
             short_mint(&args.output_mint),
         );
 
-        build_solana_signed_routes::<SubmitSwap>(preview, unsigned_tx, description, submit_template)
+        build_svm_sign_tx_routes::<SubmitSwap>(preview, unsigned_tx, description, submit_template)
     }
 }
 
@@ -350,7 +348,7 @@ pub(crate) struct SubmitSwapArgs {
     /// RFQ-only: the `orderId` from the quote, sent back as `requestId`.
     pub request_id: Option<String>,
     /// Base64 signed versioned Solana tx. Filled in by the host wallet via
-    /// `sign_tx_solana` — never invent one.
+    /// `svm_sign_tx` — never invent one.
     pub signed_tx: Option<String>,
 }
 
@@ -360,12 +358,12 @@ impl DynAomiTool for SubmitSwap {
     type App = ByrealApp;
     type Args = SubmitSwapArgs;
     const NAME: &'static str = "byreal_spot_submit_swap";
-    const DESCRIPTION: &'static str = "Submit a byreal swap that was previously prepared by `byreal_spot_build_swap` and signed via `sign_tx_solana`. Routes to the AMM or RFQ submission endpoint based on `router_type`. The `signed_tx` field is filled in automatically by the runtime.";
+    const DESCRIPTION: &'static str = "Submit a byreal swap that was previously prepared by `byreal_spot_build_swap` and signed via `svm_sign_tx`. Routes to the AMM or RFQ submission endpoint based on `router_type`. The `signed_tx` field is filled in automatically by the runtime.";
 
     fn run(_app: &Self::App, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         validate_confirmation(args.confirmation.as_deref())?;
         let signed = args.signed_tx.as_deref().ok_or_else(|| {
-            "[byreal] signed_tx missing — wait for sign_tx_solana callback".to_string()
+            "[byreal] signed_tx missing — wait for svm_sign_tx callback".to_string()
         })?;
         let client = spot_client()?;
         let resp = match args.router_type.as_str() {
@@ -428,5 +426,169 @@ mod tests {
         assert_eq!(v["router_type"], "RFQ");
         let back: SubmitSwapArgs = serde_json::from_value(v).unwrap();
         assert_eq!(back.quote_id.as_deref(), Some("q"));
+    }
+
+    /// End-to-end route-binding test for byreal's 2-node Lane-2-sign
+    /// pipeline: `build_swap → host::SvmSignTx → submit_swap`.
+    ///
+    /// `BuildSwap::run_with_routes` hits byreal's HTTP quote endpoint
+    /// before calling `build_svm_sign_tx_routes`. This test bypasses
+    /// the HTTP step and exercises the route builder directly with
+    /// synthetic inputs — hermetic and fast, but covers the same
+    /// bug class smoke tests would surface only after a live wallet
+    /// dispatch:
+    ///   - wrong `bind_as` / `awaits` alias (sign result wouldn't
+    ///     land in `submit_swap`'s `signed_tx`)
+    ///   - wrong `artifact_field` on the continuation pointer
+    ///     (runtime wouldn't know where to splice the signature)
+    ///   - wrong tool name in `next.add` (host marker references the
+    ///     wrong wallet verb)
+    ///   - missing `confirmation` / `unsigned_tx` / `router_type`
+    ///     in the submit-args template
+    ///   - trigger types flipped (sign on `on_bound_event`,
+    ///     submit on `on_sync_return`)
+    #[test]
+    fn build_swap_route_plan_binds_sign_to_submit() {
+        use crate::tool::build_svm_sign_tx_routes;
+
+        let preview = json!({
+            "action_kind": "swap",
+            "preview": {
+                "router_type": "AMM",
+                "in_amount": "1000000",
+                "out_amount": "950000",
+            },
+        });
+        let unsigned_tx = "AQID".to_string(); // base64 stub — not deserialized in this layer
+        let description = "byreal AMM swap: 1.0 IN -> 0.95 OUT".to_string();
+        let submit_template = serde_json::to_value(&SubmitSwapArgs {
+            confirmation: Some("confirm".to_string()),
+            router_type: "AMM".to_string(),
+            unsigned_tx: unsigned_tx.clone(),
+            quote_id: None,
+            request_id: None,
+            signed_tx: None,
+        })
+        .unwrap();
+
+        let ret = build_svm_sign_tx_routes::<SubmitSwap>(
+            preview.clone(),
+            unsigned_tx.clone(),
+            description.clone(),
+            submit_template.clone(),
+        )
+        .expect("route plan should build");
+        let env = serde_json::to_value(&ret).expect("envelope serializes");
+
+        // Envelope shape: `__aomi_tool_return` + `__aomi_tool_value` +
+        // `__aomi_tool_routes`. The value mirrors the preview the LLM
+        // sees; the routes are what the runtime executes after the
+        // sync return.
+        assert_eq!(env["__aomi_tool_return"], json!(true));
+        assert_eq!(env["__aomi_tool_value"], preview);
+
+        let routes = env["__aomi_tool_routes"].as_array().expect("routes array");
+        assert_eq!(
+            routes.len(),
+            2,
+            "byreal swap = 2-node (sign → submit). \
+             A different count means the route builder grew or shrank \
+             a step — update this test if the pipeline shape changed."
+        );
+
+        // Node 1 — host::SvmSignTx (sign-only; venue broadcasts).
+        let sign_step = &routes[0];
+        assert_eq!(sign_step["tool"], json!("svm_sign_tx"));
+        assert_eq!(
+            sign_step["trigger"],
+            json!({ "type": "on_sync_return" }),
+            "sign fires immediately after build_swap returns"
+        );
+        assert_eq!(
+            sign_step["bind_as"],
+            json!("signed_tx"),
+            "sign result must bind to `signed_tx` — the alias submit_swap awaits"
+        );
+        let sign_args = &sign_step["args"];
+        assert_eq!(
+            sign_args["unsigned_tx"],
+            json!(unsigned_tx),
+            "the venue-supplied tx blob is what gets signed"
+        );
+        assert_eq!(sign_args["description"], json!(description));
+        let continuation = &sign_args["continuation"];
+        assert_eq!(
+            continuation["tool"],
+            json!(SubmitSwap::NAME),
+            "continuation must point at the matched submit tool"
+        );
+        assert_eq!(
+            continuation["artifact_field"],
+            json!("signed_tx"),
+            "runtime splices the signed bytes into submit_swap.signed_tx"
+        );
+        assert_eq!(
+            continuation["args"], submit_template,
+            "continuation args carry the submit template with signed_tx=null until splice"
+        );
+
+        // Node 2 — submit_swap. Triggered by the bound `signed_tx`
+        // event the sign step emits.
+        let submit_step = &routes[1];
+        assert_eq!(submit_step["tool"], json!(SubmitSwap::NAME));
+        assert_eq!(
+            submit_step["trigger"],
+            json!({ "type": "on_bound_event", "alias": "signed_tx" }),
+            "submit waits on the `signed_tx` event the sign step binds"
+        );
+        let submit_args = &submit_step["args"];
+        assert_eq!(submit_args["confirmation"], json!("confirm"));
+        assert_eq!(submit_args["router_type"], json!("AMM"));
+        assert_eq!(
+            submit_args["unsigned_tx"],
+            json!(unsigned_tx),
+            "AMM endpoint needs the original unsigned tx as `preData`"
+        );
+        assert!(
+            submit_args
+                .get("signed_tx")
+                .map(Value::is_null)
+                .unwrap_or(true),
+            "signed_tx must be null at route-emit time; the runtime fills it from the bind"
+        );
+    }
+
+    /// `submit_swap`'s args template must carry exactly the keys the
+    /// runtime expects to splice into. If a future refactor renames
+    /// `signed_tx` or drops `unsigned_tx` from the AMM submit payload,
+    /// this test fails before any live request fires.
+    #[test]
+    fn submit_swap_template_carries_runtime_splice_keys() {
+        let template = serde_json::to_value(&SubmitSwapArgs {
+            confirmation: Some("confirm".to_string()),
+            router_type: "AMM".to_string(),
+            unsigned_tx: "AQID".to_string(),
+            quote_id: None,
+            request_id: None,
+            signed_tx: None,
+        })
+        .expect("template serializes");
+
+        // The runtime expects to find `signed_tx` (target of splice)
+        // and `unsigned_tx` (AMM endpoint dependency) on the template.
+        assert!(
+            template.get("signed_tx").is_some(),
+            "template missing `signed_tx`"
+        );
+        assert!(
+            template.get("unsigned_tx").is_some(),
+            "template missing `unsigned_tx`"
+        );
+        assert!(
+            template.get("router_type").is_some(),
+            "template missing `router_type`"
+        );
+        // confirmation is what gates the submit tool's local validation.
+        assert_eq!(template["confirmation"], json!("confirm"));
     }
 }
