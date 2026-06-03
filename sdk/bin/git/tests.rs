@@ -202,7 +202,10 @@ async fn activate_command_builds_activate_app_request() {
     assert_eq!(plan.request.source_digest.as_deref(), Some("sha256:source"));
     assert_eq!(plan.request.server_tags, vec!["prod", "platform-x"]);
     let body = serde_json::to_value(&plan.request).expect("serialize activation request");
-    assert_eq!(body["target_tags"], serde_json::json!(["prod", "platform-x"]));
+    assert_eq!(
+        body["target_tags"],
+        serde_json::json!(["prod", "platform-x"])
+    );
     assert!(body.get("server_tags").is_none());
     assert!(plan.request.is_active);
     assert!(plan.request.is_public);
@@ -378,7 +381,10 @@ server_tags = ["staging", "prod"]
     let updated = read_deployment_state(repo.root())
         .expect("read state")
         .expect("deployment state");
-    assert_eq!(updated.target.app_release_tag, "apps-token-bot-deadbeef0123");
+    assert_eq!(
+        updated.target.app_release_tag,
+        "apps-token-bot-deadbeef0123"
+    );
     assert_eq!(updated.app.access_token.as_deref(), Some("34567"));
     assert_eq!(updated.target.server_tags, vec!["staging"]);
     assert_eq!(updated.app.server_tags, vec!["staging"]);
@@ -767,7 +773,12 @@ git = "https://github.com/example/foo-hosted-apps"
     assert_eq!(deployment.publish.source_repo, "example/foo-hosted-apps");
     assert_eq!(deployment.publish.publish_branch, "publish");
     assert_eq!(deployment.publish.app_path, "apps/foo-bot");
-    assert!(deployment.publish.app_release_tag.starts_with("apps-foo-bot-"));
+    assert!(
+        deployment
+            .publish
+            .app_release_tag
+            .starts_with("apps-foo-bot-")
+    );
 }
 
 #[test]
@@ -1307,39 +1318,10 @@ async fn status_errors_without_deployment_json() {
 }
 
 #[tokio::test]
-async fn activate_request_errors_without_deployment_json() {
-    // `aomi-git activate --request` needs the app_release_tag / repo / app from a
-    // prior deploy. With no deployment.json and no flags it must fail with a
-    // message pointing at `aomi-git deploy` — never silently post nothing.
-    let repo = TestRepo::new();
-    let cli = Cli::try_parse_from([
-        "aomi-git",
-        "activate",
-        "--request",
-        "--path",
-        repo.root().to_str().unwrap(),
-    ])
-    .expect("parse activate --request");
-    let CliCommand::Activate(args) = cli.command else {
-        panic!("expected activate");
-    };
-
-    let err = args
-        .run()
-        .await
-        .expect_err("missing deployment.json must error");
-    let msg = err.to_string();
-    assert!(
-        msg.contains("deployment.json") && msg.contains("aomi-git deploy"),
-        "error should point at running deploy first: {msg}"
-    );
-}
-
-#[tokio::test]
-async fn activate_request_dry_run_succeeds_from_deployment_json() {
-    // With a staged deployment.json, `activate --request --dry-run` resolves
-    // app/repo/release and prints the message without posting — no backend,
-    // no activation token, no webhook needed.
+async fn request_dry_run_resolves_app_and_repo_from_aomi_toml() {
+    // `aomi-git request --dry-run` resolves app/platform/repo from aomi.toml
+    // (no deployment.json needed — it runs before the first deploy) and prints
+    // the ops message without posting.
     let repo = TestRepo::new();
     repo.write_aomi_toml(
         "",
@@ -1349,27 +1331,84 @@ async fn activate_request_dry_run_succeeds_from_deployment_json() {
     repo.write("src/lib.rs", "pub fn marker() {}\n");
     repo.commit("initial app");
 
-    let state = Deployment::dry_run(repo.root(), Platform::new("community"), false)
-        .expect("dry run")
-        .to_state();
-    crate::deployment_state::write(repo.root(), &state).expect("write state");
-
     let cli = Cli::try_parse_from([
         "aomi-git",
-        "activate",
-        "--request",
+        "request",
+        "--email",
+        "alice@gmail.com",
+        "--git-account",
+        "alice-git-acc",
         "--dry-run",
         "--path",
         repo.root().to_str().unwrap(),
     ])
-    .expect("parse activate --request --dry-run");
-    let CliCommand::Activate(args) = cli.command else {
-        panic!("expected activate");
+    .expect("parse request --dry-run");
+    let CliCommand::Request(args) = cli.command else {
+        panic!("expected request");
     };
 
     args.run()
         .await
-        .expect("dry-run should resolve from deployment.json and not post");
+        .expect("dry-run should resolve from aomi.toml and not post");
+}
+
+#[tokio::test]
+async fn request_rejects_a_malformed_email() {
+    let repo = TestRepo::new();
+    repo.write_aomi_toml(
+        "",
+        "request-bot",
+        "https://github.com/aomi-labs/community-apps",
+    );
+    repo.write("src/lib.rs", "pub fn marker() {}\n");
+    repo.commit("initial app");
+
+    let cli = Cli::try_parse_from([
+        "aomi-git",
+        "request",
+        "--email",
+        "not-an-email",
+        "--git-account",
+        "alice-git-acc",
+        "--dry-run",
+        "--path",
+        repo.root().to_str().unwrap(),
+    ])
+    .expect("parse request");
+    let CliCommand::Request(args) = cli.command else {
+        panic!("expected request");
+    };
+
+    let err = args.run().await.expect_err("malformed email must error");
+    assert!(err.to_string().contains("email"), "{err}");
+}
+
+#[tokio::test]
+async fn request_errors_when_app_slug_is_unknown() {
+    // No aomi.toml and no --app: nothing to identify the app, so it must fail
+    // rather than post a request for an unknown app.
+    let repo = TestRepo::new();
+    repo.write("src/lib.rs", "pub fn marker() {}\n");
+    repo.commit("initial app");
+
+    let cli = Cli::try_parse_from([
+        "aomi-git",
+        "request",
+        "--email",
+        "alice@gmail.com",
+        "--git-account",
+        "alice-git-acc",
+        "--dry-run",
+        "--path",
+        repo.root().to_str().unwrap(),
+    ])
+    .expect("parse request");
+    let CliCommand::Request(args) = cli.command else {
+        panic!("expected request");
+    };
+
+    let err = args.run().await.expect_err("unknown app slug must error");
+    assert!(err.to_string().contains("app slug"), "{err}");
 }
 
 #[test]
@@ -1403,7 +1442,7 @@ fn status_report_renders_ready_to_activate() {
     assert!(report.ready_to_activate());
     let rendered = report.render();
     assert!(rendered.contains("ready to activate"), "{rendered}");
-    assert!(rendered.contains("Request activation"), "{rendered}");
+    assert!(rendered.contains("aomi-git activate"), "{rendered}");
     assert!(rendered.contains("apps-my-bot-abc1234"), "{rendered}");
 }
 

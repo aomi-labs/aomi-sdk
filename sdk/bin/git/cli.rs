@@ -29,9 +29,16 @@
 //!   --source-commit <SHA>    # .aomi/deployment.json source.commit
 //!   --source-tree <SHA>      # .aomi/deployment.json source.tree
 //!   --source-digest <SHA>    # .aomi/deployment.json source.digest
-//!   --request                # Discord activation ask (no direct activate)
 //!   --dry-run
 //!   --json
+//!
+//! request                    # ask ops for access (invite + activation code)
+//!   --email <EMAIL>          # where ops sends your activation code
+//!   --git-account <USER>     # GitHub account to invite as a collaborator
+//!   --app <NAME>             # aomi.toml [app].name (default)
+//!   --platform <NAME>        # aomi.toml [app].platform (default community)
+//!   --path <DIR>             # source repo (aomi.toml lookup)
+//!   --dry-run                # print the Discord message; don't post
 //!
 //! status [APP_RELEASE_TAG]   # or .aomi/deployment.json target.app_release_tag
 //!   --path <DIR>             # source repo (.aomi/deployment.json lookup)
@@ -90,6 +97,7 @@ pub struct Cli {
 impl Cli {
     pub async fn run(self) -> Result<()> {
         match self.command {
+            Command::Request(args) => args.run().await,
             Command::Deploy(args) => args.run().await,
             Command::Activate(args) => args.run().await,
             Command::Status(args) => args.run().await,
@@ -100,6 +108,10 @@ impl Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Ask platform ops for access: a collaborator invite for your GitHub
+    /// account plus a per-app activation code, delivered out-of-band. Run this
+    /// once before your first deploy.
+    Request(RequestArgs),
     /// Prepare and push an Aomi app source publication.
     Deploy(DeployArgs),
     /// Activate a published Aomi app release in the backend.
@@ -109,6 +121,125 @@ pub enum Command {
     /// Edit a live app's registry config (visibility, label, target tags)
     /// without re-deploying or re-fetching the release.
     Config(ConfigArgs),
+}
+
+// ---------------------------------------------------------------------------
+// Request
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Args, Clone)]
+pub struct RequestArgs {
+    /// Email where platform ops will send your per-app activation code.
+    #[arg(long, value_name = "EMAIL")]
+    pub email: String,
+
+    /// GitHub account to invite as a platform-repo collaborator.
+    #[arg(long = "git-account", value_name = "USER")]
+    pub git_account: String,
+
+    /// App slug (`aomi.toml [app].name`). Defaults to the value in aomi.toml.
+    #[arg(long, value_name = "NAME")]
+    pub app: Option<String>,
+
+    /// Platform tag (`aomi.toml [app].platform`). Falls back to aomi.toml,
+    /// then to `community`.
+    #[arg(long, value_name = "NAME")]
+    pub platform: Option<Platform>,
+
+    /// App source directory (for the `aomi.toml` lookup). Defaults to the
+    /// current directory.
+    #[arg(long, default_value = ".")]
+    pub path: PathBuf,
+
+    /// Print the Discord message without posting it.
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+impl RequestArgs {
+    pub async fn run(self) -> Result<()> {
+        let email = self.email.trim();
+        if email.is_empty() || !email.contains('@') {
+            bail!(
+                "`--email` must be a valid email address (got {:?})",
+                self.email
+            );
+        }
+        let git_account = self.git_account.trim();
+        if git_account.is_empty() {
+            bail!("`--git-account` must not be empty");
+        }
+
+        // Resolve app/platform/repo from aomi.toml (best-effort: flags win).
+        let discovered = GitRepo::discover(&self.path)
+            .ok()
+            .and_then(|repo| App::discover(&repo).ok());
+
+        let app = self
+            .app
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .or_else(|| discovered.as_ref().map(|a| a.name.clone()))
+            .filter(|s| !s.trim().is_empty())
+            .ok_or_else(|| {
+                anyhow!(
+                    "app slug is unknown - pass --app or run from a source repo whose \
+                     aomi.toml declares [app].name"
+                )
+            })?;
+
+        let platform = self
+            .platform
+            .as_ref()
+            .map(|p| p.to_string())
+            .or_else(|| discovered.as_ref().and_then(|a| a.platform.clone()))
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "community".to_string());
+
+        let repo = discovered
+            .as_ref()
+            .and_then(|a| a.git.clone())
+            .map(|raw| normalize_github_repo(&raw))
+            .transpose()?
+            .ok_or_else(|| {
+                anyhow!(
+                    "platform repo is unknown - run from a source repo whose aomi.toml \
+                     declares [app].git"
+                )
+            })?;
+
+        let request = crate::discord::ActivationRequest {
+            email: email.to_string(),
+            git_account: git_account.to_string(),
+            app,
+            platform,
+            repo,
+        };
+
+        if self.dry_run {
+            // Show exactly what would be POSTed to the webhook.
+            println!("{}", serde_json::to_string_pretty(&request.webhook_body())?);
+            println!("\n(dry-run: not posted to Discord)");
+            return Ok(());
+        }
+
+        request.post().await?;
+        println!(
+            "Posted access request for `{}` to the Aomi apps Discord.",
+            request.app
+        );
+        println!(
+            "Ops will invite `{}` to `{}` and send your activation code to {}.",
+            request.git_account, request.repo, request.email
+        );
+        println!(
+            "Join the Aomi apps Discord if needed: {}",
+            crate::discord::DISCORD_INVITE
+        );
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -303,11 +434,7 @@ impl DeployArgs {
         })
     }
 
-    async fn resolve_source_repo(
-        &self,
-        platform: &Platform,
-        app: Option<&App>,
-    ) -> Result<String> {
+    async fn resolve_source_repo(&self, platform: &Platform, app: Option<&App>) -> Result<String> {
         if let Some(g) = self
             .source_repo
             .as_deref()
@@ -339,16 +466,13 @@ impl DeployArgs {
         println!("       aomi-git status --path {}", self.path.display());
         println!("     This polls CI and tells you when the release is ready to activate.");
         println!();
-        println!("  2. Request activation from platform ops:");
-        println!(
-            "       aomi-git activate --request --path {}",
-            self.path.display()
-        );
-        println!("     This prints or posts your repo, app, and release for ops to activate.");
-        println!(
-            "     Join the Aomi apps Discord if needed: {}",
-            crate::discord::DISCORD_INVITE
-        );
+        println!("  2. Activate the release once CI is green (with your per-app code):");
+        println!("       aomi-git activate --path {}", self.path.display());
+        println!("     Set AOMI_APP_ACTIVATION_TOKEN (or pass --activation-token) to the");
+        println!("     per-app code platform ops issued you.");
+        println!();
+        println!("     First time? Request access before deploying:");
+        println!("       aomi-git request --email <you@example.com> --git-account <github-user>");
     }
 }
 
@@ -418,12 +542,6 @@ pub struct ActivateArgs {
     #[arg(long, default_value = ".")]
     pub path: PathBuf,
 
-    /// Don't activate. Build an activation request from `.aomi/deployment.json`
-    /// for platform ops. With `--dry-run`, print the message; otherwise post it
-    /// using the code-owned Discord webhook.
-    #[arg(long)]
-    pub request: bool,
-
     /// Print the planned activation request without sending it.
     #[arg(long)]
     pub dry_run: bool,
@@ -435,9 +553,6 @@ pub struct ActivateArgs {
 
 impl ActivateArgs {
     pub async fn run(self) -> Result<()> {
-        if self.request {
-            return self.request_activation().await;
-        }
         let (plan, mut state) = self.plan_with_state().await?;
         if self.dry_run {
             // No HTTP. Print what we'd send.
@@ -463,57 +578,6 @@ impl ActivateArgs {
         } else {
             println!("activated {}", plan.request.name);
         }
-        Ok(())
-    }
-
-    /// `--request`: build an activation ask for platform ops instead of
-    /// activating. App / repo / release / target tags come from
-    /// `.aomi/deployment.json`. `--dry-run` prints the message without posting.
-    async fn request_activation(&self) -> Result<()> {
-        let state = read_deployment_state(&self.path)?.ok_or_else(|| {
-            anyhow!(
-                "no .aomi/deployment.json at {} - run `aomi-git deploy` first",
-                self.path.display()
-            )
-        })?;
-
-        let app_release_tag = self
-            .app_release_tag
-            .clone()
-            .unwrap_or_else(|| state.target.app_release_tag.clone());
-
-        let raw_repo = self
-            .source_repo
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-            .or_else(|| state.app.git.clone())
-            .ok_or_else(|| {
-                anyhow!(
-                    "platform repo is unknown - run from a source repo whose aomi.toml \
-                     declares [app].git"
-                )
-            })?;
-
-        let request = crate::discord::ActivationRequest {
-            app: state.app.name.clone(),
-            repo: normalize_github_repo(&raw_repo)?,
-            app_release_tag,
-            server_tags: state.target.server_tags.clone(),
-        };
-
-        if self.dry_run {
-            println!("{}", request.message());
-            println!("\n(dry-run: not posted to Discord)");
-            return Ok(());
-        }
-
-        request.post().await?;
-        println!(
-            "Posted activation request for `{}` to the Aomi apps Discord.",
-            request.app_release_tag
-        );
         Ok(())
     }
 

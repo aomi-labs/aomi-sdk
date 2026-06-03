@@ -92,7 +92,9 @@ impl ActivationPlan {
         }
         let source_repo = source_repo.trim().to_string();
         if source_repo.is_empty() {
-            bail!("source_repo is required — pass --source-repo or ensure aomi.toml declares [app].git");
+            bail!(
+                "source_repo is required — pass --source-repo or ensure aomi.toml declares [app].git"
+            );
         }
 
         let request = ActivateAppRequest {
@@ -314,11 +316,7 @@ pub struct ActivateAppRequest {
     pub metadata: Value,
     /// Required backend server tags. The backend loads only when these tags are
     /// a subset of its configured AOMI_SERVER_TAGS.
-    #[serde(
-        default,
-        rename = "target_tags",
-        skip_serializing_if = "Vec::is_empty"
-    )]
+    #[serde(default, rename = "target_tags", skip_serializing_if = "Vec::is_empty")]
     pub server_tags: Vec<String>,
     /// Per ADR 0009 amended: transient GitHub read token resolved from
     /// `aomi.toml[app].access_token` (an env-var reference). Sent once, used

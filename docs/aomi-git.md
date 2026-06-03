@@ -4,22 +4,57 @@ CLI for publishing Aomi app source through a platform's Git policy, and for
 activating the resulting release on a backend.
 
 ```text
+aomi-git request  -> ask ops for a collaborator invite + a per-app activation code (once)
 aomi-git deploy   -> stage into platform repo -> push -> CI builds + cuts release
 aomi-git status   -> poll CI, release, and backend registry health
 aomi-git activate -> backend fetches + loads the release
 ```
 
-`aomi-git` has three subcommands:
-
 | Command | What it does | Who runs it |
 |---|---|---|
-| `deploy` | Snapshots your source repo, stages it under `apps/<slug>/` in the platform repo, commits, and pushes to the publish branch. CI then builds the cdylib and cuts a GitHub release. | The app author |
+| `request` | Posts an access request to the Aomi apps Discord so ops can invite your GitHub account to the platform repo and issue you a per-app activation code. Run once, before your first deploy. | The app author |
+| `deploy` | Snapshots your source repo, stages it under `apps/<slug>/` in the platform repo, commits, and pushes to the publish branch. CI then builds the cdylib and cuts a GitHub release. | The app author (a collaborator) |
 | `status` | Reads `.aomi/deployment.json`, polls GitHub Actions and release state, then reports whether activation is ready. | The app author |
-| `activate` | Tells a backend to fetch a published release, validate it, and load it. | The platform operator (holds the activation token) |
+| `activate` | Tells a backend to fetch a published release, validate it, and load it. | The app author, using their per-app activation code |
 
 Everything `deploy` learns about your app is written to
 `.aomi/deployment.json` - a plan artifact whose centerpiece is the
 **validation pipeline** (see [Checks: the validation pipeline](#checks-the-validation-pipeline)).
+
+---
+
+## `aomi-git request`
+
+The **first step for a new contributor.** You can't deploy until ops invites your
+GitHub account to the platform repo, and you can't self-activate until ops issues
+you a per-app activation code. `request` posts that ask — carrying your GitHub
+account, email, and app — to the Aomi apps Discord, pinging the ops role.
+
+```bash
+# Resolves app / platform / repo from aomi.toml in --path.
+aomi-git request --email you@example.com --git-account your-github-user
+
+# Preview the exact Discord message without posting.
+aomi-git request --email you@example.com --git-account your-github-user --dry-run
+```
+
+Ops then (1) sends your GitHub account a collaborator invite and (2) issues a
+per-app activation code and delivers it to your email **out-of-band**. The code
+is never part of the request and never travels over Discord.
+
+### Flags
+
+| Flag | Mirrors | Meaning |
+|---|---|---|
+| `--email <EMAIL>` | - | Where ops sends your activation code. **Required.** |
+| `--git-account <USER>` | - | GitHub account to invite as a platform-repo collaborator. **Required.** |
+| `--app <NAME>` | `aomi.toml [app].name` | App slug. Defaults to the value in `aomi.toml`. |
+| `--platform <NAME>` | `aomi.toml [app].platform` | Platform tag. Falls back to `aomi.toml`, then `community`. |
+| `--path <DIR>` | - | Source repo for the `aomi.toml` lookup. Default: `.` |
+| `--dry-run` | - | Print the Discord message; post nothing. |
+
+> Community-tier only: B2B partners deploy through a server-side proxy
+> (ADR 0011) and don't get direct repo access, so they don't use `request`.
 
 ---
 
@@ -119,9 +154,14 @@ aomi-git activate apps-my-bot-abc1234 \
 | `--source-tree <SHA>` | - | Provenance. Falls back to deployment.json. |
 | `--source-digest <SHA>` | - | Provenance. Falls back to deployment.json. |
 | `--path <DIR>` | - | Source repo for the deployment.json fallback. Default: `.` |
-| `--request` | - | Post an activation request to the code-owned Discord webhook instead of activating directly. |
 | `--dry-run` | - | Print the activation request that would be sent; no HTTP. |
 | `--json` | - | Print the backend response as JSON. |
+
+> **Where does the activation token come from?** Platform ops issue you a
+> **per-app** activation code (see [`aomi-git request`](#aomi-git-request)). Once
+> you hold it, you run `activate` yourself for every release — set
+> `AOMI_APP_ACTIVATION_TOKEN` or pass `--activation-token`. There is no longer a
+> "post a request to ops per release" step.
 
 ---
 

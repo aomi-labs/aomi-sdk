@@ -244,9 +244,17 @@ impl StatusReport {
             let _ = writeln!(out);
             let _ = writeln!(
                 out,
-                "  Release is ready. Request activation from platform ops"
+                "  Release is ready. Activate it with your per-app code:"
             );
-            let _ = writeln!(out, "  (contributors don't hold the activation token).");
+            let _ = writeln!(out, "    aomi-git activate");
+            let _ = writeln!(
+                out,
+                "  (set AOMI_APP_ACTIVATION_TOKEN to the code ops issued you;"
+            );
+            let _ = writeln!(
+                out,
+                "   first time? run `aomi-git request` to get onboarded)."
+            );
         }
         out
     }
