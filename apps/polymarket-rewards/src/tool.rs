@@ -1334,6 +1334,7 @@ mod tests {
                 tool_name: "submit_reward_quote".to_string(),
                 call_id: "call".to_string(),
                 state_attributes: Default::default(),
+                secrets: Default::default(),
             },
         )
         .expect("submit_reward_quote should stage clob auth signing");
