@@ -477,7 +477,7 @@ fn compute_amounts(
 }
 
 /// EIP-712 typed-data payload that the host wallet will sign. Mirrors the
-/// shape `host::CommitEip712` expects (typed_data + human description).
+/// shape `host::EvmCommitMessage` expects (typed_data + human description).
 fn build_order_typed_data(plan: &LimitlessOrderPlan) -> Value {
     json!({
         "types": {
@@ -788,7 +788,7 @@ impl DynAomiTool for BuildOrder {
             obj.insert(
                 "wallet_signature_step".to_string(),
                 json!({
-                    "wallet_tool": host::CommitEip712::tool_name(),
+                    "wallet_tool": host::EvmCommitMessage::tool_name(),
                     "signing_primitive": "EIP712_TYPED_DATA_V4",
                     "callback_field": "order_signature",
                     "requires_user_confirmation_before_call": true,
@@ -803,7 +803,7 @@ impl DynAomiTool for BuildOrder {
 
         Ok(ToolReturn::route(result)
             .next(|next| {
-                next.add::<host::CommitEip712>(wallet_request)
+                next.add::<host::EvmCommitMessage>(wallet_request)
                     .bind_as("order_signature")
                     .note("Sign this Limitless order. User has already confirmed price/size upstream.");
             })
@@ -825,7 +825,7 @@ pub(crate) struct SubmitOrderArgs {
     /// Order plan produced by `limitless_build_order` — forward verbatim.
     pub order_plan: LimitlessOrderPlan,
     /// Wallet signature for the order typed data. Bound automatically by the
-    /// runtime when `commit_eip712` returns its `order_signature` callback;
+    /// runtime when `evm_commit_message` returns its `order_signature` callback;
     /// the LLM should never have to fill this manually.
     pub order_signature: Option<String>,
     /// Optional client-side idempotency key (max 128 chars).

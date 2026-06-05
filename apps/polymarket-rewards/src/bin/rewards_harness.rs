@@ -615,6 +615,7 @@ fn tool_ctx(tool_name: &str) -> DynToolCallCtx {
         tool_name: tool_name.to_string(),
         call_id: format!("{tool_name}-local"),
         state_attributes: Map::new(),
+        secrets: Default::default(),
     }
 }
 

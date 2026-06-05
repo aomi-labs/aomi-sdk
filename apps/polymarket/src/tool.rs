@@ -42,7 +42,7 @@ fn build_polymarket_follow_up_result(
     wallet_request: Value,
     follow_up: WalletFollowUp<'_>,
 ) -> Result<ToolReturn, String> {
-    let wallet_tool = host::CommitEip712::tool_name();
+    let wallet_tool = host::EvmCommitMessage::tool_name();
     let obj = result
         .as_object_mut()
         .ok_or_else(|| "result is not an object".to_string())?;
@@ -65,7 +65,7 @@ fn build_polymarket_follow_up_result(
 
     Ok(ToolReturn::route(result)
         .next(|next| {
-            next.add::<host::CommitEip712>(wallet_request)
+            next.add::<host::EvmCommitMessage>(wallet_request)
                 .bind_as(follow_up.callback_field)
                 .note(wallet_step_prompt);
         })

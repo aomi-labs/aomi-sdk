@@ -95,7 +95,7 @@ Key points:
 
 ## How this maps to our aomi `byreal` app — perps
 
-Our app collapses Flow 2 into routed `build_*` / `submit_*` pairs and replaces the in-process ECDSA step with a hop through `commit_eip712` to the host wallet — same architecture, signer extracted into a separate trust domain. We deliberately skipped Flow 1 entirely (no agent approval), so today the host wallet signs every trade as if it were the master.
+Our app collapses Flow 2 into routed `build_*` / `submit_*` pairs and replaces the in-process ECDSA step with a hop through `evm_commit_message` to the host wallet — same architecture, signer extracted into a separate trust domain. We deliberately skipped Flow 1 entirely (no agent approval), so today the host wallet signs every trade as if it were the master.
 
 ```mermaid
 sequenceDiagram
@@ -111,9 +111,9 @@ sequenceDiagram
     App->>App: build Actions::Order via hl_ranger
     App->>App: nonce, connection_id, typed_data
     App-->>LLM: ToolReturn preview plus route
-    Note right of App: route adds host CommitEip712 then awaits master_signature
+    Note right of App: route adds host EvmCommitMessage then awaits master_signature
 
-    LLM->>Host: commit_eip712 typed_data
+    LLM->>Host: evm_commit_message typed_data
     Host->>Host: user approves and wallet signs
     Host-->>LLM: signature
 
@@ -218,7 +218,7 @@ flowchart LR
     LLM -->|byreal_spot_*| App
     LLM -->|byreal_lp_*| App
 
-    App -->|commit_eip712 typed_data| EVM
+    App -->|evm_commit_message typed_data| EVM
     EVM -->|signature| App
     App -->|POST /exchange| HL
 

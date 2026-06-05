@@ -1,7 +1,7 @@
 //! Marinade write tools — build/submit pairs for `stake` and `liquid_unstake`.
 //!
 //! These are the first tools in any aomi-apps plugin to use the new
-//! `host::SvmStageIx` + `host::SvmCommitTx` route-target chain (ADR 0003
+//! `host::SvmStageIx` + `host::SvmCommitIx` route-target chain (ADR 0003
 //! § Decision A + Decision B; markers shipped in SDK 0.1.23).
 //!
 //! ## Pipeline shape
@@ -14,18 +14,18 @@
 //!                  ↓
 //!  host::SvmStageIx({instructions: [...]})    .next, bind_as("ix_ids")
 //!                  ↓
-//!  host::SvmCommitTx({ix_ids, mode: "wallet"}) .after, awaits("ix_ids")
+//!  host::SvmCommitIx({ix_ids, mode: "wallet"}) .after, awaits("ix_ids")
 //!                  ↓
 //!  wallet signs+sends — sig returned to the LLM
 //! ```
 //!
 //! Two-node route chain: stage as `.next`, commit as `.after`. No
-//! separate `submit_*` continuation — `svm_commit_tx({mode: "wallet"})`
+//! separate `submit_*` continuation — `svm_commit_ix({mode: "wallet"})`
 //! IS the broadcast for the wallet path. byreal-style apps add a
 //! third `submit_*` step because they post to a venue endpoint; this
 //! shape skips that since Marinade has no venue submit endpoint.
 //!
-//! The `internal-rpc` mode of `SvmCommitTx` (runtime-broadcast +
+//! The `internal-rpc` mode of `SvmCommitIx` (runtime-broadcast +
 //! `WalletCallback::Tx*`) is blocked on host #38-pipeline-c; once it
 //! lands, the `mode` arg flips without restructuring.
 //!
@@ -52,14 +52,14 @@
 //!
 //! `HANDOFF.md` tracks the production-readiness gap.
 
-use crate::client::stats;
 use crate::client::MarinadeApp;
-use crate::tool::{require_svm_wallet, MarinadeAcct, MarinadeIx};
+use crate::client::stats;
+use crate::tool::{MarinadeAcct, MarinadeIx, require_svm_wallet};
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
-use base64::{engine::general_purpose::STANDARD as B64, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD as B64};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 // ===========================================================================
@@ -123,7 +123,7 @@ impl DynAomiTool for BuildStake {
     type App = MarinadeApp;
     type Args = BuildStakeArgs;
     const NAME: &'static str = "marinade_build_stake";
-    const DESCRIPTION: &'static str = "Build (do not submit) a Marinade stake: deposit SOL, receive mSOL at the current exchange rate. Returns a preview + a routed `svm_stage_ix` → `svm_commit_tx` plan the host wallet drives. Always emit a one-screen confirmation summary (amount, current APY, expected mSOL output) and stop the turn before calling this.";
+    const DESCRIPTION: &'static str = "Build (do not submit) a Marinade stake: deposit SOL, receive mSOL at the current exchange rate. Returns a preview + a routed `svm_stage_ix` → `svm_commit_ix` plan the host wallet drives. Always emit a one-screen confirmation summary (amount, current APY, expected mSOL output) and stop the turn before calling this.";
 
     fn run_with_routes(
         _app: &Self::App,
@@ -185,7 +185,7 @@ impl DynAomiTool for BuildLiquidUnstake {
     type App = MarinadeApp;
     type Args = BuildLiquidUnstakeArgs;
     const NAME: &'static str = "marinade_build_liquid_unstake";
-    const DESCRIPTION: &'static str = "Build (do not submit) a Marinade **liquid** (instant) unstake: burn mSOL, receive SOL at the current rate minus the liquidity-pool fee (typically 0.1–0.3%, scales with pool utilization). Returns a preview + a routed `svm_stage_ix` → `svm_commit_tx` plan. For zero-fee unstake (1-2 epoch wait + ticket NFT), use `marinade_build_delayed_unstake` (not yet implemented; see HANDOFF.md).";
+    const DESCRIPTION: &'static str = "Build (do not submit) a Marinade **liquid** (instant) unstake: burn mSOL, receive SOL at the current rate minus the liquidity-pool fee (typically 0.1–0.3%, scales with pool utilization). Returns a preview + a routed `svm_stage_ix` → `svm_commit_ix` plan. For zero-fee unstake (1-2 epoch wait + ticket NFT), use `marinade_build_delayed_unstake` (not yet implemented; see HANDOFF.md).";
 
     fn run_with_routes(
         _app: &Self::App,
@@ -217,10 +217,7 @@ impl DynAomiTool for BuildLiquidUnstake {
         build_marinade_route_plan(
             preview,
             vec![ix],
-            format!(
-                "Marinade liquid unstake: {} mSOL → SOL",
-                args.msol_amount
-            ),
+            format!("Marinade liquid unstake: {} mSOL → SOL", args.msol_amount),
         )
     }
 }
@@ -266,8 +263,8 @@ fn deposit_accounts_stub(user: &str) -> Vec<MarinadeAcct> {
         acct("__TODO_liq_pool_msol_leg", false, true),
         acct("__TODO_liq_pool_msol_leg_authority", false, false),
         acct("__TODO_reserve_pda", false, true),
-        acct(user, true, true),                          // transfer_from
-        acct("__TODO_user_msol_ata", false, true),       // mint_to (derive via ATA)
+        acct(user, true, true),                    // transfer_from
+        acct("__TODO_user_msol_ata", false, true), // mint_to (derive via ATA)
         acct("__TODO_msol_mint_authority", false, false),
         acct(SYSTEM_PROGRAM, false, false),
         acct(TOKEN_PROGRAM, false, false),
@@ -298,15 +295,15 @@ fn acct(pubkey: &str, is_signer: bool, is_writable: bool) -> MarinadeAcct {
 }
 
 // ===========================================================================
-// Route plan helper — host::SvmStageIx → host::SvmCommitTx({mode: "wallet"})
+// Route plan helper — host::SvmStageIx → host::SvmCommitIx({mode: "wallet"})
 // ===========================================================================
 
 /// Build the canonical Marinade route plan: stage ixs on the host, then
 /// commit via wallet-broadcast. This is the first aomi-apps consumer of
-/// the `host::SvmStageIx` + `host::SvmCommitTx` markers shipped in SDK
+/// the `host::SvmStageIx` + `host::SvmCommitIx` markers shipped in SDK
 /// 0.1.23.
 ///
-/// Two-node chain: `SvmStageIx` as `.next` (binds `ix_ids`), `SvmCommitTx`
+/// Two-node chain: `SvmStageIx` as `.next` (binds `ix_ids`), `SvmCommitIx`
 /// as `.after` (awaits `ix_ids`). No separate submit_* step — wallet-mode
 /// commit IS the broadcast.
 ///
@@ -328,7 +325,7 @@ fn build_marinade_route_plan(
             .bind_as("ix_ids")
             .note("Stage Marinade instructions for assembly.");
         })
-        .after::<host::SvmCommitTx>(json!({
+        .after::<host::SvmCommitIx>(json!({
             "mode": "wallet",
             "version": "v0",
         }))
@@ -388,10 +385,8 @@ mod tests {
 
     #[test]
     fn liquid_unstake_ix_data_starts_with_discriminator() {
-        let ix = build_liquid_unstake_ix(
-            "So11111111111111111111111111111111111111112",
-            500_000_000,
-        );
+        let ix =
+            build_liquid_unstake_ix("So11111111111111111111111111111111111111112", 500_000_000);
         let data = B64.decode(ix.data_base64).expect("data is base64");
         assert_eq!(&data[..8], &liquid_unstake_discriminator());
         let amount = u64::from_le_bytes(data[8..16].try_into().unwrap());
@@ -429,7 +424,7 @@ mod tests {
     fn route_plan_serializes_with_stage_then_commit() {
         // Smoke-test the route shape end-to-end: build a plan, serialize
         // the ToolReturn, assert the route chain is
-        // [SvmStageIx, SvmCommitTx] in that order with the right
+        // [SvmStageIx, SvmCommitIx] in that order with the right
         // bind/awaits aliases.
         let plan = build_marinade_route_plan(
             json!({"action_kind": "stake", "preview": {}}),
@@ -450,7 +445,7 @@ mod tests {
             .iter()
             .filter_map(|r| r.get("tool").and_then(Value::as_str))
             .collect();
-        assert_eq!(tools, vec!["svm_stage_ix", "svm_commit_tx"]);
+        assert_eq!(tools, vec!["svm_stage_ix", "svm_commit_ix"]);
 
         // The commit step awaits the stage step's bound alias.
         let commit = &routes[1];
@@ -465,10 +460,7 @@ mod tests {
 
         // The stage step binds the alias the commit step awaits.
         let stage = &routes[0];
-        assert_eq!(
-            stage.get("bind_as").and_then(Value::as_str),
-            Some("ix_ids")
-        );
+        assert_eq!(stage.get("bind_as").and_then(Value::as_str), Some("ix_ids"));
 
         // The commit step carries wallet mode (today; flips to
         // internal-rpc when host #38-pipeline-c lands).

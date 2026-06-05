@@ -62,7 +62,7 @@ its own client (`client/{perps,spot,lp}.rs`) and tool module
 (`tool/{perps,spot,lp}.rs`). Every write tool is a **build/submit pair**:
 `build_*` returns a preview value + a routed signing step; the host wallet
 signs; the runtime splices the signature into the matching `submit_*` step.
-Perps routes through `host::CommitEip712` (already supported); spot and lp
+Perps routes through `host::EvmCommitMessage` (already supported); spot and lp
 route through `host::SvmSignTx` (not yet supported).
 
 App never holds a key. Wallet addresses come from host context — `domain.evm.address`
@@ -114,7 +114,7 @@ cargo test --manifest-path apps/byreal/Cargo.toml \
 
 The SDK marker exists and the app emits the route step. The runtime needs to
 handle it. **Full spec is in [`docs/sign-tx-solana-runtime.md`](../../docs/sign-tx-solana-runtime.md)** —
-~7 steps, mirrors `commit_eip712`'s wallet-adapter integration. Until this lands:
+~7 steps, mirrors `evm_commit_message`'s wallet-adapter integration. Until this lands:
 
 - `byreal_spot_build_swap` returns a route plan but no host can execute it.
 - `byreal_lp_build_claim_rewards` same.

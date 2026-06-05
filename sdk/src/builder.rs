@@ -54,7 +54,7 @@ pub mod host {
     host_target!(BraveSearch, "brave_search");
     host_target!(CommitTx, "commit_tx");
     host_target!(CommitTxs, "commit_txs");
-    host_target!(CommitEip712, "commit_eip712");
+    host_target!(EvmCommitMessage, "evm_commit_message");
     host_target!(StageTx, "stage_tx");
     host_target!(SimulateBatch, "simulate_batch");
     host_target!(ViewState, "view_state");
@@ -67,10 +67,11 @@ pub mod host {
     // ── SVM (Solana) primitives ──────────────────────────────────────────
     //
     // Route-target markers for the SVM verbs in the `svm-core` namespace
-    // family (split into `svm-reads`, `svm-stage`, `svm-commit`,
+    // family (split into `svm-reads`, `svm-ix-broadcast`,
+    // `svm-ix-sign`, `svm-tx-broadcast`, `svm-tx-sign`,
     // `svm-sign-data`, `svm-bundle` on the host side per ADR 0004
     // § Decision B). App `build_*` tools emit route plans that drive
-    // these as continuations — mirroring how EVM apps use `CommitEip712`
+    // these as continuations — mirroring how EVM apps use `EvmCommitMessage`
     // for the typed-data signing step.
     //
     // Three lanes from ADR 0003 § Decision A:
@@ -91,21 +92,18 @@ pub mod host {
     //   - Stage / sim / commit (lane-symmetric per ADR 0003 § Decision A):
     //       `SvmStageIx`     → `svm_stage_ix`     (Lane 1 producer)
     //       `SvmStageTx`     → `svm_stage_tx`     (Lane 2 producer)
-    //       `SvmSimulateIx`  → `svm_simulate_ix`  (Lane 1 consumer; takes
-    //                          `ix_ids` + assembly args)
-    //       `SvmSimulateTx`  → `svm_simulate_tx`  (Lane 2 consumer; takes
-    //                          `tx_id`; blob's metadata is authoritative)
-    //       `SvmCommitTx`    → `svm_commit_tx` (carries
-    //                          `mode: "wallet" | "internal-rpc"` arg;
-    //                          internal-rpc errors loud until host
-    //                          #38-pipeline-c lands the broadcast loop;
-    //                          Lane 2 `tx_id` arm lands with that row)
+    //       `SvmSimulateIx`  → `svm_simulate_ix`  (Lane 1 sim consumer)
+    //       `SvmSimulateTx`  → `svm_simulate_tx`  (Lane 2 sim consumer)
+    //       `SvmCommitIx`    → `svm_commit_ix`    (Lane 1 commit; takes
+    //                          `ix_ids` + assembly args + `mode`)
+    //       `SvmCommitTx`    → `svm_commit_tx`    (Lane 2 commit; takes
+    //                          `tx_id` + `mode`; blob authoritative)
+    //                          Both commit tools carry a `mode`; wallet
+    //                          is the currently shipped app-facing path.
     //   - Sign-only (app-broadcast pattern, ADR 0004 § C.2):
-    //       `SvmSignTx`      → `svm_sign_tx` (blocked on
-    //                          host #39-svm-apps-c; marker shipped
-    //                          forward-compat — byreal-style apps wrap
+    //       `SvmSignTx`      → `svm_sign_tx`; byreal-style apps wrap
     //                          signing here, then POST signed bytes to
-    //                          their own venue endpoint)
+    //                          their own venue endpoint.
     //
     // Lane-symmetric note: stage / simulate split per tool name, NOT per
     // XOR arg. The lane lives in the tool the LLM picks; arg shapes are
@@ -140,16 +138,13 @@ pub mod host {
     //     "description": "...",          // optional, surfaces in UI
     //     "kind": "..." }                // optional, free-form tag
     //
-    // The pre-#39-svm-apps-b transitional inline form for
-    // `SvmSignTx`  (`{ "unsigned_tx": "<base64>", ... }`) remains
-    // supported but Lane 2 staging is now the preferred path — it
-    // unlocks simulate, lets the host re-attach a fresh blockhash
-    // (default), and gives the runtime a single `tx_id` to thread
-    // through any consumer.
+    // The direct inline form for `SvmSignTx`
+    // (`{ "unsigned_tx": "<base64>", ... }`) remains supported, but
+    // Lane 2 staging is the preferred path when the app also needs
+    // simulate or route a single `tx_id` through multiple consumers.
     //
-    // The `preserve_blockhash: bool` arg (default false, true for
-    // venue-validated flows like byreal preData/data byte-compare)
-    // lands with host #39-svm-apps-b.
+    // `preserve_blockhash: bool` defaults true for byte-stable
+    // venue-validated flows like byreal preData/data byte-compare.
     host_target!(SvmStageTx, "svm_stage_tx");
 
     // Lane 1 simulate consumer — assembles the staged ix list into a
@@ -175,7 +170,7 @@ pub mod host {
     // blob's metadata is authoritative. Args contract:
     //   { "tx_id": <u32>,
     //     "mode": "litesvm" | "rpc",          // optional
-    //     "replace_recent_blockhash": <bool>, // optional, default true
+    //     "replace_recent_blockhash": <bool>, // optional, default false
     //     "sig_verify": <bool>,               // optional, default false
     //     "accounts": ["<pubkey>", ...] }     // optional address filter
     //
@@ -183,12 +178,36 @@ pub mod host {
     // with a "use svm_simulate_ix" hint.
     host_target!(SvmSimulateTx, "svm_simulate_tx");
 
-    // Wallet- or runtime-broadcast commit. Carries
-    // `mode: "wallet" | "internal-rpc"` per ADR 0003 § Decision B.
-    // Wallet mode pushes a `SvmTxApproval` envelope through the host
-    // wallet plumbing; internal-rpc returns a loud not-implemented
-    // error until host #38-pipeline-c lands the broadcast loop +
-    // `WalletCallback::Tx*` variants.
+    // Lane 1 commit consumer — assemble the staged ix list into one
+    // VersionedTransaction and request wallet approval. Args contract:
+    //   { "ix_ids": [<u32>, ...],
+    //     "version": "legacy" | "v0",                 // optional
+    //     "address_lookup_tables": ["<pubkey>", ...], // optional (v0 only)
+    //     "compute_units": <u32>,                     // optional
+    //     "priority_microlamports": <u64>,            // optional
+    //     "mode": "wallet" | "internal-rpc" }         // optional, see below
+    //
+    // Mode (shared with `SvmCommitTx` Lane 2):
+    //   - `wallet` (default): host wallet SDK signs + broadcasts via
+    //     signAndSendTransaction. The only working path today.
+    //   - `internal-rpc`: runtime signs and submits via its own RPC +
+    //     confirm loop. Errors loud until host #38-pipeline-c lands
+    //     the broadcast loop + `WalletCallback::Tx*` variants.
+    //
+    // Rejects ids that resolve to `svm_stage_tx`-staged blobs with a
+    // "use svm_commit_tx" hint.
+    host_target!(SvmCommitIx, "svm_commit_ix");
+
+    // Lane 2 commit consumer — request wallet approval for a
+    // `svm_stage_tx`-staged transaction blob. The blob's version / ALTs /
+    // blockhash / compute budget are preserved; there are no assembly
+    // args, because the blob's metadata is authoritative. Args contract:
+    //   { "tx_id": <u32>,
+    //     "mode": "wallet" | "internal-rpc" }         // optional
+    //
+    // Same `mode` semantics as `SvmCommitIx`. Rejects ids that resolve
+    // to `svm_stage_ix`-staged instructions with a "use svm_commit_ix"
+    // hint.
     host_target!(SvmCommitTx, "svm_commit_tx");
 
     // Sign-only verb for the **app-broadcast** pattern (ADR 0004 §
@@ -200,11 +219,6 @@ pub mod host {
     // Args contract (Lane 2 staged, post-#39-svm-apps-b):
     //   { "tx_id": <u32>, "description": "..." }
     // Bound artifact (string): base64 signed tx bytes.
-    //
-    // Blocked on host #39-svm-apps-c — host tool `svm_sign_tx`
-    // doesn't exist yet. Marker ships forward-compat so apps can be
-    // authored against the right shape; runtime route dispatch will
-    // log warn-skip until the host catches up.
     //
     // Note: there is intentionally no `SvmSignTxs` (plural) — Solana
     // wallets sign one tx per user prompt. Apps that need multiple
@@ -454,7 +468,7 @@ impl<'a> NextStepBuilder<'a> {
     /// `after(...).awaits_all([..])` consume it.
     ///
     /// Aliases must be unique within a route plan, but the *tool name* does not
-    /// have to be — a single plan may have multiple `commit_eip712` / `stage_tx`
+    /// have to be — a single plan may have multiple `evm_commit_message` / `stage_tx`
     /// / `svm_sign_tx` steps each binding to a distinct alias. The runtime
     /// consumes aliases in FIFO order per tool name, so list the steps in the
     /// order you expect the LLM/user to drive them (use `.note(...)` to

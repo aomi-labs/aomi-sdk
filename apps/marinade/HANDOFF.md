@@ -1,17 +1,16 @@
 # Marinade aomi-app — handoff
 
-Reference SVM app demonstrating `BuiltinApp::SvmSelfBroadcast` variant
-declaration + the new `host::SvmStageIx` / `host::SvmCommitTx` route
-markers (SDK 0.1.23). Second reference app after byreal; the contrast
-is intentional:
+Reference SVM app demonstrating explicit self-broadcast namespaces plus
+the new `host::SvmStageIx` / `host::SvmCommitIx` route markers (SDK
+0.1.23). Second reference app after byreal; the contrast is intentional:
 
 | | byreal | marinade |
 |---|---|---|
-| Namespace declaration | string-typed (`["evm-core", "svm-reads"]`) | variant-typed (`variant = SvmSelfBroadcast`) |
+| Namespace declaration | `["evm-core", "svm-reads"]` | `["svm-reads", "svm-ix-broadcast", "svm-tx-broadcast"]` |
 | Broadcaster | venue HTTP submit (byreal `/dex/v2/send-swap-tx`) | wallet (today) / runtime RPC (post-#38-pipeline-c) |
 | Chain mix | cross-chain (Hyperliquid + Solana) | SVM-only |
 | Tx production | venue-built unsigned tx blob (Lane 2) | app-composed ix list (Lane 1) |
-| Route markers used | `host::SvmSignTx` | `host::SvmStageIx` + `host::SvmCommitTx` |
+| Route markers used | `host::SvmSignTx` | `host::SvmStageIx` + `host::SvmCommitIx` |
 
 The full matrix of pipeline shapes lives in
 `product-mono/docs/topics/solana/ralph/state/svm-evm-gap-39.md` § Variant-
@@ -22,21 +21,20 @@ by-variant gap audit.
 - **All four read tools** hit `api.marinade.finance` directly and return
   live data: `marinade_get_apy`, `marinade_get_tvl`,
   `marinade_get_exchange_rate`, `marinade_get_validators`. Manifest +
-  variant declaration verified by the 4 smoke tests at
+  namespace declaration verified by the 4 smoke tests at
   `src/lib.rs::testing::tests`.
 - **Write tools** (`marinade_build_stake`,
   `marinade_build_liquid_unstake`) produce a structurally correct route
-  plan: preview → `host::SvmStageIx` → `host::SvmCommitTx({mode: "wallet"})`
+  plan: preview → `host::SvmStageIx` → `host::SvmCommitIx({mode: "wallet"})`
   → `submit_*` continuation. The plan shape is end-to-end correct against
   the route-builder contract (verified in the
   `route_builder_serializes_*` tests on the SDK side too).
 - **Anchor discriminators** for `deposit` and `liquid_unstake` are
   computed from `sha256("global:<method>")[..8]` and pinned in tests.
   Production-correct against Marinade IDL.
-- **Variant + namespace composition**: `MarinadeApp.variant()` returns
-  `Some(SvmSelfBroadcast)`; `manifest.namespaces` is `None` because the
-  variant arm of `dyn_aomi_app!` sets the trait method to `None` and
-  expects the host to seed from `variant.default_namespaces()`.
+- **Namespace composition**: `manifest.namespaces` declares
+  `["svm-reads", "svm-ix-broadcast", "svm-tx-broadcast"]`, so the app
+  gets exactly the host read and self-broadcast tools it needs.
 
 ## What's stubbed (the production-readiness gap)
 
@@ -106,7 +104,7 @@ side.
 
 When host `#DynManifest variant consumption` lands (loader reads the
 field and composes `variant.default_namespaces() ∪ explicit_namespaces`),
-this app starts getting `svm-reads + svm-stage + svm-commit`
+this app starts getting `svm-reads + svm-ix-broadcast + svm-tx-broadcast`
 registered automatically from the variant declaration alone. No app-
 side change needed; just verify on the host side that variant-typed
 apps load with the expected namespace set.
@@ -129,8 +127,8 @@ for the variant-vs-tools gap audit and impl row order. As of iter 39:
 
 - `#38-pipeline-c` (runtime broadcast loop) — critical path; unblocks
   this app's `internal-rpc` mode.
-- `#39-svm-apps-c` (`svm_sign_tx`) — unblocks byreal end-to-end, not
-  this app (Marinade uses commit not sign-only).
+- `#39-svm-apps-c` (`svm_sign_tx`) — landed; relevant to byreal-style
+  sign-only apps, not this app (Marinade uses commit).
 - `#38-pipeline-b1/b2/b3` (Lane 2 storage + `svm_stage_tx`) — unblocks
   the `host::SvmStageTx` marker addition to SDK + apps that use
   venue-built tx blobs (byreal again, not Marinade).
@@ -146,7 +144,7 @@ cargo build         # produces target/debug/libmarinade.dylib (or .so)
 ```
 
 The dylib loads against any host that knows the new
-`svm-reads + svm-stage + svm-commit` sub-namespaces (host iter 39+) and
+`svm-reads + svm-ix-broadcast + svm-tx-broadcast` sub-namespaces and
 will surface 4 read tools + 4 write tools to the LLM. Read tools work
 immediately; write tools execute up through stage, then fail at simulate
 with `InvalidAccountData` until follow-up #1 lands.

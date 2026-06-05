@@ -14,7 +14,7 @@ pub(crate) mod spot;
 
 use aomi_sdk::*;
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Wrap a tool's response value with the `"source": "byreal"` tag so the
 /// LLM can disambiguate provider when multiple read tools' outputs are
@@ -63,7 +63,7 @@ pub(crate) fn validate_confirmation(token: Option<&str>) -> Result<(), String> {
     }
 }
 
-/// Build a `commit_eip712` route plan: app emits the typed-data + a
+/// Build a `evm_commit_message` route plan: app emits the typed-data + a
 /// continuation, host wallet signs, runtime splices the signature into the
 /// `submit_*` tool args under `signature`.
 ///
@@ -82,7 +82,7 @@ pub(crate) fn build_evm_signed_routes<Submit: RouteTarget>(
     });
     ToolReturn::route(value)
         .next(|next| {
-            next.add::<host::CommitEip712>(json!({
+            next.add::<host::EvmCommitMessage>(json!({
                 "typed_data": typed_data,
                 "description": description,
                 "continuation": continuation,

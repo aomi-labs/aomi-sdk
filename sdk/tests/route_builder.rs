@@ -20,7 +20,7 @@ fn routed_tool_return_serializes_to_envelope() {
     let tool_return = ToolReturn::with_routes(
         json!({"status": "awaiting_wallet"}),
         [
-            RouteStep::on_return("commit_eip712", json!({"typed_data": {}}))
+            RouteStep::on_return("evm_commit_message", json!({"typed_data": {}}))
                 .bind_as("clob_l1_signature"),
             RouteStep::on_bound_event(
                 "submit_polymarket_order",
@@ -38,7 +38,7 @@ fn routed_tool_return_serializes_to_envelope() {
             "__aomi_tool_value": {"status": "awaiting_wallet"},
             "__aomi_tool_routes": [
                 {
-                    "tool": "commit_eip712",
+                    "tool": "evm_commit_message",
                     "args": {"typed_data": {}},
                     "trigger": {"type": "on_sync_return"},
                     "bind_as": "clob_l1_signature",
@@ -79,6 +79,10 @@ fn svm_host_route_target_names_match_host_tools() {
         "svm_simulate_tx"
     );
     assert_eq!(
+        <host::SvmCommitIx as RouteTarget>::tool_name(),
+        "svm_commit_ix"
+    );
+    assert_eq!(
         <host::SvmCommitTx as RouteTarget>::tool_name(),
         "svm_commit_tx"
     );
@@ -90,7 +94,9 @@ fn svm_host_route_target_names_match_host_tools() {
 }
 
 #[test]
-fn svm_stage_commit_route_plan_serializes() {
+fn svm_lane_1_stage_commit_route_plan_serializes() {
+    // Lane 1 canonical chain — stage_ix → commit_ix. Mirrors what
+    // Marinade's build_stake emits (wallet-mode broadcast).
     let plan = ToolReturn::route(json!({"status": "previewed"}))
         .next(|next| {
             next.add::<host::SvmStageIx>(json!({
@@ -99,7 +105,7 @@ fn svm_stage_commit_route_plan_serializes() {
             }))
             .bind_as("ix_ids");
         })
-        .after::<host::SvmCommitTx>(json!({
+        .after::<host::SvmCommitIx>(json!({
             "mode": "wallet",
             "version": "v0",
         }))
@@ -114,7 +120,43 @@ fn svm_stage_commit_route_plan_serializes() {
         .iter()
         .filter_map(|route| route.get("tool").and_then(Value::as_str))
         .collect();
-    assert_eq!(tools, vec!["svm_stage_ix", "svm_commit_tx"]);
+    assert_eq!(tools, vec!["svm_stage_ix", "svm_commit_ix"]);
+}
+
+#[test]
+fn svm_lane_2_stage_commit_route_plan_serializes() {
+    // Lane 2 canonical chain — stage_tx → commit_tx. Future shape for
+    // venue blob → wallet sign once apps adopt Lane 2 commit.
+    let plan = ToolReturn::route(json!({"status": "previewed"}))
+        .next(|next| {
+            next.add::<host::SvmStageTx>(json!({
+                "tx": "AgAB...base64...",
+                "description": "swap via byreal RFQ",
+            }))
+            .bind_as("tx_id");
+        })
+        .after::<host::SvmCommitTx>(json!({"mode": "wallet"}))
+        .awaits("tx_id")
+        .build();
+
+    let routes = serde_json::to_value(&plan).unwrap()["__aomi_tool_routes"]
+        .as_array()
+        .expect("routes present")
+        .clone();
+    let tools: Vec<&str> = routes
+        .iter()
+        .filter_map(|route| route.get("tool").and_then(Value::as_str))
+        .collect();
+    assert_eq!(tools, vec!["svm_stage_tx", "svm_commit_tx"]);
+
+    // Lane 2 commit takes only `tx_id` + `mode` — assert no
+    // accidental Lane 1 args leaked into the after step's payload.
+    let commit_args = routes[1].get("args").expect("args present");
+    let args_obj = commit_args.as_object().expect("args object");
+    assert!(!args_obj.contains_key("ix_ids"));
+    assert!(!args_obj.contains_key("version"));
+    assert!(!args_obj.contains_key("address_lookup_tables"));
+    assert!(!args_obj.contains_key("compute_units"));
 }
 
 #[test]
@@ -197,7 +239,7 @@ fn svm_lane_2_stage_simulate_route_plan_serializes() {
 fn route_builder_serializes_bound_artifact_plan() {
     let tool_return = ToolReturn::route(json!({"status": "awaiting_wallet"}))
         .next(|next| {
-            next.add::<host::CommitEip712>(json!({"typed_data": {}}))
+            next.add::<host::EvmCommitMessage>(json!({"typed_data": {}}))
                 .bind_as("clob_l1_signature")
                 .note("sign this first");
         })
@@ -213,7 +255,7 @@ fn route_builder_serializes_bound_artifact_plan() {
             "__aomi_tool_value": {"status": "awaiting_wallet"},
             "__aomi_tool_routes": [
                 {
-                    "tool": "commit_eip712",
+                    "tool": "evm_commit_message",
                     "args": {"typed_data": {}},
                     "trigger": {"type": "on_sync_return"},
                     "bind_as": "clob_l1_signature",
@@ -367,7 +409,7 @@ fn route_builder_rejects_invalid_aliases() {
 fn route_builder_rejects_duplicate_aliases() {
     let err = ToolReturn::route(json!({"status": "ok"}))
         .next(|next| {
-            next.add::<host::CommitEip712>(json!({"typed_data": {}}))
+            next.add::<host::EvmCommitMessage>(json!({"typed_data": {}}))
                 .bind_as("dup");
             next.add::<SyncTool>(json!({"x": 1})).bind_as("dup");
         })
@@ -408,10 +450,10 @@ fn route_builder_rejects_invalid_enforced_producers() {
 fn route_builder_allows_repeated_tool_with_distinct_binds() {
     let tool_return = ToolReturn::route(json!({"status": "awaiting_wallet"}))
         .next(|next| {
-            next.add::<host::CommitEip712>(json!({"typed_data": {"approval": true}}))
+            next.add::<host::EvmCommitMessage>(json!({"typed_data": {"approval": true}}))
                 .bind_as("approval")
                 .note("Sign the Permit2 approval first.");
-            next.add::<host::CommitEip712>(json!({"typed_data": {"trade": true}}))
+            next.add::<host::EvmCommitMessage>(json!({"typed_data": {"trade": true}}))
                 .bind_as("trade")
                 .note("Then sign the gasless trade.");
         })
@@ -420,9 +462,9 @@ fn route_builder_allows_repeated_tool_with_distinct_binds() {
         .build();
 
     assert_eq!(tool_return.routes.len(), 3);
-    assert_eq!(tool_return.routes[0].tool, "commit_eip712");
+    assert_eq!(tool_return.routes[0].tool, "evm_commit_message");
     assert_eq!(tool_return.routes[0].bind_as.as_deref(), Some("approval"));
-    assert_eq!(tool_return.routes[1].tool, "commit_eip712");
+    assert_eq!(tool_return.routes[1].tool, "evm_commit_message");
     assert_eq!(tool_return.routes[1].bind_as.as_deref(), Some("trade"));
     assert_all_bound(&tool_return, &["approval", "trade"]);
 }
@@ -431,9 +473,9 @@ fn route_builder_allows_repeated_tool_with_distinct_binds() {
 fn route_builder_awaits_called_twice_upgrades_to_multi_alias() {
     let tool_return = ToolReturn::route(json!({"status": "awaiting_wallet"}))
         .next(|next| {
-            next.add::<host::CommitEip712>(json!({"typed_data": {"a": true}}))
+            next.add::<host::EvmCommitMessage>(json!({"typed_data": {"a": true}}))
                 .bind_as("approval");
-            next.add::<host::CommitEip712>(json!({"typed_data": {"t": true}}))
+            next.add::<host::EvmCommitMessage>(json!({"typed_data": {"t": true}}))
                 .bind_as("trade");
         })
         .after::<SubmitOrder>(json!({"chain_id": 1}))
@@ -448,7 +490,7 @@ fn route_builder_awaits_called_twice_upgrades_to_multi_alias() {
 fn route_builder_single_awaits_still_uses_on_bound_event() {
     let tool_return = ToolReturn::route(json!({"status": "ok"}))
         .next(|next| {
-            next.add::<host::CommitEip712>(json!({"typed_data": {}}))
+            next.add::<host::EvmCommitMessage>(json!({"typed_data": {}}))
                 .bind_as("signature");
         })
         .after::<SubmitOrder>(json!({}))
@@ -470,7 +512,7 @@ fn route_builder_rejects_invalid_awaits_all_aliases() {
         assert_err_contains(
             ToolReturn::route(json!({"status": "ok"}))
                 .next(|next| {
-                    next.add::<host::CommitEip712>(json!({"typed_data": {}}))
+                    next.add::<host::EvmCommitMessage>(json!({"typed_data": {}}))
                         .bind_as("approval");
                 })
                 .after::<SubmitOrder>(json!({}))
@@ -498,5 +540,278 @@ fn assert_all_bound(tool_return: &ToolReturn, expected: &[&str]) {
             );
         }
         other => panic!("expected OnAllBoundEvents, got {other:?}"),
+    }
+}
+
+// ===========================================================================
+// 3-node SVM pipeline tests
+//
+// The high-level `RouteBuilder` API (`.next` + `.after`) ships exactly two
+// trigger classes: one or more on-sync-return steps plus one
+// on-bound-event after-step. That's enough for the 2-node patterns most
+// apps emit today (Marinade's `stage_ix → commit_ix`, byreal's `sign_tx
+// → submit_*`).
+//
+// Future SVM apps that want a stage → simulate → commit preview flow
+// need the LOWER-LEVEL `RouteStep::on_return_to` / `RouteStep::on_bound_event`
+// constructors to wire a fully sequential 3-node chain. The tests below pin
+// that shape using the host markers from the SDK's `host` module, so:
+//
+//   - SDK route-machinery regressions (e.g. trigger serialization, alias
+//     handling, RouteTarget::tool_name drift) surface here without needing
+//     a real app to wire them up.
+//   - Future helper that wraps this pattern (e.g.
+//     `build_svm_stage_sim_commit_routes`) has a reference test to mirror.
+//   - The exact host verb names (`svm_stage_tx`, `svm_simulate_tx`,
+//     `svm_commit_tx`) are pinned against the markers; a rename in the host
+//     contract breaks here before it breaks a live wallet dispatch.
+// ===========================================================================
+
+/// Lane 2 (venue tx blob) 3-node chain:
+///
+///   parent ──sync return──▶ svm_stage_tx          binds  tx_id
+///                            │
+///                            └─bound event(tx_id)─▶ svm_simulate_tx   binds sim_result
+///                                                    │
+///                                                    └─bound event(sim_result)─▶ svm_commit_tx
+///
+/// Each step's trigger references the *previous* step's binding alias,
+/// not the stage's `tx_id`. That's what makes the chain sequential vs
+/// a fan-out (both sim and commit awaiting the same `tx_id`). The runtime
+/// injects the bound value into the awaiting step's args under the
+/// alias's name, so `svm_simulate_tx` and `svm_commit_tx` see
+/// `tx_id` / `sim_result` materialised at dispatch time without the app
+/// having to thread them through the static args template.
+#[test]
+fn lane_2_stage_sim_commit_chain_binds_sequentially() {
+    let parent_value = json!({
+        "action_kind": "swap",
+        "preview": { "in": "1000", "out": "950" },
+    });
+
+    // Step 1 — stage the venue-supplied tx blob. Synthetic base64 — this
+    // layer doesn't decode it; the host's pipeline finalizer does.
+    let mut stage = RouteStep::on_return_to::<host::SvmStageTx>(json!({
+        "tx": "AQID",
+        "description": "venue swap blob",
+        "preserve_blockhash": true,
+    }));
+    stage.bind_as = Some("tx_id".to_string());
+
+    // Step 2 — simulate the staged tx. The runtime injects `tx_id`
+    // from the bound alias; the app leaves it out of the static args.
+    let mut sim = RouteStep::on_bound_event(
+        host::SvmSimulateTx::tool_name(),
+        json!({ "mode": "litesvm" }),
+        "tx_id",
+    );
+    sim.bind_as = Some("sim_result".to_string());
+
+    // Step 3 — commit. Awaits `sim_result` so the chain is strictly
+    // sequential (commit doesn't fire until sim returns). The runtime
+    // still has `tx_id` in the artifact store for commit to use; it's
+    // already bound from step 1.
+    let commit = RouteStep::on_bound_event(
+        host::SvmCommitTx::tool_name(),
+        json!({ "mode": "wallet" }),
+        "sim_result",
+    );
+
+    let tool_return = ToolReturn::with_routes(
+        parent_value.clone(),
+        [stage.clone(), sim.clone(), commit.clone()],
+    );
+
+    // Round-trip the envelope. Catches serializer drift on
+    // `__aomi_tool_routes` and the per-step shape.
+    let env = serde_json::to_value(&tool_return).expect("envelope serializes");
+    assert_eq!(env["__aomi_tool_return"], json!(true));
+    assert_eq!(env["__aomi_tool_value"], parent_value);
+
+    let routes = env["__aomi_tool_routes"]
+        .as_array()
+        .expect("routes serialize to array");
+    assert_eq!(routes.len(), 3, "3-node chain has exactly 3 steps");
+
+    // ── Step 1: stage_tx ─────────────────────────────────────────────
+    let s = &routes[0];
+    assert_eq!(s["tool"], json!(host::SvmStageTx::tool_name()));
+    assert_eq!(
+        s["tool"],
+        json!("svm_stage_tx"),
+        "marker drift — `host::SvmStageTx` no longer maps to `svm_stage_tx`"
+    );
+    assert_eq!(s["trigger"], json!({ "type": "on_sync_return" }));
+    assert_eq!(
+        s["bind_as"],
+        json!("tx_id"),
+        "stage must bind `tx_id` — downstream sim awaits this alias"
+    );
+    assert_eq!(s["args"]["tx"], json!("AQID"));
+    assert_eq!(s["args"]["preserve_blockhash"], json!(true));
+
+    // ── Step 2: simulate_tx ──────────────────────────────────────────
+    let s = &routes[1];
+    assert_eq!(s["tool"], json!(host::SvmSimulateTx::tool_name()));
+    assert_eq!(s["tool"], json!("svm_simulate_tx"));
+    assert_eq!(
+        s["trigger"],
+        json!({ "type": "on_bound_event", "alias": "tx_id" }),
+        "sim must wait on `tx_id` — fires only after stage binds"
+    );
+    assert_eq!(
+        s["bind_as"],
+        json!("sim_result"),
+        "sim must bind `sim_result` — downstream commit awaits this"
+    );
+    // `tx_id` is NOT in the static args — the runtime injects it from
+    // the bound alias at dispatch time. The static args carry only the
+    // mode override the app cares about.
+    assert!(
+        s["args"].get("tx_id").is_none(),
+        "sim's static args must NOT pre-populate tx_id; runtime injects it from the bind"
+    );
+    assert_eq!(s["args"]["mode"], json!("litesvm"));
+
+    // ── Step 3: commit_tx ────────────────────────────────────────────
+    let s = &routes[2];
+    assert_eq!(s["tool"], json!(host::SvmCommitTx::tool_name()));
+    assert_eq!(s["tool"], json!("svm_commit_tx"));
+    assert_eq!(
+        s["trigger"],
+        json!({ "type": "on_bound_event", "alias": "sim_result" }),
+        "commit must wait on `sim_result` — preview before broadcast"
+    );
+    assert_eq!(
+        s["args"]["mode"],
+        json!("wallet"),
+        "commit mode must be `wallet` (only working path until host #38-pipeline-c)"
+    );
+
+    // Round-trip back into the ToolReturn — verifies the envelope
+    // parses what it serializes.
+    let back = ToolReturn::from_value(env).expect("envelope round-trips");
+    assert_eq!(back.routes.len(), 3);
+    assert_eq!(back.routes[0].bind_as.as_deref(), Some("tx_id"));
+    assert_eq!(back.routes[1].bind_as.as_deref(), Some("sim_result"));
+    match &back.routes[1].trigger {
+        RouteTrigger::OnBoundEvent { alias } => assert_eq!(alias, "tx_id"),
+        other => panic!("sim trigger should be OnBoundEvent(tx_id), got {other:?}"),
+    }
+    match &back.routes[2].trigger {
+        RouteTrigger::OnBoundEvent { alias } => assert_eq!(alias, "sim_result"),
+        other => panic!("commit trigger should be OnBoundEvent(sim_result), got {other:?}"),
+    }
+}
+
+/// Lane 1 (composed-from-instructions) 3-node chain — symmetric to the
+/// Lane 2 case above. The host markers differ (`SvmStageIx` /
+/// `SvmSimulateIx` / `SvmCommitIx` instead of the `*Tx` triple) and the
+/// stage args shape is `instructions: [...]` rather than `tx: "<b64>"`,
+/// but the binding/awaits chain is identical. Pinning both lanes here
+/// makes future host renames (or SDK marker drift) surface in one place.
+#[test]
+fn lane_1_stage_sim_commit_chain_binds_sequentially() {
+    let parent_value = json!({ "action_kind": "transfer", "amount": "1000000" });
+
+    let mut stage = RouteStep::on_return_to::<host::SvmStageIx>(json!({
+        "instructions": [
+            {
+                "program_id": "11111111111111111111111111111111",
+                "accounts": [],
+                "data_base64": "",
+                "description": "synthetic ix"
+            }
+        ],
+        "description": "Lane 1 transfer",
+    }));
+    stage.bind_as = Some("ix_ids".to_string());
+
+    let mut sim = RouteStep::on_bound_event(
+        host::SvmSimulateIx::tool_name(),
+        json!({ "version": "legacy" }),
+        "ix_ids",
+    );
+    sim.bind_as = Some("sim_result".to_string());
+
+    let commit = RouteStep::on_bound_event(
+        host::SvmCommitIx::tool_name(),
+        json!({ "mode": "wallet", "version": "legacy" }),
+        "sim_result",
+    );
+
+    let tool_return = ToolReturn::with_routes(parent_value, [stage, sim, commit]);
+    let env = serde_json::to_value(&tool_return).expect("envelope serializes");
+    let routes = env["__aomi_tool_routes"].as_array().expect("routes");
+
+    assert_eq!(routes.len(), 3);
+    assert_eq!(routes[0]["tool"], json!("svm_stage_ix"));
+    assert_eq!(routes[0]["bind_as"], json!("ix_ids"));
+    assert_eq!(routes[1]["tool"], json!("svm_simulate_ix"));
+    assert_eq!(
+        routes[1]["trigger"],
+        json!({ "type": "on_bound_event", "alias": "ix_ids" })
+    );
+    assert_eq!(routes[1]["bind_as"], json!("sim_result"));
+    assert_eq!(routes[2]["tool"], json!("svm_commit_ix"));
+    assert_eq!(
+        routes[2]["trigger"],
+        json!({ "type": "on_bound_event", "alias": "sim_result" })
+    );
+
+    // Marker drift check: every host::Svm* tool_name returned from the
+    // SDK must agree with the host's snake_case verb name. If a future
+    // refactor renames either side without updating the other, this is
+    // where it breaks.
+    assert_eq!(host::SvmStageIx::tool_name(), "svm_stage_ix");
+    assert_eq!(host::SvmSimulateIx::tool_name(), "svm_simulate_ix");
+    assert_eq!(host::SvmCommitIx::tool_name(), "svm_commit_ix");
+    assert_eq!(host::SvmStageTx::tool_name(), "svm_stage_tx");
+    assert_eq!(host::SvmSimulateTx::tool_name(), "svm_simulate_tx");
+    assert_eq!(host::SvmCommitTx::tool_name(), "svm_commit_tx");
+}
+
+/// Negative test — if a 3-node chain accidentally awaits the *stage*
+/// alias on the commit step (a common copy-paste bug when extending a
+/// 2-node template into 3 nodes), both sim AND commit fire as soon as
+/// stage binds. They become parallel siblings, not a sequential chain
+/// — sim's result is never gated. This test pins the buggy shape so
+/// that if someone "fixes" the sequential test above by relaxing it
+/// to this pattern, this negative test breaks too and forces a
+/// conscious decision.
+#[test]
+#[allow(non_snake_case)]
+fn fan_out_chain_is_NOT_sequential() {
+    let mut stage = RouteStep::on_return_to::<host::SvmStageTx>(json!({ "tx": "AQID" }));
+    stage.bind_as = Some("tx_id".to_string());
+
+    // BOTH sim and commit awaiting the stage alias = fan-out, not chain.
+    let sim = RouteStep::on_bound_event(host::SvmSimulateTx::tool_name(), json!({}), "tx_id");
+    let commit = RouteStep::on_bound_event(
+        host::SvmCommitTx::tool_name(),
+        json!({ "mode": "wallet" }),
+        "tx_id",
+    );
+
+    let tool_return = ToolReturn::with_routes(json!({}), [stage, sim, commit]);
+
+    // Both downstream steps await the SAME alias — runtime fires them
+    // both when `tx_id` binds. That's a fan-out (commit doesn't wait
+    // on sim), which is observably wrong for a "preview-before-sign"
+    // shape. The test asserts the wrong shape so that the *correct*
+    // sequential chain above stays the documented pattern.
+    match &tool_return.routes[1].trigger {
+        RouteTrigger::OnBoundEvent { alias } => assert_eq!(alias, "tx_id"),
+        other => panic!("sim trigger: {other:?}"),
+    }
+    match &tool_return.routes[2].trigger {
+        RouteTrigger::OnBoundEvent { alias } => {
+            assert_eq!(
+                alias, "tx_id",
+                "this is the BUGGY shape on purpose — commit must await sim's binding \
+                 (`sim_result`), not the stage's `tx_id`, to make the chain sequential"
+            );
+        }
+        other => panic!("commit trigger: {other:?}"),
     }
 }

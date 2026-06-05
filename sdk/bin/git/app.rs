@@ -7,8 +7,7 @@ use crate::git::GitRepo;
 
 #[derive(Debug, Clone, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct App {
-    /// Validated app identifier (slug). TOML keys `name` or `slug` map here.
-    #[serde(alias = "slug")]
+    /// Validated app identifier (`aomi.toml [app].name`).
     pub name: String,
     #[serde(default)]
     pub display_name: String,
@@ -29,8 +28,9 @@ pub struct App {
     /// secrets are rejected at parse time so committed configs cannot leak
     /// tokens. The CLI resolves `std::env::var(ENV_VAR_NAME)` at deploy/
     /// activate time and forwards the value in the request body. The token
-    /// is never written to deployment.json. Omit for public-release
-    /// platforms (community).
+    /// is not written to aomi.toml. Command-line overrides may be reflected
+    /// into deployment.json so the state artifact records the effective run
+    /// input. Omit for public-release platforms (community).
     #[serde(default)]
     pub access_token: Option<String>,
     /// Required server tags for activation/load targeting. The backend loads

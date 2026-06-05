@@ -1,20 +1,17 @@
-//! Marinade liquid staking — reference aomi-app for the
-//! `BuiltinApp::SvmSelfBroadcast` variant.
+//! Marinade liquid staking — reference aomi-app for the SVM self-broadcast
+//! namespace composition.
 //!
 //! Marinade is the second reference SVM app shipping after byreal. Where
 //! byreal demonstrates the cross-chain (string-typed namespaces) +
 //! app-broadcast (venue HTTP submit) pattern, Marinade demonstrates:
 //!
-//! - **Variant-typed declaration**: `variant = AppVariant::SvmSelfBroadcast`
-//!   instead of explicit `namespaces = [...]`. The host loader uses
-//!   `variant.default_namespaces()` once `DynManifest.variant`
-//!   consumption lands (filed against product-mono ralph).
+//! - **Namespace declaration**: `namespaces = ["svm-reads",
+//!   "svm-ix-broadcast", "svm-tx-broadcast"]` gives the app only the
+//!   host SVM surfaces it needs.
 //! - **Self-broadcast pipeline**: build_* tools emit route plans that
-//!   drive `host::SvmStageIx → host::SvmCommitTx({mode: "wallet"})`.
-//!   The runtime owns the broadcast loop in the `internal-rpc` future;
-//!   today wallet mode is the only functional path.
+//!   drive `host::SvmStageIx → host::SvmCommitIx({mode: "wallet"})`.
 //! - **First consumer of the new SVM `host::*` markers** shipped in
-//!   SDK 0.1.23 (`SvmStageIx`, `SvmCommitTx`, etc.).
+//!   SDK 0.1.23 (`SvmStageIx`, `SvmCommitIx`, etc.).
 //!
 //! ## Why Marinade
 //!
@@ -59,7 +56,7 @@ mSOL is interest-bearing: the token *count* never changes, but the mSOL:SOL exch
 
 Every `build_*` returns a routed plan:
 
-    build_* → svm_stage_ix → svm_commit_tx(mode="wallet") → submit_*
+    build_* → svm_stage_ix → svm_commit_ix(mode="wallet") → submit_*
 
 The host wallet signs and broadcasts. `submit_*` is a synchronous continuation anchor for the route — by the time it runs, the tx has been submitted (landing is the wallet's responsibility for wallet-broadcast flows).
 
@@ -116,15 +113,15 @@ dyn_aomi_app!(
         tool::reads::GetTvl,
         tool::reads::GetExchangeRate,
         tool::reads::GetValidators,
-        // writes (route plans through host::SvmStageIx + host::SvmCommitTx)
+        // writes (route plans through host::SvmStageIx + host::SvmCommitIx)
         tool::writes::BuildStake,
         tool::writes::BuildLiquidUnstake,
     ],
-    variant = AppVariant::SvmSelfBroadcast,
+    namespaces = ["svm-reads", "svm-ix-broadcast", "svm-tx-broadcast"],
 );
 
 pub mod testing {
-    //! Smoke-tests that exercise the variant + route plan end-to-end.
+    //! Smoke-tests that exercise the namespace + route plan end-to-end.
     //! These run against the in-process app trait, not the loaded dylib,
     //! so they don't need a host runtime.
 
@@ -133,16 +130,18 @@ pub mod testing {
         use super::super::*;
 
         #[test]
-        fn manifest_declares_svm_self_broadcast_variant() {
+        fn manifest_declares_svm_self_broadcast_namespaces() {
             let app = client::MarinadeApp;
             let manifest = app.manifest();
             assert_eq!(manifest.name, "marinade");
-            assert_eq!(manifest.variant, Some("svm-self-broadcast".to_string()));
-            // No explicit `namespaces` — the variant arm of the macro
-            // intentionally sets `namespaces() -> None` so the host
-            // loader uses `variant.default_namespaces()` as the source
-            // of truth.
-            assert_eq!(manifest.namespaces, None);
+            assert_eq!(
+                manifest.namespaces,
+                Some(vec![
+                    "svm-reads".to_string(),
+                    "svm-ix-broadcast".to_string(),
+                    "svm-tx-broadcast".to_string(),
+                ])
+            );
         }
 
         #[test]
@@ -160,7 +159,7 @@ pub mod testing {
                 names.len(),
                 6,
                 "marinade exposes 4 reads + 2 writes; no submit_* because \
-                 svm_commit_tx(mode=wallet) IS the broadcast",
+                 svm_commit_ix(mode=wallet) IS the broadcast",
             );
         }
 
@@ -170,23 +169,21 @@ pub mod testing {
             // knows which tools chain together. Frozen check; if you
             // rewrite the preamble, update this.
             assert!(PREAMBLE.contains("svm_stage_ix"));
-            assert!(PREAMBLE.contains("svm_commit_tx"));
+            assert!(PREAMBLE.contains("svm_commit_ix"));
             assert!(PREAMBLE.contains("build_"));
             assert!(PREAMBLE.contains("submit_"));
         }
 
         #[test]
-        fn variant_default_namespaces_match_host_self_broadcast() {
-            // Catches drift between this app's expectation and the
-            // AppVariant::SvmSelfBroadcast composition shipped in SDK
-            // 0.1.22. If the host adds a sub-namespace to that variant,
-            // this assertion bumps in lockstep.
+        fn namespace_list_matches_host_self_broadcast_surface() {
             let app = client::MarinadeApp;
-            let variant = app.variant().expect("marinade declares a variant");
-            assert_eq!(variant.as_str(), "svm-self-broadcast");
             assert_eq!(
-                variant.default_namespaces(),
-                &["svm-reads", "svm-stage", "svm-commit"]
+                app.namespaces(),
+                Some(vec![
+                    "svm-reads".to_string(),
+                    "svm-ix-broadcast".to_string(),
+                    "svm-tx-broadcast".to_string(),
+                ])
             );
         }
     }
