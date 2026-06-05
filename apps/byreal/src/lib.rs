@@ -183,5 +183,5 @@ dyn_aomi_app!(
     // (ADR 0004 § C.2 / row #39-svm-apps-c) — track that in product-mono
     // ralph. The legacy `solana-core` alias was removed in host iter 39;
     // canonical names only.
-    namespaces = ["evm-core", "svm-reads"]
+    namespaces = ["evm-core", "svm-reads", "svm-tx-sign"]
 );
