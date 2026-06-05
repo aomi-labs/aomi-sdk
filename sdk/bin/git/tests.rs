@@ -1,17 +1,20 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, MutexGuard};
 
 use clap::{CommandFactory, Parser};
 use tempfile::TempDir;
 
-use crate::activate::{ActivationPlan, Visibility};
+use crate::activate::{ActivationIntent, Visibility};
 use crate::cli::{Cli, Command as CliCommand};
 use crate::deployment_state::{
     DeploymentState, StageId, deployment_path, read as read_deployment_state,
 };
 use crate::plan::{Deployment, Mode};
 use crate::platform::Platform;
+
+static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 #[test]
 fn publish_target_uses_aomi_toml_git_as_source_repo() {
@@ -27,7 +30,6 @@ fn publish_target_uses_aomi_toml_git_as_source_repo() {
         .expect("community dry run")
         .publish;
     assert_eq!(community.source_repo, "aomi-labs/community-apps");
-    assert_eq!(community.publish_branch, "publish");
     assert_eq!(community.app_path, "apps/probe");
     assert!(community.app_release_tag.starts_with("apps-probe-"));
 
@@ -48,7 +50,6 @@ git = "https://github.com/aomi-labs/krexa-hosted-apps"
         .expect("krexa dry run")
         .publish;
     assert_eq!(krexa.source_repo, "aomi-labs/krexa-hosted-apps");
-    assert_eq!(krexa.publish_branch, "publish");
     assert_eq!(krexa.app_path, "apps/probe");
     assert!(krexa.app_release_tag.starts_with("apps-probe-"));
 }
@@ -183,8 +184,6 @@ async fn activate_command_builds_activate_app_request() {
     };
 
     let plan = args.plan().await.expect("activation plan");
-    assert_eq!(plan.backend_url, "https://api.example.test");
-    assert_eq!(plan.activation_token, "activation-secret");
     assert_eq!(
         plan.endpoint(),
         "https://api.example.test/api/admin/apps/activate"
@@ -602,11 +601,11 @@ async fn activate_without_server_tags_anywhere_errors_clearly() {
 }
 
 #[test]
-fn recompute_deployed_requires_pushed_even_when_branch_matches() {
-    // Regression: previously `recompute_deployed` only compared the resolved
-    // deploy branch to `target.branch`, so a dry-run on a platform whose
-    // deployment_branch matched would flip `deployed = true` despite
-    // `pushed = false`. `deployed` is a strict subset of `pushed`.
+fn recompute_deployed_requires_pushed_and_resolved_branch() {
+    // `deployed` is a strict subset of `pushed`, and also requires that the
+    // deployment branch was resolved from the backend (the only authority on
+    // it). The branch *value* no longer affects the flag — `deploy` always
+    // pushes to whatever the registry returns, so there is no "wrong branch".
     let repo = TestRepo::new();
     repo.write_aomi_toml(
         "",
@@ -620,8 +619,8 @@ fn recompute_deployed_requires_pushed_even_when_branch_matches() {
         .expect("dry run")
         .to_state();
 
-    // Simulate post-preflight: branch contract resolves cleanly, no push.
-    state.platform.resolved_deploy_branch = Some(state.target.branch.clone());
+    // Simulate post-preflight: branch resolved from the backend, no push yet.
+    state.platform.resolved_deploy_branch = Some("publish".to_string());
     assert!(!state.state.pushed);
     state.recompute_deployed();
     assert!(
@@ -633,7 +632,9 @@ fn recompute_deployed_requires_pushed_even_when_branch_matches() {
     state.recompute_deployed();
     assert!(state.state.deployed);
 
-    state.platform.resolved_deploy_branch = Some("some-other-branch".to_string());
+    // Without a resolved branch (e.g. offline dry-run), deployed is false even
+    // if pushed were somehow set.
+    state.platform.resolved_deploy_branch = None;
     state.recompute_deployed();
     assert!(!state.state.deployed);
 }
@@ -678,6 +679,76 @@ fn deploy_kills_legacy_flags() {
     }
 }
 
+#[tokio::test]
+async fn deploy_without_activate_does_not_use_activation_env_after_push() {
+    let _env = env_lock();
+    unsafe { std::env::set_var("AOMI_APP_ACTIVATION_TOKEN", "activation-secret") };
+
+    let (source, platform, _remote) = deploy_push_fixture("zora");
+    let (backend, _server) = mock_platforms_backend("publish").await;
+    let cli = Cli::try_parse_from([
+        "aomi-git",
+        "deploy",
+        "--path",
+        source.root().to_str().unwrap(),
+        "--platform-dir",
+        platform.root().to_str().unwrap(),
+        "--backend",
+        backend.as_str(),
+    ])
+    .expect("parse deploy");
+
+    cli.run()
+        .await
+        .expect("deploy without --activate must still push");
+    unsafe { std::env::remove_var("AOMI_APP_ACTIVATION_TOKEN") };
+
+    let state = read_deployment_state(source.root())
+        .expect("read deployment state")
+        .expect("deployment state");
+    assert!(state.state.pushed, "fixture must exercise post-push path");
+    assert!(!state.state.activated, "deploy must not auto-activate");
+    assert!(
+        state
+            .errors
+            .iter()
+            .all(|error| !error.contains("activation")),
+        "deploy should not record activation errors without --activate: {:?}",
+        state.errors
+    );
+}
+
+#[tokio::test]
+async fn deploy_activate_requires_activation_token_after_push() {
+    let _env = env_lock();
+    unsafe { std::env::remove_var("AOMI_APP_ACTIVATION_TOKEN") };
+
+    let (source, platform, _remote) = deploy_push_fixture("zora");
+    let (backend, _server) = mock_platforms_backend("publish").await;
+    let cli = Cli::try_parse_from([
+        "aomi-git",
+        "deploy",
+        "--activate",
+        "--path",
+        source.root().to_str().unwrap(),
+        "--platform-dir",
+        platform.root().to_str().unwrap(),
+        "--backend",
+        backend.as_str(),
+    ])
+    .expect("parse deploy --activate");
+
+    let error = cli
+        .run()
+        .await
+        .expect_err("deploy --activate must require activation token");
+    let message = error.to_string();
+    assert!(
+        message.contains("--activate") && message.contains("AOMI_APP_ACTIVATION_TOKEN"),
+        "error should explain the missing activation token: {message}"
+    );
+}
+
 #[test]
 fn activate_and_status_reject_legacy_git_flag() {
     for (subcommand, extra) in [
@@ -703,19 +774,10 @@ fn activate_and_status_reject_legacy_git_flag() {
 
 #[test]
 fn activation_plan_requires_apps_app_release_tag() {
-    let error = ActivationPlan::new(
+    let error = ActivationIntent::new(
         "zora-abc1234",
         Platform::new("community"),
-        "https://api.example.test".to_string(),
-        "activation-secret".to_string(),
         Visibility::Private,
-        "aomi-labs/community-apps".to_string(),
-        None,
-        Vec::new(),
-        None,
-        None,
-        None,
-        None,
     )
     .expect_err("invalid app_release_tag");
 
@@ -771,7 +833,6 @@ git = "https://github.com/example/foo-hosted-apps"
         .expect("dry run for unknown platform");
 
     assert_eq!(deployment.publish.source_repo, "example/foo-hosted-apps");
-    assert_eq!(deployment.publish.publish_branch, "publish");
     assert_eq!(deployment.publish.app_path, "apps/foo-bot");
     assert!(
         deployment
@@ -926,7 +987,8 @@ server_tags = ["Prod", "community", "prod"]
         deployment.app.git.as_deref(),
         Some("https://github.com/aomi-labs/community-apps")
     );
-    assert_eq!(deployment.app.branch.as_deref(), Some("experiment"));
+    // A stray `branch` key in aomi.toml is silently ignored — the deployment
+    // branch is owned by the backend registry, never a client input.
     assert_eq!(deployment.app.public, Some(true));
     assert_eq!(deployment.app.server_tags, vec!["prod", "community"]);
 
@@ -935,7 +997,8 @@ server_tags = ["Prod", "community", "prod"]
     assert!(!state.state.pushed);
     assert!(!state.state.deployed);
     assert!(!state.state.activated);
-    assert_eq!(state.target.branch, "experiment");
+    // Offline: no branch resolved (it only comes from the backend at preflight/deploy).
+    assert_eq!(state.platform.resolved_deploy_branch, None);
     assert!(state.target.app_release_tag.starts_with("apps-alice-bot-"));
     assert_eq!(state.target.server_tags, vec!["prod", "community"]);
     assert_eq!(state.platform.name.as_deref(), Some("community"));
@@ -964,7 +1027,10 @@ server_tags = ["Prod", "community", "prod"]
     let reloaded: DeploymentState = read_deployment_state(repo.root())
         .expect("read state")
         .expect("file should exist after write");
-    assert_eq!(reloaded.target.branch, state.target.branch);
+    assert_eq!(
+        reloaded.target.app_release_tag,
+        state.target.app_release_tag
+    );
     assert_eq!(reloaded.app.name, "alice-bot");
 }
 
@@ -1189,6 +1255,7 @@ fn git_transport_commits_without_push() {
         Platform::new("community"),
         platform.root(),
         false,
+        "publish",
     )
     .expect("git transport");
 
@@ -1229,6 +1296,7 @@ fn git_transport_rejects_wrong_platform_remote() {
         Platform::new("community"),
         platform.root(),
         false,
+        "publish",
     )
     .expect_err("wrong remote should fail");
     assert!(
@@ -1255,6 +1323,7 @@ fn git_transport_rejects_unowned_dirty_platform_files() {
         Platform::new("community"),
         platform.root(),
         false,
+        "publish",
     )
     .expect_err("unowned dirty platform file should fail");
     assert!(
@@ -1286,6 +1355,7 @@ fn git_transport_allows_owned_dirty_platform_files() {
         Platform::new("community"),
         platform.root(),
         false,
+        "publish",
     )
     .expect("owned dirty platform file can be replaced");
 
@@ -1311,6 +1381,7 @@ fn git_transport_rejects_existing_app_without_ownership_manifest() {
         Platform::new("community"),
         platform.root(),
         false,
+        "publish",
     )
     .expect_err("existing app without owner manifest should fail");
 
@@ -1344,6 +1415,7 @@ fn git_transport_rejects_existing_app_owned_by_another_checkout() {
         Platform::new("community"),
         platform.root(),
         false,
+        "publish",
     )
     .expect_err("existing app owned by another checkout should fail");
 
@@ -1678,6 +1750,63 @@ impl TestRepo {
             &format!("{json}\n"),
         );
     }
+}
+
+fn env_lock() -> MutexGuard<'static, ()> {
+    ENV_LOCK.lock().expect("env lock")
+}
+
+fn deploy_push_fixture(app_name: &str) -> (TestRepo, TestRepo, TempDir) {
+    let source = TestRepo::new();
+    source.write_aomi_toml("", app_name, "git@github.com:aomi-labs/community-apps.git");
+    source.write("src/lib.rs", "pub fn marker() {}\n");
+    source.commit("initial app");
+
+    let platform = TestRepo::new();
+    platform.set_origin("git@github.com:aomi-labs/community-apps.git");
+    platform.write("README.md", "community apps\n");
+    platform.commit("initial platform repo");
+
+    let remote = TempDir::new().expect("bare remote tempdir");
+    run_git(remote.path(), ["init", "--bare", "-q"]);
+    let remote_path = remote.path().to_str().expect("remote path utf8");
+    run_git(
+        platform.root(),
+        ["remote", "set-url", "--push", "origin", remote_path],
+    );
+
+    (source, platform, remote)
+}
+
+/// Spin a throwaway HTTP server answering `GET /api/control/platforms` with a
+/// single `community` platform whose deployment branch is `branch`. Deploy
+/// resolves the push branch from this endpoint (the backend is the only
+/// authority on it), so post-push tests need a reachable one. Returns the base
+/// URL; the detached server task lives for the rest of the test.
+async fn mock_platforms_backend(branch: &str) -> (String, tokio::task::JoinHandle<()>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind mock backend");
+    let addr = listener.local_addr().expect("mock backend addr");
+    let branch = branch.to_string();
+    let handle = tokio::spawn(async move {
+        while let Ok((mut sock, _)) = listener.accept().await {
+            let mut buf = [0u8; 2048];
+            let _ = sock.read(&mut buf).await;
+            let body = format!(
+                "{{\"platforms\":[{{\"name\":\"community\",\"github_repo\":\"https://github.com/aomi-labs/community-apps\",\"deployment_branch\":\"{branch}\"}}]}}"
+            );
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = sock.write_all(resp.as_bytes()).await;
+            let _ = sock.shutdown().await;
+        }
+    });
+    (format!("http://{addr}"), handle)
 }
 
 fn run_git<const N: usize>(cwd: &Path, args: [&str; N]) {

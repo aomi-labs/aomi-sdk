@@ -1,13 +1,13 @@
 //! Discord activation-request delivery.
 //!
-//! A new contributor can't deploy until ops invites their GitHub account to the
-//! platform repo, and can't self-activate until ops issues them a per-app
-//! activation code (ADR 0009 + per-app token model). So the first step is to
-//! *ask* ops for activation. This module posts that ask to the Aomi apps Discord
+//! A new contributor can't use the direct-Git transport until ops invites their
+//! GitHub account to the platform repo, and can't self-activate until ops issues
+//! an activation bearer. So the first step is to *ask* ops for onboarding. This
+//! module posts that ask to the Aomi apps Discord
 //! via an incoming webhook, tagging ops and carrying the requester's GitHub
 //! account + email + app so ops can act without a round-trip.
 //!
-//! The activation code itself is NEVER part of this request — ops issues it and
+//! The activation bearer itself is NEVER part of this request - ops issues it and
 //! delivers it to the requester over a secure channel out-of-band.
 //!
 //! ## Why a webhook, not a clickable link
@@ -44,8 +44,8 @@ const SOURCE: &str = concat!("aomi-git/", env!("CARGO_PKG_VERSION"));
 ///
 /// Carries the requester identity ops (and the downstream automation consuming
 /// the webhook) need to act: the GitHub account to invite as a platform
-/// collaborator and the email to deliver the per-app activation code to. The
-/// code itself is NEVER part of this request.
+/// collaborator and the email to deliver activation details to. The bearer
+/// itself is NEVER part of this request.
 pub struct ActivationRequest {
     pub email: String,
     pub git_account: String,

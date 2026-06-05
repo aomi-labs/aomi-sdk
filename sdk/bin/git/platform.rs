@@ -11,11 +11,11 @@ use crate::plan::{Deployment, short_hash};
 
 /// Universal publish conventions. Previously these lived in a checked-in
 /// `platforms.json` registry; per ADR 0009 the only sources of truth are
-/// the user's `aomi.toml` (for `git` / `platform` / `branch`) and the
-/// backend's `platforms` table (for the contractual `deployment_branch`,
-/// resolved during preflight). Conventions that don't vary per-platform
-/// stay here as constants.
-pub const DEFAULT_PUBLISH_BRANCH: &str = "publish";
+/// the user's `aomi.toml` (for `git` / `platform`) and the backend's
+/// `platforms` table (for the contractual `deployment_branch`, resolved from
+/// `GET /api/control/platforms`). The deployment branch is **never** a client
+/// input — `aomi-git` reads it from the backend and pushes there. Conventions
+/// that don't vary per-platform stay here as constants.
 pub const DEFAULT_APP_PATH_PREFIX: &str = "apps";
 pub const DEFAULT_RELEASE_TAG_TEMPLATE: &str = "apps-{app_slug}-{short_commit}";
 
@@ -76,7 +76,6 @@ impl FromStr for Platform {
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 pub struct PublishTarget {
     pub source_repo: String,
-    pub publish_branch: String,
     pub app_path: String,
     pub app_release_tag: String,
 }
@@ -106,7 +105,6 @@ impl PublishTarget {
 
         Ok(Self {
             source_repo,
-            publish_branch: DEFAULT_PUBLISH_BRANCH.to_string(),
             app_path,
             app_release_tag,
         })

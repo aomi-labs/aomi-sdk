@@ -13,6 +13,7 @@
 //!   --platform-dir <DIR>     # escape hatch: hand-managed local clone
 //!   --backend <URL>          # AOMI_BACKEND_URL
 //!   --dry-run                # plan + best-effort backend reads, no writes
+//!   --activate               # explicitly activate after push
 //!   --allow-dirty
 //!   --json
 //!
@@ -32,8 +33,8 @@
 //!   --dry-run
 //!   --json
 //!
-//! request                    # ask ops for activation (invite + activation code)
-//!   --email <EMAIL>          # where ops sends your activation code
+//! request                    # ask ops for direct-Git onboarding
+//!   --email <EMAIL>          # where ops sends activation details
 //!   --git-account <USER>     # GitHub account to invite as a collaborator
 //!   --app <NAME>             # aomi.toml [app].name (default)
 //!   --platform <NAME>        # aomi.toml [app].platform (default community)
@@ -47,22 +48,7 @@
 //!   --access-token <$ENV|VAL># aomi.toml [app].access_token
 //!   --json
 //!
-//! config
-//!   --path <DIR>             # source repo (.aomi/deployment.json lookup)
-//!   --app <NAME>             # aomi.toml [app].name
-//!   --platform <NAME>        # aomi.toml [app].platform
-//!   --backend <URL>          # AOMI_BACKEND_URL
-//!   --activation-token <T>   # AOMI_APP_ACTIVATION_TOKEN
-//!   --public <BOOL>          # aomi.toml [app].public
-//!   --display-name <STR>     # aomi.toml [app].display_name
-//!   --dry-run
-//!   --json
 //! ```
-//!
-//! `config` is a metadata-only edit: it reuses the activate endpoint with the
-//! platform activation token but omits source_repo/app_release_tag, so the
-//! backend updates the existing registry row in place without re-fetching the
-//! release bundle.
 //!
 //! Defaults pyramid (both commands): CLI flag -> `.aomi/deployment.json` in
 //! `--path` -> backend lookup -> hardcoded default. Each step is best-effort -
@@ -75,7 +61,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use clap::{Args, Parser, Subcommand};
 
 use crate::activate::{
-    ACTIVATION_TOKEN_ENV, ActivationPlan, BACKEND_URL_ENV, ConfigPlan, Visibility,
+    ACTIVATION_TOKEN_ENV, ActivationIntent, ActivationPlan, BACKEND_URL_ENV, Visibility,
 };
 use crate::app::App;
 use crate::deployment_state::{
@@ -84,6 +70,7 @@ use crate::deployment_state::{
 use crate::git::GitRepo;
 use crate::plan::Deployment;
 use crate::platform::{Platform, normalize_github_repo};
+use crate::preflight::ResolvedPlatform;
 use crate::transit::TransitCache;
 
 #[derive(Debug, Parser)]
@@ -101,16 +88,13 @@ impl Cli {
             Command::Deploy(args) => args.run().await,
             Command::Activate(args) => args.run().await,
             Command::Status(args) => args.run().await,
-            Command::Config(args) => args.run().await,
         }
     }
 }
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Ask platform ops for activation: a collaborator invite for your GitHub
-    /// account plus a per-app activation code, delivered out-of-band. Run this
-    /// once before your first deploy.
+    /// Ask platform ops for direct-Git onboarding and activation details.
     Request(RequestArgs),
     /// Prepare and push an Aomi app source publication.
     Deploy(DeployArgs),
@@ -118,9 +102,6 @@ pub enum Command {
     Activate(ActivateArgs),
     /// Check publication status (CI build + release availability) for a deploy.
     Status(StatusArgs),
-    /// Edit a live app's registry config (visibility, label, target tags)
-    /// without re-deploying or re-fetching the release.
-    Config(ConfigArgs),
 }
 
 // ---------------------------------------------------------------------------
@@ -129,7 +110,7 @@ pub enum Command {
 
 #[derive(Debug, Args, Clone)]
 pub struct RequestArgs {
-    /// Email where platform ops will send your per-app activation code.
+    /// Email where platform ops will send activation details.
     #[arg(long, value_name = "EMAIL")]
     pub email: String,
 
@@ -227,11 +208,11 @@ impl RequestArgs {
 
         request.post().await?;
         println!(
-            "Posted activation request for `{}` to the Aomi apps Discord.",
+            "Posted direct-Git onboarding request for `{}` to the Aomi apps Discord.",
             request.app
         );
         println!(
-            "Ops will invite `{}` to `{}` and send your activation code to {}.",
+            "Ops will invite `{}` to `{}` and send activation details to {}.",
             request.git_account, request.repo, request.email
         );
         println!(
@@ -278,6 +259,12 @@ pub struct DeployArgs {
     #[arg(long)]
     pub dry_run: bool,
 
+    /// After a successful push, immediately call the backend activation endpoint
+    /// using `AOMI_APP_ACTIVATION_TOKEN`. Normally run `status` first and invoke
+    /// `activate` once the release asset exists.
+    #[arg(long)]
+    pub activate: bool,
+
     /// Allow a dirty working tree in the printed plan and during staging.
     #[arg(long)]
     pub allow_dirty: bool,
@@ -318,11 +305,29 @@ impl DeployArgs {
             return Ok(());
         }
 
-        // Live deploy. Resolve the local clone path: either the user's
-        // escape-hatch dir or the managed transit cache.
-        let clone_path = self.resolve_clone_path(&platform, app.as_ref()).await?;
+        // Live deploy. Resolve the platform against the backend ONCE (strict:
+        // fails if unreachable). The deployment branch — where to push — is
+        // owned by the registry, never the user; the same record also supplies
+        // the repo if aomi.toml omits it, so both facts come from one snapshot.
+        let backend_url = self.backend_url().ok_or_else(|| {
+            anyhow!(
+                "deploy needs the platform's deployment branch from the backend — set --backend \
+                 or {BACKEND_URL_ENV} so it can read GET /api/control/platforms"
+            )
+        })?;
+        let resolved = platform.resolve(&backend_url).await?;
+        let deploy_branch = resolved.deployment_branch.clone();
+        let clone_path = self
+            .resolve_clone_path(app.as_ref(), &resolved, &deploy_branch)
+            .await?;
 
-        let outcome = Deployment::git_transport(&self.path, platform.clone(), &clone_path, true)?;
+        let outcome = Deployment::git_transport(
+            &self.path,
+            platform.clone(),
+            &clone_path,
+            true,
+            &deploy_branch,
+        )?;
 
         // Refresh .aomi/deployment.json with the post-push state. Start from
         // any prior dry-run state on disk so we don't drop earlier check rows.
@@ -331,36 +336,40 @@ impl DeployArgs {
             Ok(Some(prior)) => prior,
             _ => outcome.deployment.to_state(),
         };
+        state.platform.resolved_deploy_branch = Some(deploy_branch);
         state.state.pushed = outcome.pushed;
         state.recompute_deployed();
 
-        // Auto-activate when an activation token is in the env and the push
-        // landed. Per ADR 0009 we attempt even when state.deployed = false;
-        // the backend is the authority on whether to reject.
-        let activation_token = std::env::var(ACTIVATION_TOKEN_ENV).ok();
-        let backend_url = self.backend_url();
-        if outcome.pushed
-            && let (Some(token), Some(url)) = (activation_token, backend_url)
-        {
+        if outcome.pushed && self.activate {
+            let token = std::env::var(ACTIVATION_TOKEN_ENV)
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| {
+                    anyhow!("--activate requires an activation token via {ACTIVATION_TOKEN_ENV}")
+                })?;
+            let url = self.backend_url().ok_or_else(|| {
+                anyhow!("--activate requires a backend URL via --backend or {BACKEND_URL_ENV}")
+            })?;
             let visibility = match outcome.deployment.app.public {
                 Some(true) => Visibility::Public,
                 _ => Visibility::Private,
             };
             let github_token = outcome.deployment.app.resolved_access_token()?;
-            let plan = ActivationPlan::new(
+            let intent = ActivationIntent::new(
                 &outcome.deployment.publish.app_release_tag,
                 platform.clone(),
-                url,
-                token,
                 visibility,
-                outcome.deployment.publish.source_repo.clone(),
-                github_token,
-                outcome.deployment.app.server_tags.clone(),
-                Some(outcome.deployment.app.display_name.clone()),
+            )?
+            .source_repo(outcome.deployment.publish.source_repo.clone())
+            .github_token(github_token)
+            .server_tags(outcome.deployment.app.server_tags.clone())
+            .label(Some(outcome.deployment.app.display_name.clone()))
+            .source_provenance(
                 Some(outcome.deployment.source.commit.clone()),
                 Some(outcome.deployment.source.tree.clone()),
                 Some(outcome.deployment.source.digest.clone()),
-            )?;
+            );
+            let plan = ActivationPlan::from_intent(url, token, intent)?;
             match plan.execute().await {
                 Ok(_) => {
                     state.state.activated = true;
@@ -412,29 +421,35 @@ impl DeployArgs {
     }
 
     /// Resolve the local clone path: explicit `--platform-dir` if set,
-    /// otherwise initialize/refresh the managed transit cache.
-    async fn resolve_clone_path(&self, platform: &Platform, app: Option<&App>) -> Result<PathBuf> {
+    /// otherwise initialize/refresh the managed transit cache at the
+    /// backend-resolved `deploy_branch`.
+    async fn resolve_clone_path(
+        &self,
+        app: Option<&App>,
+        resolved: &ResolvedPlatform,
+        deploy_branch: &str,
+    ) -> Result<PathBuf> {
         if let Some(dir) = &self.platform_dir {
             return Ok(dir.clone());
         }
 
         // Need a platform git URL to clone. Order: --source-repo -> aomi.toml
-        // [app].git -> backend lookup.
-        let git_url = self.resolve_source_repo(platform, app).await?;
+        // [app].git -> the already-resolved platform record.
+        let git_url = self.resolve_source_repo(app, resolved)?;
 
-        // Need the target branch. Use aomi.toml's [app].branch if present,
-        // else default to "publish" (matches today's behavior and the
-        // platforms.deployment_branch we observe in CI).
-        let branch = app
-            .and_then(|a| a.branch.clone())
-            .unwrap_or_else(|| "publish".to_string());
-
-        TransitCache::load()?.resolve(&git_url, &branch).with_context(|| {
+        TransitCache::load()?.resolve(&git_url, deploy_branch).with_context(|| {
             "could not initialize transit clone - pass --platform-dir <DIR> to use a hand-managed clone"
         })
     }
 
-    async fn resolve_source_repo(&self, platform: &Platform, app: Option<&App>) -> Result<String> {
+    /// Pick the platform repo URL: `--source-repo` -> `aomi.toml [app].git` ->
+    /// the already-resolved backend record. No network — `resolved` was fetched
+    /// once by the caller.
+    fn resolve_source_repo(
+        &self,
+        app: Option<&App>,
+        resolved: &ResolvedPlatform,
+    ) -> Result<String> {
         if let Some(g) = self
             .source_repo
             .as_deref()
@@ -450,13 +465,7 @@ impl DeployArgs {
         {
             return Ok(g.to_string());
         }
-        let backend_url = self.backend_url().ok_or_else(|| {
-            anyhow!(
-                "platform repo URL is not declared (no --source-repo, no aomi.toml [app].git, and no \
-                 --backend / {BACKEND_URL_ENV} for backend lookup)"
-            )
-        })?;
-        crate::preflight::lookup_platform_git(&backend_url, platform).await
+        resolved.source_repo()
     }
 
     fn print_next_steps(&self) {
@@ -654,20 +663,17 @@ impl ActivateArgs {
             })
             .unwrap_or(Visibility::Private);
 
-        let plan = ActivationPlan::new(
-            &app_release_tag,
-            platform.clone(),
-            backend_url,
-            activation_token,
-            visibility,
-            source_repo.clone(),
-            github_token,
-            server_tags.clone(),
-            display_name.clone(),
-            source_commit.clone(),
-            source_tree.clone(),
-            source_digest.clone(),
-        )?;
+        let intent = ActivationIntent::new(&app_release_tag, platform.clone(), visibility)?
+            .source_repo(source_repo.clone())
+            .github_token(github_token)
+            .server_tags(server_tags.clone())
+            .label(display_name.clone())
+            .source_provenance(
+                source_commit.clone(),
+                source_tree.clone(),
+                source_digest.clone(),
+            );
+        let plan = ActivationPlan::from_intent(backend_url, activation_token, intent)?;
 
         let state = fallback.map(|mut state| {
             state.target.app_release_tag = app_release_tag;
@@ -747,7 +753,7 @@ impl ActivateArgs {
         {
             return normalize_github_repo(git);
         }
-        crate::preflight::lookup_platform_git(backend_url, platform).await
+        platform.resolve(backend_url).await?.source_repo()
     }
 
     /// Resolve `server_tags` with two rules:
@@ -911,7 +917,11 @@ impl StatusArgs {
             app_name: state.app.name.clone(),
             repo: repo.clone(),
             app_release_tag: app_release_tag.clone(),
-            branch: state.target.branch.clone(),
+            branch: state
+                .platform
+                .resolved_deploy_branch
+                .clone()
+                .unwrap_or_default(),
             github_token,
             backend_url,
             local: crate::status::LocalState {
@@ -1015,171 +1025,5 @@ impl StatusArgs {
         } else {
             None
         }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Config
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Args, Clone)]
-pub struct ConfigArgs {
-    /// App slug to reconfigure. Falls back to `.aomi/deployment.json`'s
-    /// `app.name` at `--path`.
-    #[arg(long, value_name = "NAME")]
-    pub app: Option<String>,
-
-    /// Platform tag (`aomi.toml [app].platform`). Falls back to
-    /// deployment.json's app.platform, then to `community`.
-    #[arg(long, value_name = "NAME")]
-    pub platform: Option<Platform>,
-
-    /// Backend base URL (default: `AOMI_BACKEND_URL`).
-    #[arg(long, value_name = "URL")]
-    pub backend: Option<String>,
-
-    /// Platform activation token (default: `AOMI_APP_ACTIVATION_TOKEN`).
-    #[arg(long, value_name = "TOKEN")]
-    pub activation_token: Option<String>,
-
-    /// Flip the app's visibility live (`aomi.toml [app].public`). Omit to leave
-    /// the backend's current visibility untouched.
-    #[arg(long, value_name = "BOOL")]
-    pub public: Option<bool>,
-
-    /// New display label for the registry row. When omitted, the app's existing
-    /// `display_name` (from deployment.json) is re-sent so the backend's upsert
-    /// doesn't overwrite the label with the bare slug.
-    #[arg(long, value_name = "STR")]
-    pub display_name: Option<String>,
-
-    /// Source repo path for the `.aomi/deployment.json` fallback. Defaults to
-    /// the current directory.
-    #[arg(long, default_value = ".")]
-    pub path: PathBuf,
-
-    /// Print the planned config request without sending it.
-    #[arg(long)]
-    pub dry_run: bool,
-
-    /// Print the backend response as JSON.
-    #[arg(long)]
-    pub json: bool,
-}
-
-impl ConfigArgs {
-    pub async fn run(self) -> Result<()> {
-        // At least one mutating flag must be present — config without an intent
-        // is a no-op (and would needlessly re-send the label/metadata).
-        if self.public.is_none() && self.display_name.is_none() {
-            bail!("nothing to configure — pass --public <BOOL> and/or --display-name <STR>");
-        }
-
-        let (plan, mut state) = self.plan_with_state()?;
-        if self.dry_run {
-            let printable = serde_json::json!({
-                "endpoint": plan.endpoint(),
-                "request":  plan.request,
-            });
-            println!("{}", serde_json::to_string_pretty(&printable)?);
-            if let Some(state) = &mut state {
-                state.touch();
-                write_deployment_state(&self.path, state)?;
-            }
-            return Ok(());
-        }
-
-        let response = plan.execute().await?;
-        if let Some(state) = &mut state {
-            state.touch();
-            write_deployment_state(&self.path, state)?;
-        }
-        if self.json {
-            println!("{}", serde_json::to_string_pretty(&response)?);
-        } else {
-            println!("configured {}", plan.request.name);
-        }
-        Ok(())
-    }
-
-    fn plan_with_state(&self) -> Result<(ConfigPlan, Option<DeploymentState>)> {
-        // Load .aomi/deployment.json once for the fallback pyramid. Missing is
-        // fine — the user can still drive everything via flags.
-        let fallback = read_deployment_state(&self.path).ok().flatten();
-
-        let app_name = self
-            .app
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-            .or_else(|| fallback.as_ref().map(|s| s.app.name.clone()))
-            .ok_or_else(|| {
-                anyhow!(
-                    "app name is required — pass --app <NAME>, or run from a source repo with a \
-                     prior `aomi-git deploy`'s .aomi/deployment.json"
-                )
-            })?;
-
-        let platform = self
-            .platform
-            .clone()
-            .or_else(|| {
-                fallback
-                    .as_ref()
-                    .and_then(|s| s.app.platform.as_deref())
-                    .map(Platform::new)
-            })
-            .unwrap_or_else(Platform::community);
-
-        let backend_url = self
-            .backend
-            .clone()
-            .or_else(|| std::env::var(BACKEND_URL_ENV).ok())
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| anyhow!("backend URL is required via --backend or {BACKEND_URL_ENV}"))?;
-
-        let activation_token = self
-            .activation_token
-            .clone()
-            .or_else(|| std::env::var(ACTIVATION_TOKEN_ENV).ok())
-            .filter(|s| !s.is_empty())
-            .ok_or_else(|| {
-                anyhow!(
-                    "activation token is required via --activation-token or {ACTIVATION_TOKEN_ENV}"
-                )
-            })?;
-
-        // Always resolve a display label to send: the explicit flag, else the
-        // app's existing display_name. The backend rewrites the label on every
-        // upsert, so re-sending the current value is what keeps it stable.
-        let display_name = self
-            .display_name
-            .clone()
-            .or_else(|| fallback.as_ref().map(|s| s.app.display_name.clone()));
-
-        let plan = ConfigPlan::new(
-            app_name.clone(),
-            platform.clone(),
-            backend_url,
-            activation_token,
-            self.public,
-            display_name.clone(),
-        )?;
-
-        let state = fallback.map(|mut state| {
-            state.app.name = app_name;
-            state.app.platform = Some(platform.to_string());
-            state.platform.name = Some(platform.to_string());
-            if let Some(public) = self.public {
-                state.app.public = Some(public);
-            }
-            if let Some(display_name) = display_name {
-                state.app.display_name = display_name.trim().to_string();
-            }
-            state
-        });
-
-        Ok((plan, state))
     }
 }

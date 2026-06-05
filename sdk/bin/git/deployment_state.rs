@@ -87,19 +87,17 @@ impl DeploymentState {
         }
     }
 
-    /// Compute `state.deployed` from `state.pushed` AND the target branch vs
-    /// the platform's resolved deploy branch.
+    /// Compute `state.deployed` from `state.pushed` AND a backend-resolved
+    /// deployment branch.
     ///
     /// `deployed` means "the push landed on the contractual deployment branch
-    /// and the backend will see it" - it is a strict subset of `pushed`. A
-    /// dry-run or `--platform-dir` run that didn't push must leave `deployed`
-    /// false even when the branch contract resolves cleanly.
+    /// and the backend will see it" - a strict subset of `pushed`. Since the
+    /// deployment branch is owned by the backend registry (never a client
+    /// input) and `deploy` always pushes to that resolved branch, `deployed`
+    /// reduces to "pushed, and we know which branch that was". A dry-run that
+    /// didn't push, or a run where the branch never resolved, leaves it false.
     pub fn recompute_deployed(&mut self) {
-        self.state.deployed = self.state.pushed
-            && matches!(
-                self.platform.resolved_deploy_branch.as_deref(),
-                Some(resolved) if resolved == self.target.branch,
-            );
+        self.state.deployed = self.state.pushed && self.platform.resolved_deploy_branch.is_some();
     }
 
     pub fn touch(&mut self) {
@@ -184,9 +182,6 @@ pub struct PlatformIntent {
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 pub struct TargetSpec {
-    /// The branch `aomi-git deploy` will push to. From `aomi.toml`'s
-    /// `[app].branch`, defaulting to `publish` for backward compatibility.
-    pub branch: String,
     /// Relative path inside the platform repo where the source lands.
     pub app_path: String,
     /// The app_release_tag this deploy will create (`apps-{name}-{shortcommit}`).

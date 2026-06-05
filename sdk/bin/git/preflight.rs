@@ -10,8 +10,14 @@ use serde_json::json;
 use crate::deployment_state::{Check, DeploymentState, Stage, StageId};
 use crate::platform::{Platform, normalize_github_repo};
 
+/// One platform record as the backend registry reports it
+/// (`GET /api/control/platforms`). You only obtain one by *resolving* a
+/// [`Platform`] name against the backend — see [`Platform::resolve`] — so the
+/// type itself is the proof that the backend's facts (repo + deployment branch)
+/// are known. The declared name ([`Platform`]) and these resolved facts are
+/// deliberately distinct types: the name is your intent, this is the answer.
 #[derive(Debug, Clone, Deserialize)]
-pub struct RemotePlatform {
+pub struct ResolvedPlatform {
     pub name: String,
     pub github_repo: String,
     pub deployment_branch: String,
@@ -20,9 +26,40 @@ pub struct RemotePlatform {
     pub description: Option<String>,
 }
 
+impl ResolvedPlatform {
+    /// The publish repo as a normalized `owner/repo`.
+    pub fn source_repo(&self) -> Result<String> {
+        normalize_github_repo(&self.github_repo)
+    }
+}
+
+impl Platform {
+    /// Resolve this declared platform name against the backend registry,
+    /// returning the single matching [`ResolvedPlatform`]. One fetch, one
+    /// case-insensitive match — the only path from a name to its backend facts
+    /// (repo + deployment branch), so callers can't accidentally read a branch
+    /// and a repo from two different fetches. Errors if the registry is
+    /// unreachable or the platform is not registered.
+    pub async fn resolve(&self, backend_url: &str) -> Result<ResolvedPlatform> {
+        let platforms = fetch_platforms(backend_url).await?;
+        let available = platforms.len();
+        let needle = self.as_str().trim().to_ascii_lowercase();
+        platforms
+            .into_iter()
+            .find(|p| p.name.eq_ignore_ascii_case(&needle))
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "backend does not know about platform `{needle}` — it must be registered \
+                     (with its deployment branch set) before deploy ({available} platform(s) \
+                     available)"
+                )
+            })
+    }
+}
+
 #[derive(Debug, Deserialize)]
 struct ListResponse {
-    platforms: Vec<RemotePlatform>,
+    platforms: Vec<ResolvedPlatform>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -35,7 +72,7 @@ struct ServerTagsResponse {
 }
 
 /// Fetch the registered platforms from the backend's public control endpoint.
-pub async fn fetch_platforms(backend_url: &str) -> Result<Vec<RemotePlatform>> {
+pub async fn fetch_platforms(backend_url: &str) -> Result<Vec<ResolvedPlatform>> {
     let base = backend_url.trim().trim_end_matches('/');
     let url = format!("{base}/api/control/platforms");
     let response = reqwest::Client::new()
@@ -80,23 +117,6 @@ pub async fn fetch_server_tags(backend_url: &str) -> Result<(Vec<String>, Option
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty());
     Ok((normalize_tags(parsed.server_tags), sdk))
-}
-
-/// Resolve `platform` to its GitHub repo URL via the backend registry. Used
-/// when neither `--source-repo` nor `aomi.toml [app].git` was provided.
-pub async fn lookup_platform_git(backend_url: &str, platform: &Platform) -> Result<String> {
-    let platforms = fetch_platforms(backend_url).await?;
-    let needle = platform.as_str().trim().to_ascii_lowercase();
-    let matched = platforms
-        .into_iter()
-        .find(|p| p.name.eq_ignore_ascii_case(&needle))
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "backend does not know about platform `{needle}` — declare [app].git in aomi.toml \
-                 or pass --source-repo <URL>"
-            )
-        })?;
-    normalize_github_repo(&matched.github_repo)
 }
 
 /// Augment a deployment state with online preflight results. Mutates `state`
@@ -174,23 +194,11 @@ pub async fn run(state: &mut DeploymentState, backend_url: &str) -> Result<()> {
             "platform_resolved",
             format!("{} -> {}", remote.name, remote.github_repo),
         ),
-    ];
-
-    let on_release_branch = state.target.branch == remote.deployment_branch;
-    platform_checks.push(if on_release_branch {
         Check::pass(
-            "branch_matches_contract",
-            format!("{} == {}", state.target.branch, remote.deployment_branch),
-        )
-    } else {
-        Check::fail(
-            "branch_matches_contract",
-            format!(
-                "{} != {} (push will not be auto-deployed)",
-                state.target.branch, remote.deployment_branch
-            ),
-        )
-    });
+            "deploy_branch_resolved",
+            format!("{} (from backend registry)", remote.deployment_branch),
+        ),
+    ];
 
     if let Some(user_git) = state.app.git.as_deref() {
         match (

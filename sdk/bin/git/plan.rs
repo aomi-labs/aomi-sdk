@@ -113,11 +113,16 @@ impl Deployment {
         })
     }
 
+    /// `deploy_branch` is the platform's contractual deployment branch,
+    /// resolved by the caller from `GET /api/control/platforms`. It is never a
+    /// client/user input — the backend registry is the only authority on where
+    /// a platform's releases land.
     pub fn git_transport(
         start: impl AsRef<Path>,
         platform: Platform,
         platform_repo_root: impl AsRef<Path>,
         push: bool,
+        deploy_branch: &str,
     ) -> Result<DeployOutcome> {
         let repo = GitRepo::discover(start)?;
         let app = App::discover(&repo)?;
@@ -127,7 +132,7 @@ impl Deployment {
         let platform_repo = GitRepo::discover(platform_repo_root.as_ref())?;
         verify_remote_origin(&platform_repo, &deployment.publish.source_repo)?;
         ensure_dirty_scope(&platform_repo, &deployment.publish.app_path)?;
-        platform_repo.checkout_or_create_branch(&deployment.publish.publish_branch)?;
+        platform_repo.checkout_or_create_branch(deploy_branch)?;
         ensure_dirty_scope(&platform_repo, &deployment.publish.app_path)?;
 
         let app_dir = platform_repo.root().join(&deployment.publish.app_path);
@@ -146,7 +151,7 @@ impl Deployment {
             None
         };
         let pushed = if push && commit.is_some() {
-            platform_repo.push_branch(&deployment.publish.publish_branch)?;
+            platform_repo.push_branch(deploy_branch)?;
             true
         } else {
             false
@@ -183,19 +188,12 @@ impl Deployment {
 
     /// Build the `.aomi/deployment.json` artifact from this in-memory plan.
     ///
-    /// `aomi.toml`'s `[app].branch` (if present) takes precedence as the
-    /// user's chosen target branch; otherwise we default to the platform's
-    /// `publish_branch` from policy. Preflight may later overwrite
-    /// `platform.resolved_deploy_branch` and `state.deployed` once it has
-    /// fetched the DB-backed contract.
+    /// The deployment branch is not part of the offline plan — it is owned by
+    /// the backend `platforms` registry. Preflight (and `deploy`) fill
+    /// `platform.resolved_deploy_branch` from `GET /api/control/platforms`, and
+    /// `recompute_deployed` derives `state.deployed` once a push has landed.
     pub fn to_state(&self) -> DeploymentState {
-        let user_branch = self
-            .app
-            .branch
-            .clone()
-            .unwrap_or_else(|| self.publish.publish_branch.clone());
         let target = TargetSpec {
-            branch: user_branch,
             app_path: self.publish.app_path.clone(),
             app_release_tag: self.publish.app_release_tag.clone(),
             server_tags: self.app.server_tags.clone(),
@@ -275,7 +273,6 @@ Publish plan ({mode:?})
   source_digest   : {digest}
   dirty           : {dirty}
   publish_repo    : {source_repo}
-  publish_branch  : {publish_branch}
   publish_path    : {app_path}
   app_release_tag : {app_release_tag}
   server_tags     : {server_tags}
@@ -295,7 +292,6 @@ Publish plan ({mode:?})
             digest = self.source.digest,
             dirty = self.source.dirty,
             source_repo = self.publish.source_repo,
-            publish_branch = self.publish.publish_branch,
             app_path = self.publish.app_path,
             app_release_tag = self.publish.app_release_tag,
             server_tags = if self.app.server_tags.is_empty() {
@@ -334,7 +330,7 @@ impl DeployOutcome {
         let branch = self.branch.as_deref().unwrap_or("(n/a)");
         let commit = self.commit.as_deref().unwrap_or("(no changes)");
         format!(
-            "{}\n  staged_app_dir      : {}\n  manifest_path       : {}\n  platform_repo_root  : {}\n  publish_branch      : {}\n  publish_commit      : {}\n  pushed              : {}",
+            "{}\n  staged_app_dir      : {}\n  manifest_path       : {}\n  platform_repo_root  : {}\n  deploy_branch       : {}\n  publish_commit      : {}\n  pushed              : {}",
             self.deployment.render(),
             self.app_dir.display(),
             self.manifest_path.display(),

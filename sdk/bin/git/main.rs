@@ -4,6 +4,7 @@
 
 mod activate;
 mod app;
+mod backend;
 mod cli;
 mod deployment_state;
 mod discord;

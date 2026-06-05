@@ -17,9 +17,6 @@ pub struct App {
     /// GitHub URL for the platform's publish repo.
     #[serde(default)]
     pub git: Option<String>,
-    /// User-chosen deployment branch in the platform repo.
-    #[serde(default)]
-    pub branch: Option<String>,
     /// Visibility intent — replaces the per-call `--visibility` flag.
     #[serde(default)]
     pub public: Option<bool>,
@@ -138,7 +135,6 @@ impl App {
         // Trim string optionals; empty → None.
         app.platform = trim_opt(app.platform);
         app.git = trim_opt(app.git);
-        app.branch = trim_opt(app.branch);
         app.access_token = trim_opt(app.access_token);
         app.server_tags = normalize_tags(app.server_tags, "server_tags", path)?;
         if app.server_tags.is_empty() {

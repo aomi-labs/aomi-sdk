@@ -1,10 +1,10 @@
 # aomi-git
 
-CLI for publishing Aomi app source through a platform's Git policy, and for
-activating the resulting release on a backend.
+CLI for publishing Aomi app source through the current direct-Git platform
+transport and activating the resulting backend registry row.
 
 ```text
-aomi-git request  -> ask ops for a collaborator invite + a per-app activation code (once)
+aomi-git request  -> ask ops for direct-Git onboarding and activation details
 aomi-git deploy   -> stage into platform repo -> push -> CI builds + cuts release
 aomi-git status   -> poll CI, release, and backend registry health
 aomi-git activate -> backend fetches + loads the release
@@ -12,10 +12,10 @@ aomi-git activate -> backend fetches + loads the release
 
 | Command | What it does | Who runs it |
 |---|---|---|
-| `request` | Posts an activation request to the Aomi apps Discord so ops can invite your GitHub account to the platform repo and issue you a per-app activation code. Run once, before your first deploy. | The app author |
-| `deploy` | Snapshots your source repo, stages it under `apps/<slug>/` in the platform repo, commits, and pushes to the publish branch. CI then builds the cdylib and cuts a GitHub release. | The app author (a collaborator) |
+| `request` | Posts a direct-Git onboarding request to the Aomi apps Discord so ops can invite your GitHub account to the platform repo and issue activation details. | The app author |
+| `deploy` | Snapshots your source repo, stages it under `apps/<slug>/` in the platform repo, commits, and pushes to the platform's deployment branch (resolved from the backend). CI then builds the cdylib and cuts a GitHub release. | The app author (a collaborator) |
 | `status` | Reads `.aomi/deployment.json`, polls GitHub Actions and release state, then reports whether activation is ready. | The app author |
-| `activate` | Tells a backend to fetch a published release, validate it, and load it. | The app author, using their per-app activation code |
+| `activate` | Tells a backend to fetch a published release, validate it, and load it. | Whoever holds an activation bearer for the app/platform/release scope |
 
 Everything `deploy` learns about your app is written to
 `.aomi/deployment.json` - a plan artifact whose centerpiece is the
@@ -25,10 +25,11 @@ Everything `deploy` learns about your app is written to
 
 ## `aomi-git request`
 
-The **first step for a new contributor.** You can't deploy until ops invites your
-GitHub account to the platform repo, and you can't self-activate until ops issues
-you a per-app activation code. `request` posts that ask — carrying your GitHub
-account, email, and app — to the Aomi apps Discord, pinging the ops role.
+The direct-Git onboarding step for a new contributor. You can't use the current
+Git transport until ops invites your GitHub account to the platform repo, and
+you can't self-activate until ops issues an activation bearer. `request` posts
+that ask - carrying your GitHub account, email, and app - to the Aomi apps
+Discord, pinging the ops role.
 
 ```bash
 # Resolves app / platform / repo from aomi.toml in --path.
@@ -38,15 +39,15 @@ aomi-git request --email you@example.com --git-account your-github-user
 aomi-git request --email you@example.com --git-account your-github-user --dry-run
 ```
 
-Ops then (1) sends your GitHub account a collaborator invite and (2) issues a
-per-app activation code and delivers it to your email **out-of-band**. The code
-is never part of the request and never travels over Discord.
+Ops then (1) sends your GitHub account a collaborator invite and (2) issues the
+activation details out-of-band. The bearer is never part of the request and
+never travels over Discord.
 
 ### Flags
 
 | Flag | Mirrors | Meaning |
 |---|---|---|
-| `--email <EMAIL>` | - | Where ops sends your activation code. **Required.** |
+| `--email <EMAIL>` | - | Where ops sends activation details. **Required.** |
 | `--git-account <USER>` | - | GitHub account to invite as a platform-repo collaborator. **Required.** |
 | `--app <NAME>` | `aomi.toml [app].name` | App slug. Defaults to the value in `aomi.toml`. |
 | `--platform <NAME>` | `aomi.toml [app].platform` | Platform tag. Falls back to `aomi.toml`, then `community`. |
@@ -55,6 +56,10 @@ is never part of the request and never travels over Discord.
 
 > Community-tier only: B2B partners deploy through a server-side proxy
 > (ADR 0011) and don't get direct repo access, so they don't use `request`.
+
+> Refactor boundary: this command describes the current direct-Git transport.
+> A backend-publish transport should use a separate request kind instead of
+> overloading collaborator-invite wording.
 
 ---
 
@@ -88,16 +93,22 @@ aomi-git deploy --platform-dir /path/to/platform-repo
 | `--platform <NAME>` | `aomi.toml [app].platform` | Platform tag. Default: aomi.toml's value, then `community`. |
 | `--source-repo <URL\|owner/repo>` | `aomi.toml [app].git` | Platform repo location. When omitted, resolved from the backend's platform record. |
 | `--platform-dir <DIR>` | - | Escape hatch: hand-managed local clone to stage/push from. Skips the managed transit cache. |
-| `--backend <URL>` | `AOMI_BACKEND_URL` | Backend base URL for online checks. |
+| `--backend <URL>` | `AOMI_BACKEND_URL` | Backend base URL. **Required for a live deploy** — `aomi-git` reads the platform's deployment branch from `GET /api/control/platforms` and pushes there. (Not needed for `--dry-run`.) |
 | `--dry-run` | - | Plan + best-effort backend reads. No staging, push, or activation. Refreshes `.aomi/deployment.json`. |
+| `--activate` | `AOMI_APP_ACTIVATION_TOKEN` | After a successful push, explicitly attempt backend activation. Normally run `status` first and then `activate` once the release exists. |
 | `--allow-dirty` | - | Permit a dirty working tree in the plan and during staging. |
 | `--json` | - | Print the plan/outcome as JSON instead of the human summary. |
 
-> **Auto-activate on deploy.** If `AOMI_APP_ACTIVATION_TOKEN` is set in the
-> environment and the push lands, `deploy` will attempt to activate
-> immediately. This usually 502s on first push because the release tarball
-> doesn't exist yet (CI is still building) - that's expected. Normal flow is
-> to let the platform operator run `activate` once CI is green.
+> **The deployment branch is owned by the backend, not you.** `aomi-git` has no
+> `--branch` flag and `aomi.toml` has no `[app].branch` — the branch a platform's
+> releases land on is whatever `GET /api/control/platforms` reports for that
+> platform, and `deploy` pushes to exactly that. A live deploy therefore needs a
+> reachable backend (`--backend`/`AOMI_BACKEND_URL`); it will refuse rather than
+> guess a branch.
+
+> `deploy` no longer auto-activates just because `AOMI_APP_ACTIVATION_TOKEN` is
+> present. Activation is a separate backend step unless `--activate` is passed
+> explicitly.
 
 ---
 
@@ -125,13 +136,13 @@ aomi-git status --path /path/to/app
 
 ## `aomi-git activate`
 
-Run by whoever holds the platform's activation token. Tells the backend to
-fetch a release by tag, validate it, and load it.
+Run by whoever holds an activation bearer for the app/platform/release scope.
+Tells the backend to fetch a release by tag, validate it, and load it.
 
 ```sh
 aomi-git activate apps-my-bot-abc1234 \
   --backend https://staging-api.aomi.dev \
-  --activation-token <platform-token> \
+  --activation-token <activation-bearer> \
   --source-repo aomi-labs/community-apps \
   --target-tag staging \
   --visibility public
@@ -145,7 +156,7 @@ aomi-git activate apps-my-bot-abc1234 \
 | `--platform <NAME>` | `aomi.toml [app].platform` | Platform tag. Falls back to deployment.json, then `community`. |
 | `--source-repo <URL\|owner/repo>` | `aomi.toml [app].git` | `source_repo` recorded on the app row. Falls back to deployment.json, then a backend lookup. |
 | `--backend <URL>` | `AOMI_BACKEND_URL` | Backend base URL. **Required.** |
-| `--activation-token <T>` | `AOMI_APP_ACTIVATION_TOKEN` | Platform activation token. **Required.** |
+| `--activation-token <T>` | `AOMI_APP_ACTIVATION_TOKEN` | Activation bearer. **Required.** |
 | `--access-token <$ENV\|VAL>` | `aomi.toml [app].access_token` | GitHub PAT (or `$ENV_VAR` ref) for the backend's one-shot release fetch. Only needed for **private** platform repos. |
 | `--target-tag <TAG>` | - | Required backend server tag. Repeatable. |
 | `--visibility <V>` | `aomi.toml [app].public` | `private` (default) or `public`. |
@@ -157,13 +168,10 @@ aomi-git activate apps-my-bot-abc1234 \
 | `--dry-run` | - | Print the activation request that would be sent; no HTTP. |
 | `--json` | - | Print the backend response as JSON. |
 
-> **Where does the activation token come from?** Platform ops issue you a
-> **per-app** activation code (see [`aomi-git request`](#aomi-git-request)). Once
-> you hold it, you run `activate` yourself for every release — set
-> `AOMI_APP_ACTIVATION_TOKEN` or pass `--activation-token`. There is no longer a
-> "post a request to ops per release" step.
-
----
+> **Where does the activation token come from?** Platform ops issue an
+> activation bearer out-of-band. The bearer is platform-wide or app-scoped,
+> depending on backend policy. Set `AOMI_APP_ACTIVATION_TOKEN` or pass
+> `--activation-token`.
 
 ## Defaults pyramid
 
@@ -182,7 +190,7 @@ unresolved value will error.
 | Var | Used by | Purpose |
 |---|---|---|
 | `AOMI_BACKEND_URL` | `deploy`, `status`, `activate` | Backend base URL when `--backend` is omitted. |
-| `AOMI_APP_ACTIVATION_TOKEN` | `activate` (and `deploy` auto-activate) | Platform activation token. |
+| `AOMI_APP_ACTIVATION_TOKEN` | `activate` and `deploy --activate` | Activation bearer. |
 
 ---
 
@@ -211,7 +219,7 @@ stay `skipped`.
 |---|---|---|
 | `workspace` | Is the local tree shippable? | - |
 | `manifest` | Does `aomi.toml` declare what we need? | `server_tags`, `defaulted` |
-| `platform` | Resolve the declared platform repo + deploy branch. | `name`, `github_repo`, `deployment_branch` |
+| `platform` | Resolve the platform repo + its backend-owned deploy branch. | `name`, `github_repo`, `deployment_branch` |
 | `backend` | Will the backend actually accept this release? | - |
 
 ### The checks
@@ -223,7 +231,7 @@ stay `skipped`.
 | `git_declared` | manifest | **warn** | `aomi.toml` has `[app].git`. Advisory - a backend lookup can supply the repo; a missing value only skips `git_url_matches_platform`. |
 | `backend_reachable` | platform | error | `GET /api/control/platforms` succeeded. The gate that opens stages 3 & 4. |
 | `platform_resolved` | platform | error | The declared platform is registered with the backend. |
-| `branch_matches_contract` | platform | error | Your target branch equals the platform's contractual `deployment_branch`. A mismatch means the push won't auto-deploy. |
+| `deploy_branch_resolved` | platform | error | The platform's contractual `deployment_branch` was read from the backend registry. `deploy` pushes to exactly this branch — it is never a client/`aomi.toml` input, so there is no branch to "mismatch." |
 | `git_url_matches_platform` | platform | **warn** | Your `aomi.toml` git URL matches the platform's record. Advisory - fork-tolerant. |
 | `server_tags_subset` | backend | error | Your `server_tags` are a subset of the backend's `AOMI_SERVER_TAGS`. A mismatch is a 409 at activate time. |
 
@@ -262,7 +270,7 @@ anything that didn't pass indented beneath:
 Preflight
   [ok]   workspace git_clean
   [ok]   manifest  platform_declared, git_declared  |  defaulted=true server_tags=[staging]
-  [ok]   platform  backend_reachable, platform_resolved, branch_matches_contract, git_url_matches_platform  |  deployment_branch=publish github_repo=aomi-labs/community-apps name=community
+  [ok]   platform  backend_reachable, platform_resolved, deploy_branch_resolved, git_url_matches_platform  |  deployment_branch=publish github_repo=aomi-labs/community-apps name=community
   [ok]   backend   server_tags_subset
 ```
 

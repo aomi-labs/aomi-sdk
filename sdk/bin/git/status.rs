@@ -244,12 +244,12 @@ impl StatusReport {
             let _ = writeln!(out);
             let _ = writeln!(
                 out,
-                "  Release is ready. Activate it with your per-app code:"
+                "  Release is ready. Activate it with an activation token:"
             );
             let _ = writeln!(out, "    aomi-git activate");
             let _ = writeln!(
                 out,
-                "  (set AOMI_APP_ACTIVATION_TOKEN to the code ops issued you;"
+                "  (set AOMI_APP_ACTIVATION_TOKEN to the bearer ops issued you;"
             );
             let _ = writeln!(
                 out,

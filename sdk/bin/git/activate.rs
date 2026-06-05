@@ -1,20 +1,15 @@
 use std::fmt;
-use std::time::Duration;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::backend::BackendClient;
 use crate::platform::Platform;
 
 pub(crate) const ACTIVATION_TOKEN_ENV: &str = "AOMI_APP_ACTIVATION_TOKEN";
 pub(crate) const BACKEND_URL_ENV: &str = "AOMI_BACKEND_URL";
 const ACTIVATION_PATH: &str = "/api/admin/apps/activate";
-
-/// Bound the config request so a stalled connect can't hang the CLI forever
-/// (same failure class the `status` probe guards against).
-const CONFIG_TIMEOUT: Duration = Duration::from_secs(20);
-const CONFIG_CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, clap::ValueEnum)]
 pub enum Visibility {
@@ -61,240 +56,128 @@ pub(crate) fn parse_app_release_tag(value: &str) -> Result<(String, String)> {
 
 #[derive(Clone, Debug)]
 pub struct ActivationPlan {
-    pub backend_url: String,
-    pub activation_token: String,
+    backend: BackendClient,
     pub request: ActivateAppRequest,
 }
 
 impl ActivationPlan {
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        app_release_tag: &str,
-        platform: Platform,
+    pub fn from_intent(
         backend_url: String,
         activation_token: String,
-        visibility: Visibility,
-        source_repo: String,
-        github_token: Option<String>,
-        server_tags: Vec<String>,
-        label: Option<String>,
-        source_commit: Option<String>,
-        source_tree: Option<String>,
-        source_digest: Option<String>,
+        intent: ActivationIntent,
     ) -> Result<Self> {
-        let (app_slug, short_commit) = parse_app_release_tag(app_release_tag)?;
-        let backend_url = backend_url.trim().trim_end_matches('/').to_string();
-        if backend_url.is_empty() {
-            bail!("backend URL is required via --backend or {BACKEND_URL_ENV}");
-        }
-        if activation_token.trim().is_empty() {
-            bail!("activation token is required via --activation-token or {ACTIVATION_TOKEN_ENV}");
-        }
-        let source_repo = source_repo.trim().to_string();
+        Ok(Self {
+            backend: BackendClient::new(backend_url, activation_token).map_err(|error| {
+                rewrite_backend_error(error, "activation token", ACTIVATION_TOKEN_ENV)
+            })?,
+            request: intent.into_request()?,
+        })
+    }
+
+    pub fn endpoint(&self) -> String {
+        self.backend.endpoint(ACTIVATION_PATH)
+    }
+
+    pub async fn execute(&self) -> Result<Value> {
+        self.backend
+            .post_json(ACTIVATION_PATH, &self.request, "activation")
+            .await
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ActivationIntent {
+    app_release_tag: String,
+    platform: Platform,
+    visibility: Visibility,
+    source_repo: String,
+    github_token: Option<String>,
+    server_tags: Vec<String>,
+    label: Option<String>,
+    source_commit: Option<String>,
+    source_tree: Option<String>,
+    source_digest: Option<String>,
+}
+
+impl ActivationIntent {
+    pub fn new(app_release_tag: &str, platform: Platform, visibility: Visibility) -> Result<Self> {
+        parse_app_release_tag(app_release_tag)?;
+        Ok(Self {
+            app_release_tag: app_release_tag.to_string(),
+            platform,
+            visibility,
+            source_repo: String::new(),
+            github_token: None,
+            server_tags: Vec::new(),
+            label: None,
+            source_commit: None,
+            source_tree: None,
+            source_digest: None,
+        })
+    }
+
+    pub fn source_repo(mut self, value: String) -> Self {
+        self.source_repo = value;
+        self
+    }
+
+    pub fn github_token(mut self, value: Option<String>) -> Self {
+        self.github_token = value;
+        self
+    }
+
+    pub fn server_tags(mut self, value: Vec<String>) -> Self {
+        self.server_tags = value;
+        self
+    }
+
+    pub fn label(mut self, value: Option<String>) -> Self {
+        self.label = value;
+        self
+    }
+
+    pub fn source_provenance(
+        mut self,
+        commit: Option<String>,
+        tree: Option<String>,
+        digest: Option<String>,
+    ) -> Self {
+        self.source_commit = commit;
+        self.source_tree = tree;
+        self.source_digest = digest;
+        self
+    }
+
+    fn into_request(self) -> Result<ActivateAppRequest> {
+        let (app_slug, short_commit) = parse_app_release_tag(&self.app_release_tag)?;
+        let app_release_tag = self.app_release_tag;
+        let source_repo = self.source_repo.trim().to_string();
         if source_repo.is_empty() {
             bail!(
-                "source_repo is required — pass --source-repo or ensure aomi.toml declares [app].git"
+                "source_repo is required - pass --source-repo or ensure aomi.toml declares [app].git"
             );
         }
 
-        let request = ActivateAppRequest {
+        Ok(ActivateAppRequest {
             name: app_slug,
-            label: label.and_then(non_empty),
-            platform,
+            label: self.label.and_then(non_empty),
+            platform: self.platform,
             source_repo,
-            app_release_tag: app_release_tag.to_string(),
-            source_commit: source_commit.and_then(non_empty),
-            source_tree: source_tree.and_then(non_empty),
-            source_digest: source_digest.and_then(non_empty),
+            app_release_tag: app_release_tag.clone(),
+            source_commit: self.source_commit.and_then(non_empty),
+            source_tree: self.source_tree.and_then(non_empty),
+            source_digest: self.source_digest.and_then(non_empty),
             is_active: true,
-            is_public: visibility.is_public(),
+            is_public: self.visibility.is_public(),
             metadata: json!({
                 "requested_by": "aomi-git",
                 "app_release_tag": app_release_tag,
                 "short_commit": short_commit,
             }),
-            github_token: github_token.and_then(non_empty),
-            server_tags: normalize_tags(server_tags)?,
-        };
-
-        Ok(Self {
-            backend_url,
-            activation_token,
-            request,
+            github_token: self.github_token.and_then(non_empty),
+            server_tags: normalize_tags(self.server_tags)?,
         })
     }
-
-    pub fn endpoint(&self) -> String {
-        format!("{}{ACTIVATION_PATH}", self.backend_url)
-    }
-
-    pub async fn execute(&self) -> Result<Value> {
-        let endpoint = self.endpoint();
-        let response = reqwest::Client::new()
-            .post(&endpoint)
-            .bearer_auth(&self.activation_token)
-            .json(&self.request)
-            .send()
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to call activation endpoint {} on {}",
-                    endpoint, self.backend_url
-                )
-            })?;
-
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .context("failed to read activation response body")?;
-        if !matches!(status.as_u16(), 200 | 201) {
-            bail!(
-                "activation endpoint {} returned {}: {}",
-                endpoint,
-                status,
-                body.trim()
-            );
-        }
-
-        serde_json::from_str(&body).context("activation response was not valid JSON")
-    }
-}
-
-/// A metadata-only configuration edit, posted to the same
-/// `/api/admin/apps/activate` endpoint the `activate` subcommand uses, but
-/// keyed on the app **name** instead of an app_release_tag and deliberately
-/// omitting `source_repo` / `app_release_tag`.
-///
-/// Omitting those two fields is load-bearing: the backend only runs its
-/// one-shot release fetch when BOTH are present (see `activate_app`). Without
-/// them it takes the "set_public-style edit" path — it updates the existing
-/// registry row in place and skips the fetch entirely. That keeps `config`
-/// cheap and side-effect-free, and avoids the fetch path that currently 502s.
-///
-/// `config` sets exactly two things on the registry row: the visibility flag
-/// and the display label. Everything else in the request is identity/auth
-/// plumbing, not a setting.
-///
-/// Field omission controls what the backend touches:
-/// - `is_public = None` → the backend leaves the row's public flag untouched
-///   (it only calls `set_public` when the value is present AND differs).
-///
-/// `label` is the exception: the backend's upsert ALWAYS rewrites the row's
-/// label (falling back to the app name when omitted). So `config` must send
-/// the app's current `display_name` even when the user isn't changing it, or
-/// the label would be clobbered with the bare slug. `ConfigArgs` resolves it
-/// from `--display-name` → `.aomi/deployment.json` and passes it here.
-///
-/// The "did the user actually ask to change anything" check lives in
-/// `ConfigArgs` (keyed on the explicit flags), not here — by the time we build
-/// the request, `label` is almost always populated for preservation.
-#[derive(Clone, Debug)]
-pub struct ConfigPlan {
-    pub backend_url: String,
-    pub activation_token: String,
-    pub request: ConfigRequest,
-}
-
-impl ConfigPlan {
-    pub fn new(
-        app_name: String,
-        platform: Platform,
-        backend_url: String,
-        activation_token: String,
-        is_public: Option<bool>,
-        display_name: Option<String>,
-    ) -> Result<Self> {
-        let app_name = app_name.trim().to_ascii_lowercase();
-        if app_name.is_empty() {
-            bail!(
-                "app name is required for config — pass --app or run from a deployed source repo"
-            );
-        }
-        if !app_name
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
-        {
-            bail!("app name `{app_name}` contains unsupported characters");
-        }
-
-        let backend_url = backend_url.trim().trim_end_matches('/').to_string();
-        if backend_url.is_empty() {
-            bail!("backend URL is required via --backend or {BACKEND_URL_ENV}");
-        }
-        if activation_token.trim().is_empty() {
-            bail!("activation token is required via --activation-token or {ACTIVATION_TOKEN_ENV}");
-        }
-
-        let request = ConfigRequest {
-            name: app_name,
-            platform,
-            label: display_name.and_then(non_empty),
-            is_public,
-            metadata: json!({ "requested_by": "aomi-git-config" }),
-        };
-
-        Ok(Self {
-            backend_url,
-            activation_token,
-            request,
-        })
-    }
-
-    pub fn endpoint(&self) -> String {
-        format!("{}{ACTIVATION_PATH}", self.backend_url)
-    }
-
-    pub async fn execute(&self) -> Result<Value> {
-        let endpoint = self.endpoint();
-        let client = reqwest::Client::builder()
-            .timeout(CONFIG_TIMEOUT)
-            .connect_timeout(CONFIG_CONNECT_TIMEOUT)
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
-        let response = client
-            .post(&endpoint)
-            .bearer_auth(&self.activation_token)
-            .json(&self.request)
-            .send()
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to call activation endpoint {} on {}",
-                    endpoint, self.backend_url
-                )
-            })?;
-
-        let status = response.status();
-        let body = response
-            .text()
-            .await
-            .context("failed to read config response body")?;
-        if !matches!(status.as_u16(), 200 | 201) {
-            bail!(
-                "config endpoint {} returned {}: {}",
-                endpoint,
-                status,
-                body.trim()
-            );
-        }
-
-        serde_json::from_str(&body).context("config response was not valid JSON")
-    }
-}
-
-/// Wire body for a metadata-only config edit. Optional fields are skipped when
-/// absent so the backend's upsert preserves the corresponding column rather
-/// than overwriting it. `name`, `platform`, and `metadata` are always sent.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub struct ConfigRequest {
-    pub name: String,
-    pub platform: Platform,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub is_public: Option<bool>,
-    pub metadata: Value,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -318,10 +201,8 @@ pub struct ActivateAppRequest {
     /// a subset of its configured AOMI_SERVER_TAGS.
     #[serde(default, rename = "target_tags", skip_serializing_if = "Vec::is_empty")]
     pub server_tags: Vec<String>,
-    /// Per ADR 0009 amended: transient GitHub read token resolved from
-    /// `aomi.toml[app].access_token` (an env-var reference). Sent once, used
-    /// once by the backend, never persisted. Skipped in serialization when
-    /// absent so the wire body stays clean for public-release activations.
+    /// Transient GitHub read token resolved from `aomi.toml[app].access_token`.
+    /// Sent once, used once by the backend, never persisted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub github_token: Option<String>,
 }
@@ -353,4 +234,16 @@ fn normalize_tags(values: Vec<String>) -> Result<Vec<String>> {
         }
     }
     Ok(tags)
+}
+
+fn rewrite_backend_error(error: anyhow::Error, token_name: &str, token_env: &str) -> anyhow::Error {
+    match error.to_string().as_str() {
+        "backend URL is required" => {
+            anyhow::anyhow!("backend URL is required via --backend or {BACKEND_URL_ENV}")
+        }
+        "backend bearer token is required" => {
+            anyhow::anyhow!("{token_name} is required via --activation-token or {token_env}")
+        }
+        _ => error,
+    }
 }
