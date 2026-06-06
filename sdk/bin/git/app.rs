@@ -14,22 +14,12 @@ pub struct App {
     /// Platform tier label — must match a row in the backend `platforms` table.
     #[serde(default)]
     pub platform: Option<String>,
-    /// GitHub URL for the platform's publish repo.
+    /// Legacy deployment-state field. New aomi.toml files should not set it.
     #[serde(default)]
     pub git: Option<String>,
     /// Visibility intent — replaces the per-call `--visibility` flag.
     #[serde(default)]
     pub public: Option<bool>,
-    /// Env-var reference for the GitHub token the backend will use to fetch
-    /// this release. MUST be the literal form `"$ENV_VAR_NAME"` — bare
-    /// secrets are rejected at parse time so committed configs cannot leak
-    /// tokens. The CLI resolves `std::env::var(ENV_VAR_NAME)` at deploy/
-    /// activate time and forwards the value in the request body. The token
-    /// is not written to aomi.toml. Command-line overrides may be reflected
-    /// into deployment.json so the state artifact records the effective run
-    /// input. Omit for public-release platforms (community).
-    #[serde(default)]
-    pub access_token: Option<String>,
     /// Required server tags for activation/load targeting. The backend loads
     /// only when these tags are a subset of its configured AOMI_SERVER_TAGS.
     /// When `aomi.toml` omits this field (or sets it to `[]`), `App::discover`
@@ -51,36 +41,6 @@ pub struct App {
 /// Default `server_tags` injected when `aomi.toml` does not declare any.
 /// Chosen to fail safe: unconfigured deploys reach the staging class only.
 pub const DEFAULT_SERVER_TAG: &str = "staging";
-
-impl App {
-    /// Resolve `[app].access_token` to a real token string by reading the
-    /// referenced env var. Returns:
-    /// - `Ok(None)` when no `access_token` is configured (public release).
-    /// - `Ok(Some(token))` when the env var is set to a non-empty value.
-    /// - `Err` when the env var name is set but the env var is unset or empty.
-    pub fn resolved_access_token(&self) -> Result<Option<String>> {
-        let Some(reference) = self
-            .access_token
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        else {
-            return Ok(None);
-        };
-        let var_name = reference
-            .strip_prefix('$')
-            .ok_or_else(|| {
-                anyhow!(
-                    "aomi.toml [app].access_token must be of the form `$ENV_VAR_NAME`, got `{reference}`"
-                )
-            })?;
-        match std::env::var(var_name) {
-            Ok(value) if !value.is_empty() => Ok(Some(value)),
-            Ok(_) => bail!("env var `{var_name}` (from aomi.toml access_token) is empty"),
-            Err(_) => bail!("env var `{var_name}` (from aomi.toml access_token) is not set"),
-        }
-    }
-}
 
 impl App {
     pub fn discover(repo: &GitRepo) -> Result<Self> {
@@ -122,7 +82,8 @@ impl App {
         )
         .with_context(|| format!("failed to parse app config {}", path.display()))?;
 
-        let mut app = raw.app;
+        let source_subdir = raw.app.source_subdir.clone();
+        let mut app = raw.app.into_app();
         if app.name.trim().is_empty() {
             bail!("{} must define `name` under [app]", path.display());
         }
@@ -134,27 +95,13 @@ impl App {
         }
         // Trim string optionals; empty → None.
         app.platform = trim_opt(app.platform);
-        app.git = trim_opt(app.git);
-        app.access_token = trim_opt(app.access_token);
         app.server_tags = normalize_tags(app.server_tags, "server_tags", path)?;
         if app.server_tags.is_empty() {
             app.server_tags = vec![DEFAULT_SERVER_TAG.to_string()];
             app.server_tags_defaulted = true;
         }
 
-        // Reject access_token values that look like raw secrets (no `$`
-        // prefix). This protects users from accidentally committing a
-        // plaintext token to a file they're checking in.
-        if let Some(reference) = app.access_token.as_deref()
-            && !reference.starts_with('$')
-        {
-            bail!(
-                "{}: [app].access_token must be `$ENV_VAR_NAME` (env-var reference). Literal tokens are rejected so committed configs cannot leak secrets.",
-                path.display()
-            );
-        }
-
-        app.fill_paths(path, git_root)?;
+        app.fill_paths(path, git_root, source_subdir.as_deref())?;
         Ok(app)
     }
 
@@ -182,13 +129,21 @@ impl App {
             server_tags_defaulted: true,
             ..App::default()
         };
-        app.fill_paths(path, git_root)?;
+        app.fill_paths(path, git_root, None)?;
         Ok(Some(app))
     }
 
-    fn fill_paths(&mut self, config_path: &Path, git_root: &Path) -> Result<()> {
-        let source_dir = source_dir_for_config(config_path)?;
-        self.source_path = relative_to(source_dir, git_root)?;
+    fn fill_paths(
+        &mut self,
+        config_path: &Path,
+        git_root: &Path,
+        source_subdir: Option<&str>,
+    ) -> Result<()> {
+        let source_dir = match source_subdir.map(str::trim).filter(|value| !value.is_empty()) {
+            Some(".") | None => source_dir_for_config(config_path)?.to_path_buf(),
+            Some(subdir) => git_root.join(subdir),
+        };
+        self.source_path = relative_to(&source_dir, git_root)?;
         self.config_path = relative_to(config_path, git_root)?;
         Ok(())
     }
@@ -197,7 +152,42 @@ impl App {
 #[derive(Debug, Default, Deserialize)]
 struct AomiConfigFile {
     #[serde(default)]
-    app: App,
+    app: AomiAppConfig,
+}
+
+#[derive(Debug, Clone, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct AomiAppConfig {
+    /// Validated app identifier (`aomi.toml [app].name`).
+    pub name: String,
+    #[serde(default)]
+    pub display_name: String,
+    /// Platform tier label — must match a row in the backend `platforms` table.
+    #[serde(default)]
+    pub platform: Option<String>,
+    /// Visibility intent — replaces the per-call `--visibility` flag.
+    #[serde(default)]
+    pub public: Option<bool>,
+    /// Required server tags for activation/load targeting.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub server_tags: Vec<String>,
+    /// Optional path inside the source repository. Defaults to the directory
+    /// containing `aomi.toml`.
+    #[serde(default)]
+    pub source_subdir: Option<String>,
+}
+
+impl AomiAppConfig {
+    fn into_app(self) -> App {
+        App {
+            name: self.name,
+            display_name: self.display_name,
+            platform: self.platform,
+            public: self.public,
+            server_tags: self.server_tags,
+            ..App::default()
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]

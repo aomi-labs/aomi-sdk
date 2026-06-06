@@ -1,21 +1,18 @@
 use std::fmt;
-use std::path::Path;
 use std::str::FromStr;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::app::App;
-use crate::git::{GitRepo, Source};
-use crate::plan::{Deployment, short_hash};
+use crate::git::Source;
+use crate::plan::short_hash;
 
-/// Universal publish conventions. Previously these lived in a checked-in
+/// Universal deploy conventions. Previously these lived in a checked-in
 /// `platforms.json` registry; per ADR 0009 the only sources of truth are
-/// the user's `aomi.toml` (for `git` / `platform`) and the backend's
-/// `platforms` table (for the contractual `deployment_branch`, resolved from
-/// `GET /api/control/platforms`). The deployment branch is **never** a client
-/// input — `aomi-git` reads it from the backend and pushes there. Conventions
-/// that don't vary per-platform stay here as constants.
+/// the user's `aomi.toml` (for app/platform intent), the local Git remote (for
+/// Alice's source repo), and the backend's `platforms` table. The deployment
+/// branch and platform repo are never client inputs on the live path.
 pub const DEFAULT_APP_PATH_PREFIX: &str = "apps";
 pub const DEFAULT_RELEASE_TAG_TEMPLATE: &str = "apps-{app_slug}-{short_commit}";
 
@@ -74,29 +71,28 @@ impl FromStr for Platform {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
-pub struct PublishTarget {
+pub struct DeployTarget {
+    /// Legacy deployment-state field. New deploy requests send `source_path`
+    /// separately and the backend owns the platform repo.
     pub source_repo: String,
     pub app_path: String,
     pub app_release_tag: String,
 }
 
-impl PublishTarget {
+impl DeployTarget {
     /// Resolve a deployment target from the user's `aomi.toml` + the git
-    /// snapshot. `aomi.toml[app].git` IS the source repo — no registry
-    /// fallback. If `git` is missing, the deploy cannot proceed and we
-    /// surface a clear error pointing the user at their aomi.toml.
+    /// snapshot. `aomi.toml[app].git` is intentionally ignored for new configs:
+    /// source repo identity is resolved by `aomi-git deploy` from `origin` or
+    /// `--source-path` and then sent to the backend.
     pub fn resolve(_platform: &Platform, app: &App, source: &Source) -> Result<Self> {
-        let raw_git = app
+        let source_repo = app
             .git
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "aomi.toml is missing `[app].git` — set it to the publish repo, e.g. `git = \"https://github.com/aomi-labs/community-apps\"`"
-                )
-            })?;
-        let source_repo = normalize_github_repo(raw_git)?;
+            .map(normalize_github_repo)
+            .transpose()?
+            .unwrap_or_default();
 
         let app_path = format!("{}/{}", DEFAULT_APP_PATH_PREFIX, app.name.trim_matches('/'));
         let app_release_tag = DEFAULT_RELEASE_TAG_TEMPLATE
@@ -109,62 +105,6 @@ impl PublishTarget {
             app_release_tag,
         })
     }
-}
-
-pub(crate) fn verify_remote_origin(repo: &GitRepo, expected_repo: &str) -> Result<()> {
-    let remote = repo.remote_origin().with_context(|| {
-        format!(
-            "platform repo {} must have an origin remote",
-            repo.root().display()
-        )
-    })?;
-    let actual = normalize_github_repo(&remote)?;
-    let expected = normalize_github_repo(expected_repo)?;
-    if actual != expected {
-        bail!(
-            "platform repo origin `{remote}` does not match expected publish repo `{expected_repo}`"
-        );
-    }
-    Ok(())
-}
-
-pub(crate) fn ensure_dirty_scope(repo: &GitRepo, app_path: &str) -> Result<()> {
-    let app_prefix = Path::new(app_path);
-    let unowned: Vec<_> = repo
-        .dirty_paths()?
-        .into_iter()
-        .filter(|path| !path.starts_with(app_prefix))
-        .collect();
-    if !unowned.is_empty() {
-        bail!(
-            "platform repo has dirty files outside owned publish path {}: {}",
-            app_path,
-            unowned
-                .iter()
-                .map(|path| path.display().to_string())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-    }
-    Ok(())
-}
-
-pub(crate) fn commit_message(deployment: &Deployment) -> (String, String) {
-    let subject = format!(
-        "Deploy {} to {} from {} as {}",
-        deployment.app.name,
-        deployment.platform,
-        short_hash(&deployment.source.commit),
-        deployment.publish.app_release_tag
-    );
-    let body = format!(
-        "app_slug: {}\nplatform: {}\nsource_commit: {}\napp_release_tag: {}",
-        deployment.app.name,
-        deployment.platform,
-        deployment.source.commit,
-        deployment.publish.app_release_tag
-    );
-    (subject, body)
 }
 
 pub(crate) fn normalize_github_repo(value: &str) -> Result<String> {

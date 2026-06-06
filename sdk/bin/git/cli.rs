@@ -9,33 +9,29 @@
 //! deploy
 //!   --path <DIR>             # app source directory (default .)
 //!   --platform <NAME>        # aomi.toml [app].platform
-//!   --source-repo <URL|owner/repo> # aomi.toml [app].git
-//!   --platform-dir <DIR>     # escape hatch: hand-managed local clone
+//!   --source-path <URL>      # GitHub source repo URL (default origin)
+//!   --hash <SHA>             # commit hash (default HEAD)
 //!   --backend <URL>          # AOMI_BACKEND_URL
-//!   --dry-run                # plan + best-effort backend reads, no writes
-//!   --activate               # explicitly activate after push
+//!   --dry-run                # plan + best-effort backend reads, no deploy
+//!   --activate               # activate after deploy
 //!   --allow-dirty
 //!   --json
 //!
-//! activate [APP_RELEASE_TAG] # or .aomi/deployment.json target.app_release_tag
+//! activate [APP_RELEASE_TAG] # reservation without a release tag; activation with one
 //!   --path <DIR>             # source repo (.aomi/deployment.json fallback)
 //!   --platform <NAME>        # aomi.toml [app].platform
-//!   --source-repo <URL|owner/repo> # aomi.toml [app].git
+//!   --source-path <URL>      # GitHub source repo URL (default origin/state)
 //!   --backend <URL>          # AOMI_BACKEND_URL
 //!   --activation-token <T>   # AOMI_APP_ACTIVATION_TOKEN
-//!   --access-token <$ENV|VAL># aomi.toml [app].access_token
 //!   --target-tag <TAG>       # aomi.toml [app].server_tags (repeatable)
 //!   --visibility <V>         # aomi.toml [app].public
 //!   --display-name <STR>     # aomi.toml [app].display_name
-//!   --source-commit <SHA>    # .aomi/deployment.json source.commit
-//!   --source-tree <SHA>      # .aomi/deployment.json source.tree
-//!   --source-digest <SHA>    # .aomi/deployment.json source.digest
 //!   --dry-run
 //!   --json
 //!
-//! request                    # ask ops for direct-Git onboarding
+//! request                    # legacy ops request
 //!   --email <EMAIL>          # where ops sends activation details
-//!   --git-account <USER>     # GitHub account to invite as a collaborator
+//!   --git-account <USER>     # GitHub account for source ownership context
 //!   --app <NAME>             # aomi.toml [app].name (default)
 //!   --platform <NAME>        # aomi.toml [app].platform (default community)
 //!   --path <DIR>             # source repo (aomi.toml lookup)
@@ -43,9 +39,7 @@
 //!
 //! status [APP_RELEASE_TAG]   # or .aomi/deployment.json target.app_release_tag
 //!   --path <DIR>             # source repo (.aomi/deployment.json lookup)
-//!   --source-repo <URL|owner/repo> # aomi.toml [app].git
 //!   --backend <URL>          # AOMI_BACKEND_URL
-//!   --access-token <$ENV|VAL># aomi.toml [app].access_token
 //!   --json
 //!
 //! ```
@@ -57,25 +51,25 @@
 
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Result, anyhow, bail};
 use clap::{Args, Parser, Subcommand};
+use serde::Serialize;
 
 use crate::activate::{
     ACTIVATION_TOKEN_ENV, ActivationIntent, ActivationPlan, BACKEND_URL_ENV, Visibility,
 };
 use crate::app::App;
+use crate::backend::BackendClient;
 use crate::deployment_state::{
     DeploymentState, read as read_deployment_state, write as write_deployment_state,
 };
 use crate::git::GitRepo;
 use crate::plan::Deployment;
 use crate::platform::{Platform, normalize_github_repo};
-use crate::preflight::ResolvedPlatform;
-use crate::transit::TransitCache;
 
 #[derive(Debug, Parser)]
 #[command(name = "aomi-git")]
-#[command(about = "Publish Aomi app source through platform Git policy.")]
+#[command(about = "Deploy Aomi app source through the Aomi backend.")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
@@ -94,13 +88,13 @@ impl Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Ask platform ops for direct-Git onboarding and activation details.
+    /// Ask platform ops for legacy onboarding details.
     Request(RequestArgs),
-    /// Prepare and push an Aomi app source publication.
+    /// Deploy an Aomi app source commit through the backend.
     Deploy(DeployArgs),
     /// Activate a published Aomi app release in the backend.
     Activate(ActivateArgs),
-    /// Check publication status (CI build + release availability) for a deploy.
+    /// Check deploy status (CI build + release availability) for a deploy.
     Status(StatusArgs),
 }
 
@@ -114,7 +108,7 @@ pub struct RequestArgs {
     #[arg(long, value_name = "EMAIL")]
     pub email: String,
 
-    /// GitHub account to invite as a platform-repo collaborator.
+    /// GitHub account for source ownership context.
     #[arg(long = "git-account", value_name = "USER")]
     pub git_account: String,
 
@@ -152,9 +146,10 @@ impl RequestArgs {
         }
 
         // Resolve app/platform/repo from aomi.toml (best-effort: flags win).
-        let discovered = GitRepo::discover(&self.path)
-            .ok()
-            .and_then(|repo| App::discover(&repo).ok());
+        let discovered_repo = GitRepo::discover(&self.path).ok();
+        let discovered = discovered_repo
+            .as_ref()
+            .and_then(|repo| App::discover(repo).ok());
 
         let app = self
             .app
@@ -182,12 +177,16 @@ impl RequestArgs {
         let repo = discovered
             .as_ref()
             .and_then(|a| a.git.clone())
+            .or_else(|| {
+                discovered_repo
+                    .as_ref()
+                    .and_then(|repo| repo.remote_origin().ok())
+            })
             .map(|raw| normalize_github_repo(&raw))
             .transpose()?
             .ok_or_else(|| {
                 anyhow!(
-                    "platform repo is unknown - run from a source repo whose aomi.toml \
-                     declares [app].git"
+                    "source repo is unknown - run from a source repo with a GitHub origin"
                 )
             })?;
 
@@ -208,11 +207,11 @@ impl RequestArgs {
 
         request.post().await?;
         println!(
-            "Posted direct-Git onboarding request for `{}` to the Aomi apps Discord.",
+            "Posted onboarding request for `{}` to the Aomi apps Discord.",
             request.app
         );
         println!(
-            "Ops will invite `{}` to `{}` and send activation details to {}.",
+            "Ops will review `{}` for `{}` and send activation details to {}.",
             request.git_account, request.repo, request.email
         );
         println!(
@@ -234,16 +233,9 @@ pub struct DeployArgs {
     #[arg(long, value_name = "NAME")]
     pub platform: Option<Platform>,
 
-    /// Platform publish repo (`aomi.toml [app].git`): URL, `owner/repo`, or SSH.
-    /// When omitted, resolved from the backend's platform record.
-    #[arg(long = "source-repo", value_name = "URL|owner/repo")]
-    pub source_repo: Option<String>,
-
-    /// Escape hatch: a hand-managed local clone to stage and push from.
-    /// Skips the managed transit cache entirely. Useful for air-gapped CI or
-    /// custom auth flows.
-    #[arg(long, value_name = "DIR")]
-    pub platform_dir: Option<PathBuf>,
+    /// GitHub source repo URL. Defaults to local `origin`.
+    #[arg(long = "source-path", value_name = "URL|owner/repo")]
+    pub source_path: Option<String>,
 
     /// Backend base URL (default: `AOMI_BACKEND_URL`).
     #[arg(long, value_name = "URL")]
@@ -253,23 +245,27 @@ pub struct DeployArgs {
     #[arg(long, default_value = ".")]
     pub path: PathBuf,
 
-    /// Print the publish plan + best-effort backend reads without staging,
-    /// pushing, or activating. Refreshes `.aomi/deployment.json` with the
+    /// Print the deploy plan + best-effort backend reads without deploying or
+    /// activating. Refreshes `.aomi/deployment.json` with the
     /// resolved plan and check results.
     #[arg(long)]
     pub dry_run: bool,
 
-    /// After a successful push, immediately call the backend activation endpoint
+    /// After a successful deploy, immediately call the backend activation endpoint
     /// using `AOMI_APP_ACTIVATION_TOKEN`. Normally run `status` first and invoke
     /// `activate` once the release asset exists.
     #[arg(long)]
     pub activate: bool,
 
-    /// Allow a dirty working tree in the printed plan and during staging.
+    /// Commit hash to deploy. Defaults to local HEAD.
+    #[arg(long = "hash", value_name = "SHA")]
+    pub hash: Option<String>,
+
+    /// Allow a dirty working tree in the printed plan.
     #[arg(long)]
     pub allow_dirty: bool,
 
-    /// Print the publish plan / outcome as JSON.
+    /// Print the deploy plan / outcome as JSON.
     #[arg(long)]
     pub json: bool,
 }
@@ -305,42 +301,65 @@ impl DeployArgs {
             return Ok(());
         }
 
-        // Live deploy. Resolve the platform against the backend ONCE (strict:
-        // fails if unreachable). The deployment branch — where to push — is
-        // owned by the registry, never the user; the same record also supplies
-        // the repo if aomi.toml omits it, so both facts come from one snapshot.
+        // Live deploy. The CLI only relays source_path + commit_hash to the
+        // backend; it never clones or pushes the platform repo.
         let backend_url = self.backend_url().ok_or_else(|| {
             anyhow!(
-                "deploy needs the platform's deployment branch from the backend — set --backend \
-                 or {BACKEND_URL_ENV} so it can read GET /api/control/platforms"
+                "deploy needs a backend URL — set --backend or {BACKEND_URL_ENV}"
             )
         })?;
-        let resolved = platform.resolve(&backend_url).await?;
-        let deploy_branch = resolved.deployment_branch.clone();
-        let clone_path = self
-            .resolve_clone_path(app.as_ref(), &resolved, &deploy_branch)
+        let token = std::env::var(ACTIVATION_TOKEN_ENV)
+            .ok()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| anyhow!("deploy requires an app activation token via {ACTIVATION_TOKEN_ENV}"))?;
+        let repo = GitRepo::discover(&self.path)?;
+        let app = App::discover(&repo)?;
+        let source = repo.snapshot(&app.source_path, self.allow_dirty)?;
+        let source_path = self
+            .source_path
+            .clone()
+            .or_else(|| repo.remote_origin().ok())
+            .ok_or_else(|| anyhow!("deploy needs --source-path or a local git origin remote"))?;
+        let commit_hash = self.hash.clone().unwrap_or_else(|| source.commit.clone());
+        let source_subdir = if app.source_path.as_os_str().is_empty() {
+            ".".to_string()
+        } else {
+            app.source_path.display().to_string()
+        };
+        let request = DeployAppRequest {
+            source_path: source_path.clone(),
+            commit_hash: commit_hash.clone(),
+            source_subdir: source_subdir.clone(),
+            is_public: app.public.unwrap_or(false),
+            server_tags: app.server_tags.clone(),
+            label: Some(app.display_name.clone()),
+        };
+        let endpoint = format!(
+            "/api/admin/platforms/{}/apps/{}/deploy",
+            platform.as_str(),
+            app.name
+        );
+        let response = BackendClient::new(backend_url.clone(), token)?
+            .post_json(&endpoint, &request, "deploy")
             .await?;
-
-        let outcome = Deployment::git_transport(
-            &self.path,
-            platform.clone(),
-            &clone_path,
-            true,
-            &deploy_branch,
-        )?;
 
         // Refresh .aomi/deployment.json with the post-push state. Start from
         // any prior dry-run state on disk so we don't drop earlier check rows.
-        let git_root = &outcome.deployment.source.git_root;
+        let git_root = repo.root();
         let mut state = match read_deployment_state(git_root) {
             Ok(Some(prior)) => prior,
-            _ => outcome.deployment.to_state(),
+            _ => Deployment::dry_run(&self.path, platform.clone(), self.allow_dirty)?.to_state(),
         };
-        state.platform.resolved_deploy_branch = Some(deploy_branch);
-        state.state.pushed = outcome.pushed;
-        state.recompute_deployed();
+        state.source.commit = commit_hash.clone();
+        if let Some(release_tag) = response.get("release_tag").and_then(|value| value.as_str()) {
+            state.target.app_release_tag = release_tag.to_string();
+        }
+        state.app.git = Some(source_path.clone());
+        state.platform.github_repo = Some(source_path.clone());
+        state.state.pushed = true;
+        state.state.deployed = true;
 
-        if outcome.pushed && self.activate {
+        if self.activate {
             let token = std::env::var(ACTIVATION_TOKEN_ENV)
                 .ok()
                 .filter(|value| !value.trim().is_empty())
@@ -350,25 +369,19 @@ impl DeployArgs {
             let url = self.backend_url().ok_or_else(|| {
                 anyhow!("--activate requires a backend URL via --backend or {BACKEND_URL_ENV}")
             })?;
-            let visibility = match outcome.deployment.app.public {
+            let visibility = match app.public {
                 Some(true) => Visibility::Public,
                 _ => Visibility::Private,
             };
-            let github_token = outcome.deployment.app.resolved_access_token()?;
             let intent = ActivationIntent::new(
-                &outcome.deployment.publish.app_release_tag,
+                &state.target.app_release_tag,
                 platform.clone(),
                 visibility,
             )?
-            .source_repo(outcome.deployment.publish.source_repo.clone())
-            .github_token(github_token)
-            .server_tags(outcome.deployment.app.server_tags.clone())
-            .label(Some(outcome.deployment.app.display_name.clone()))
-            .source_provenance(
-                Some(outcome.deployment.source.commit.clone()),
-                Some(outcome.deployment.source.tree.clone()),
-                Some(outcome.deployment.source.digest.clone()),
-            );
+            .source_path(Some(source_path.clone()))
+            .source_subdir(Some(source_subdir.clone()))
+            .server_tags(app.server_tags.clone())
+            .label(Some(app.display_name.clone()));
             let plan = ActivationPlan::from_intent(url, token, intent)?;
             match plan.execute().await {
                 Ok(_) => {
@@ -384,15 +397,15 @@ impl DeployArgs {
         let state_path = write_deployment_state(git_root, &state)?;
 
         if self.json {
-            println!("{}", serde_json::to_string_pretty(&outcome)?);
+            println!("{}", serde_json::to_string_pretty(&response)?);
         } else {
-            println!("{}", outcome.render());
+            println!("{}", serde_json::to_string_pretty(&response)?);
             println!("  deployment_state    : {}", state_path.display());
             println!(
                 "  state               : pushed={} deployed={} activated={}",
                 state.state.pushed, state.state.deployed, state.state.activated
             );
-            if outcome.pushed && !state.state.activated {
+            if !state.state.activated {
                 self.print_next_steps();
             }
         }
@@ -420,54 +433,6 @@ impl DeployArgs {
             .filter(|s| !s.is_empty())
     }
 
-    /// Resolve the local clone path: explicit `--platform-dir` if set,
-    /// otherwise initialize/refresh the managed transit cache at the
-    /// backend-resolved `deploy_branch`.
-    async fn resolve_clone_path(
-        &self,
-        app: Option<&App>,
-        resolved: &ResolvedPlatform,
-        deploy_branch: &str,
-    ) -> Result<PathBuf> {
-        if let Some(dir) = &self.platform_dir {
-            return Ok(dir.clone());
-        }
-
-        // Need a platform git URL to clone. Order: --source-repo -> aomi.toml
-        // [app].git -> the already-resolved platform record.
-        let git_url = self.resolve_source_repo(app, resolved)?;
-
-        TransitCache::load()?.resolve(&git_url, deploy_branch).with_context(|| {
-            "could not initialize transit clone - pass --platform-dir <DIR> to use a hand-managed clone"
-        })
-    }
-
-    /// Pick the platform repo URL: `--source-repo` -> `aomi.toml [app].git` ->
-    /// the already-resolved backend record. No network — `resolved` was fetched
-    /// once by the caller.
-    fn resolve_source_repo(
-        &self,
-        app: Option<&App>,
-        resolved: &ResolvedPlatform,
-    ) -> Result<String> {
-        if let Some(g) = self
-            .source_repo
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            return Ok(g.to_string());
-        }
-        if let Some(g) = app
-            .and_then(|a| a.git.as_deref())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            return Ok(g.to_string());
-        }
-        resolved.source_repo()
-    }
-
     fn print_next_steps(&self) {
         println!();
         println!("Next steps:");
@@ -485,6 +450,17 @@ impl DeployArgs {
     }
 }
 
+#[derive(Debug, Serialize)]
+struct DeployAppRequest {
+    source_path: String,
+    commit_hash: String,
+    source_subdir: String,
+    is_public: bool,
+    server_tags: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // Activate
 // ---------------------------------------------------------------------------
@@ -500,10 +476,9 @@ pub struct ActivateArgs {
     #[arg(long, value_name = "NAME")]
     pub platform: Option<Platform>,
 
-    /// Platform publish repo. Falls back to deployment.json's app.git, then
-    /// to a backend lookup keyed on `--platform`.
-    #[arg(long = "source-repo", value_name = "URL|owner/repo")]
-    pub source_repo: Option<String>,
+    /// GitHub source repo URL. Falls back to deployment.json's app.git.
+    #[arg(long = "source-path", value_name = "URL|owner/repo")]
+    pub source_path: Option<String>,
 
     /// Backend base URL (default: `AOMI_BACKEND_URL`).
     #[arg(long, value_name = "URL")]
@@ -512,13 +487,6 @@ pub struct ActivateArgs {
     /// Platform activation token (default: `AOMI_APP_ACTIVATION_TOKEN`).
     #[arg(long, value_name = "TOKEN")]
     pub activation_token: Option<String>,
-
-    /// GitHub PAT (or `$ENV_VAR_NAME` reference, matching the toml form) for
-    /// the backend's one-shot release-tarball fetch. Required for private
-    /// platform repos; omit for public ones. Falls back to deployment.json's
-    /// app.access_token if present.
-    #[arg(long, value_name = "$ENV|VAL")]
-    pub access_token: Option<String>,
 
     /// Activation visibility (`aomi.toml [app].public`). Falls back to
     /// deployment.json's app.public, then to `private`.
@@ -529,18 +497,6 @@ pub struct ActivateArgs {
     /// Falls back to deployment.json's app.display_name.
     #[arg(long, value_name = "STR")]
     pub display_name: Option<String>,
-
-    /// Source provenance: full commit. Falls back to deployment.json.
-    #[arg(long)]
-    pub source_commit: Option<String>,
-
-    /// Source provenance: tree hash. Falls back to deployment.json.
-    #[arg(long)]
-    pub source_tree: Option<String>,
-
-    /// Source provenance: digest. Falls back to deployment.json.
-    #[arg(long)]
-    pub source_digest: Option<String>,
 
     /// Required backend server tag (repeatable).
     #[arg(long = "target-tag", value_name = "TAG")]
@@ -624,29 +580,15 @@ impl ActivateArgs {
 
         let backend_url = self.backend_url()?;
         let activation_token = self.activation_token()?;
-        let source_repo = self
-            .source_repo(fallback.as_ref(), &platform, &backend_url)
+        let source_path = self
+            .source_path(fallback.as_ref())
             .await?;
-        let github_token = self.github_token(fallback.as_ref())?;
         let server_tags = self.resolve_server_tags(fallback.as_ref())?;
 
         let display_name = self
             .display_name
             .clone()
             .or_else(|| fallback.as_ref().map(|s| s.app.display_name.clone()));
-
-        let source_commit = self
-            .source_commit
-            .clone()
-            .or_else(|| fallback.as_ref().map(|s| s.source.commit.clone()));
-        let source_tree = self
-            .source_tree
-            .clone()
-            .or_else(|| fallback.as_ref().map(|s| s.source.tree.clone()));
-        let source_digest = self
-            .source_digest
-            .clone()
-            .or_else(|| fallback.as_ref().map(|s| s.source.digest.clone()));
 
         // Visibility follows the same defaults pyramid as every other field:
         // CLI flag -> deployment.json's app.public -> hardcoded `private`.
@@ -664,47 +606,32 @@ impl ActivateArgs {
             .unwrap_or(Visibility::Private);
 
         let intent = ActivationIntent::new(&app_release_tag, platform.clone(), visibility)?
-            .source_repo(source_repo.clone())
-            .github_token(github_token)
+            .source_path(source_path.clone())
+            .source_subdir(Some(
+                fallback
+                    .as_ref()
+                    .map(|s| s.source.source_path.display().to_string())
+                    .unwrap_or_else(|| ".".to_string()),
+            ))
             .server_tags(server_tags.clone())
-            .label(display_name.clone())
-            .source_provenance(
-                source_commit.clone(),
-                source_tree.clone(),
-                source_digest.clone(),
-            );
+            .label(display_name.clone());
         let plan = ActivationPlan::from_intent(backend_url, activation_token, intent)?;
 
         let state = fallback.map(|mut state| {
             state.target.app_release_tag = app_release_tag;
             state.app.platform = Some(platform.to_string());
             state.platform.name = Some(platform.to_string());
-            state.app.git = Some(source_repo.clone());
-            state.platform.github_repo = Some(source_repo);
+            if let Some(source_path) = source_path.clone() {
+                state.app.git = Some(source_path.clone());
+                state.platform.github_repo = Some(source_path);
+            }
             state.app.public = Some(visibility == Visibility::Public);
             if let Some(display_name) = display_name {
                 state.app.display_name = display_name.trim().to_string();
             }
-            if let Some(source_commit) = source_commit {
-                state.source.commit = source_commit;
-            }
-            if let Some(source_tree) = source_tree {
-                state.source.tree = source_tree;
-            }
-            if let Some(source_digest) = source_digest {
-                state.source.digest = source_digest;
-            }
             if !server_tags.is_empty() {
                 state.target.server_tags = server_tags.clone();
                 state.app.server_tags = server_tags;
-            }
-            if let Some(access_token) = self
-                .access_token
-                .as_deref()
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-            {
-                state.app.access_token = Some(access_token.to_string());
             }
             state
         });
@@ -732,28 +659,26 @@ impl ActivateArgs {
             })
     }
 
-    async fn source_repo(
+    async fn source_path(
         &self,
         fallback: Option<&DeploymentState>,
-        platform: &Platform,
-        backend_url: &str,
-    ) -> Result<String> {
+    ) -> Result<Option<String>> {
         if let Some(git) = self
-            .source_repo
+            .source_path
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())
         {
-            return normalize_github_repo(git);
+            return Ok(Some(git.to_string()));
         }
         if let Some(git) = fallback
             .and_then(|s| s.app.git.as_deref())
             .map(str::trim)
             .filter(|s| !s.is_empty())
         {
-            return normalize_github_repo(git);
+            return Ok(Some(git.to_string()));
         }
-        platform.resolve(backend_url).await?.source_repo()
+        Ok(None)
     }
 
     /// Resolve `server_tags` with two rules:
@@ -818,27 +743,6 @@ impl ActivateArgs {
         Ok(self.server_tags.clone())
     }
 
-    fn github_token(&self, fallback: Option<&DeploymentState>) -> Result<Option<String>> {
-        let Some(value) = self
-            .access_token
-            .clone()
-            .or_else(|| fallback.and_then(|s| s.app.access_token.clone()))
-        else {
-            return Ok(None);
-        };
-        let value = value.trim();
-        if value.is_empty() {
-            return Ok(None);
-        }
-        let Some(env_name) = value.strip_prefix('$') else {
-            return Ok(Some(value.to_string()));
-        };
-        match std::env::var(env_name) {
-            Ok(v) if !v.is_empty() => Ok(Some(v)),
-            Ok(_) => bail!("env var `{env_name}` (from --access-token) is empty"),
-            Err(_) => bail!("env var `{env_name}` (from --access-token) is not set"),
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -851,22 +755,11 @@ pub struct StatusArgs {
     /// from `.aomi/deployment.json` at `--path`.
     pub app_release_tag: Option<String>,
 
-    /// Platform publish repo. Falls back to deployment.json's app.git.
-    #[arg(long = "source-repo", value_name = "URL|owner/repo")]
-    pub source_repo: Option<String>,
-
-    /// Backend base URL. When CI has finished, status also reports the app's
-    /// backend registry row + runtime health. Defaults to `AOMI_BACKEND_URL`,
-    /// then to the public backend implied by the build's `server_tags`
-    /// (`staging` -> staging, `prod` -> prod). Pass `--backend ''` to skip.
+    /// Backend base URL. Defaults to `AOMI_BACKEND_URL`, then to the public
+    /// backend implied by the build's `server_tags` (`staging` -> staging,
+    /// `prod` -> prod). Pass `--backend ''` to skip.
     #[arg(long, value_name = "URL")]
     pub backend: Option<String>,
-
-    /// GitHub PAT (or `$ENV_VAR_NAME` reference) for reading a private platform
-    /// repo's Actions/release status. Omit for public repos. Falls back to
-    /// deployment.json's app.access_token.
-    #[arg(long, value_name = "$ENV|VAL")]
-    pub access_token: Option<String>,
 
     /// Source repo path for the `.aomi/deployment.json` lookup. Defaults to the
     /// current directory.
@@ -893,36 +786,11 @@ impl StatusArgs {
             .clone()
             .unwrap_or_else(|| state.target.app_release_tag.clone());
 
-        // Resolve owner/repo: --source-repo -> deployment.json [app].git.
-        let raw_repo = self
-            .source_repo
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-            .or_else(|| state.app.git.clone())
-            .ok_or_else(|| {
-                anyhow!(
-                    "platform repo is unknown - pass --source-repo <URL|owner/repo> or run from a source \
-                     repo whose aomi.toml declares [app].git"
-                )
-            })?;
-        let repo = normalize_github_repo(&raw_repo)?;
-
-        let github_token = self.github_token(&state)?;
-
         let backend_url = self.backend_url(&state);
 
         let req = crate::status::StatusRequest {
             app_name: state.app.name.clone(),
-            repo: repo.clone(),
             app_release_tag: app_release_tag.clone(),
-            branch: state
-                .platform
-                .resolved_deploy_branch
-                .clone()
-                .unwrap_or_default(),
-            github_token,
             backend_url,
             local: crate::status::LocalState {
                 pushed: state.state.pushed,
@@ -934,16 +802,6 @@ impl StatusArgs {
 
         let report = crate::status::StatusReport::collect(req).await;
         state.target.app_release_tag = app_release_tag;
-        state.app.git = Some(repo.clone());
-        state.platform.github_repo = Some(repo);
-        if let Some(access_token) = self
-            .access_token
-            .as_deref()
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            state.app.access_token = Some(access_token.to_string());
-        }
         match &report.backend {
             crate::status::BackendStatus::Found { is_active, .. } => {
                 state.state.activated = is_active.unwrap_or(true);
@@ -980,36 +838,6 @@ impl StatusArgs {
             }
         }
         Self::default_backend_from_tags(&state.target.server_tags)
-    }
-
-    /// Resolve GitHub read token: CLI flag, then deployment.json [app].access_token.
-    fn github_token(&self, state: &DeploymentState) -> Result<Option<String>> {
-        let Some(value) = self
-            .access_token
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-            .or_else(|| {
-                state
-                    .app
-                    .access_token
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_string)
-            })
-        else {
-            return Ok(None);
-        };
-        let Some(env_name) = value.strip_prefix('$') else {
-            return Ok(Some(value));
-        };
-        match std::env::var(env_name) {
-            Ok(v) if !v.is_empty() => Ok(Some(v)),
-            Ok(_) => bail!("env var `{env_name}` (from --access-token) is empty"),
-            Err(_) => bail!("env var `{env_name}` (from --access-token) is not set"),
-        }
     }
 
     /// Map declared `server_tags` to the public backend most likely to run it:
