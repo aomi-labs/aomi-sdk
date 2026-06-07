@@ -139,7 +139,10 @@ impl App {
         git_root: &Path,
         source_subdir: Option<&str>,
     ) -> Result<()> {
-        let source_dir = match source_subdir.map(str::trim).filter(|value| !value.is_empty()) {
+        let source_dir = match source_subdir
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
             Some(".") | None => source_dir_for_config(config_path)?.to_path_buf(),
             Some(subdir) => git_root.join(subdir),
         };

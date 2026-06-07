@@ -2,11 +2,17 @@ use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use serde::Serialize;
-use serde_json::Value;
+use serde::de::DeserializeOwned;
+
+use crate::platform::Platform;
+use crate::wire::{ActivateRequest, ActivateResponse, DeployRequest, DeployResponse};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
 
+/// Authenticated relay to the Aomi backend's repo-scoped deploy/activate
+/// endpoints. The CLI never talks to GitHub; every privileged call goes through
+/// here with the caller's activation bearer.
 #[derive(Clone, Debug)]
 pub struct BackendClient {
     base_url: String,
@@ -18,10 +24,12 @@ impl BackendClient {
     pub fn new(base_url: String, bearer: String) -> Result<Self> {
         let base_url = base_url.trim().trim_end_matches('/').to_string();
         if base_url.is_empty() {
-            bail!("backend URL is required");
+            bail!("backend URL is required via --backend or AOMI_BACKEND_URL");
         }
         if bearer.trim().is_empty() {
-            bail!("backend bearer token is required");
+            bail!(
+                "activation token is required via --activation-token or AOMI_APP_ACTIVATION_TOKEN"
+            );
         }
         let http = reqwest::Client::builder()
             .timeout(REQUEST_TIMEOUT)
@@ -35,16 +43,36 @@ impl BackendClient {
         })
     }
 
+    /// Repo-scoped deploy: `POST /api/admin/platforms/:platform/deploy`.
+    pub async fn deploy(
+        &self,
+        platform: &Platform,
+        request: &DeployRequest,
+    ) -> Result<DeployResponse> {
+        self.post(
+            &format!("/api/admin/platforms/{}/deploy", platform.as_str()),
+            request,
+            "deploy",
+        )
+        .await
+    }
+
+    /// Target-based activation: `POST /api/admin/apps/activate`.
+    pub async fn activate(&self, request: &ActivateRequest) -> Result<ActivateResponse> {
+        self.post("/api/admin/apps/activate", request, "activation")
+            .await
+    }
+
     pub fn endpoint(&self, path: &str) -> String {
         format!("{}{}", self.base_url, path)
     }
 
-    pub async fn post_json<T: Serialize>(
+    async fn post<Req: Serialize, Resp: DeserializeOwned>(
         &self,
         path: &str,
-        body: &T,
+        body: &Req,
         operation: &str,
-    ) -> Result<Value> {
+    ) -> Result<Resp> {
         let endpoint = self.endpoint(path);
         let response = self
             .http
@@ -56,18 +84,17 @@ impl BackendClient {
             .with_context(|| format!("failed to call {operation} endpoint {endpoint}"))?;
 
         let status = response.status();
-        let body = response
+        let text = response
             .text()
             .await
             .with_context(|| format!("failed to read {operation} response body"))?;
         if !matches!(status.as_u16(), 200 | 201) {
             bail!(
                 "{operation} endpoint {endpoint} returned {status}: {}",
-                body.trim()
+                text.trim()
             );
         }
-
-        serde_json::from_str(&body)
+        serde_json::from_str(&text)
             .with_context(|| format!("{operation} endpoint {endpoint} returned invalid JSON"))
     }
 }
