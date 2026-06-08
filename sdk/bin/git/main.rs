@@ -7,13 +7,9 @@ mod app;
 mod backend;
 mod cli;
 mod discord;
-mod git;
-mod local;
 mod platform;
 mod status;
-/// Repo-scoped deploy/activate wire contract + local `.aomi/deployment.json`
-/// state (CONTRACTS.md). Single canonical home for both.
-mod wire;
+mod types;
 
 #[cfg(test)]
 mod tests;

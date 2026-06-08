@@ -7,7 +7,7 @@ use std::time::Duration;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::wire::DeploymentRecord;
+use crate::types::LocalRecord;
 
 const UA: &str = concat!("aomi-git/", env!("CARGO_PKG_VERSION"));
 const PROBE_TIMEOUT: Duration = Duration::from_secs(12);
@@ -32,12 +32,12 @@ pub struct AppStatus {
     pub activated_locally: bool,
     /// What the backend reports, when reachable.
     #[serde(flatten)]
-    pub backend: BackendStatus,
+    pub backend: BackendAppStatus,
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "snake_case", tag = "backend_state")]
-pub enum BackendStatus {
+pub enum BackendAppStatus {
     NotChecked,
     NotRegistered,
     Found { is_active: bool, loaded: bool },
@@ -47,23 +47,24 @@ pub enum BackendStatus {
 impl StatusReport {
     /// Collect a report from local state, optionally enriched with the backend's
     /// live view (a single `GET /api/control/apps/status`).
-    pub async fn collect(state: &DeploymentRecord, backend_url: Option<String>) -> Self {
+    pub async fn collect(state: &LocalRecord, backend_url: Option<String>) -> Self {
         let rows = match &backend_url {
             Some(url) => fetch_apps(url).await,
             None => None,
         };
 
         let apps = state
-            .managed
+            .deployment
+            .platform
             .apps
             .iter()
             .map(|app| AppStatus {
                 name: app.name.clone(),
                 release_tag: app.release_tag.clone(),
-                activated_locally: app.activated,
+                activated_locally: app.activated.unwrap_or(false),
                 backend: match &rows {
-                    None => BackendStatus::NotChecked,
-                    Some(Err(detail)) => BackendStatus::Unknown {
+                    None => BackendAppStatus::NotChecked,
+                    Some(Err(detail)) => BackendAppStatus::Unknown {
                         detail: detail.clone(),
                     },
                     Some(Ok(rows)) => backend_row(rows, &app.name),
@@ -72,9 +73,9 @@ impl StatusReport {
             .collect();
 
         Self {
-            platform: state.managed.platform.clone(),
-            pr_url: state.managed.pr_url.clone(),
-            deploy_branch: state.managed.deploy_branch.clone(),
+            platform: state.deployment.platform.platform.clone(),
+            pr_url: state.deployment.platform.pr_url.clone().unwrap_or_default(),
+            deploy_branch: state.deployment.platform.deploy_branch.clone(),
             deployed: state.state.deployed,
             activated: state.state.activated,
             backend: backend_url,
@@ -106,14 +107,14 @@ impl StatusReport {
             let _ = writeln!(out, "  - {} ({})", app.name, app.release_tag);
             let _ = writeln!(out, "      local     : activated={}", app.activated_locally);
             match &app.backend {
-                BackendStatus::NotChecked => {}
-                BackendStatus::NotRegistered => {
+                BackendAppStatus::NotChecked => {}
+                BackendAppStatus::NotRegistered => {
                     let _ = writeln!(out, "      backend   : not activated yet");
                 }
-                BackendStatus::Unknown { detail } => {
+                BackendAppStatus::Unknown { detail } => {
                     let _ = writeln!(out, "      backend   : unknown ({detail})");
                 }
-                BackendStatus::Found { is_active, loaded } => {
+                BackendAppStatus::Found { is_active, loaded } => {
                     let health = if *loaded { "loaded" } else { "not loaded" };
                     let _ = writeln!(out, "      backend   : active={is_active} {health}");
                 }
@@ -123,7 +124,7 @@ impl StatusReport {
     }
 }
 
-fn backend_row(rows: &[Value], name: &str) -> BackendStatus {
+fn backend_row(rows: &[Value], name: &str) -> BackendAppStatus {
     let needle = name.trim().to_ascii_lowercase();
     let Some(row) = rows.iter().find(|row| {
         row.get("name")
@@ -131,9 +132,9 @@ fn backend_row(rows: &[Value], name: &str) -> BackendStatus {
             .map(|n| n.eq_ignore_ascii_case(&needle))
             .unwrap_or(false)
     }) else {
-        return BackendStatus::NotRegistered;
+        return BackendAppStatus::NotRegistered;
     };
-    BackendStatus::Found {
+    BackendAppStatus::Found {
         is_active: row
             .get("is_active")
             .and_then(Value::as_bool)

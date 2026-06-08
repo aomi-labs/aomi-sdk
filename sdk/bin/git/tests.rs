@@ -1,5 +1,5 @@
 //! Integration-style tests for the repo-scoped relay CLI. Contract round-trips
-//! live in `wire.rs`; local-git primitives in `local.rs`.
+//! live in `types.rs`.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -9,10 +9,9 @@ use clap::Parser;
 use serde_json::json;
 use tempfile::TempDir;
 
-use crate::cli::{ActivateArgs, Cli, DeployArgs};
-use crate::git::GitRepo;
+use crate::cli::{Cli, DeployArgs};
 use crate::platform::Platform;
-use crate::wire::{DeploymentRecord, SourceRef, TargetValue};
+use crate::types::{ActivateRequest, ActivateResponse, LocalRecord, SourceRef};
 
 // ── deploy: arg parsing ─────────────────────────────────────────────────────
 
@@ -52,9 +51,11 @@ fn source_ref_defaults_to_head_commit() {
     repo.commit("init");
     let head = repo.head();
 
-    let git = GitRepo::discover(repo.root()).unwrap();
     let args = deploy_args(repo.root());
-    assert_eq!(args.source_ref(&git).unwrap(), SourceRef::commit(head));
+    assert_eq!(
+        args.source_ref(repo.root()).unwrap(),
+        SourceRef::commit(head)
+    );
 }
 
 #[test]
@@ -62,16 +63,18 @@ fn source_ref_honors_branch_and_commit_flags() {
     let repo = TestRepo::new();
     repo.write_aomi_toml("", "root");
     repo.commit("init");
-    let git = GitRepo::discover(repo.root()).unwrap();
 
     let mut args = deploy_args(repo.root());
     args.branch = Some("release".into());
-    assert_eq!(args.source_ref(&git).unwrap(), SourceRef::branch("release"));
+    assert_eq!(
+        args.source_ref(repo.root()).unwrap(),
+        SourceRef::branch("release")
+    );
 
     let mut args = deploy_args(repo.root());
     args.commit = Some("0badc0de".into());
     assert_eq!(
-        args.source_ref(&git).unwrap(),
+        args.source_ref(repo.root()).unwrap(),
         SourceRef::commit("0badc0de")
     );
 }
@@ -84,9 +87,10 @@ fn aomi_toml_paths_default_to_all_tracked() {
     repo.write_aomi_toml("", "root");
     repo.write_aomi_toml("apps/bot", "bot");
     repo.commit("init");
-    let git = GitRepo::discover(repo.root()).unwrap();
 
-    let paths = deploy_args(repo.root()).aomi_toml_paths(&git).unwrap();
+    let paths = deploy_args(repo.root())
+        .aomi_toml_paths(repo.root())
+        .unwrap();
     assert_eq!(paths, vec!["aomi.toml", "apps/bot/aomi.toml"]);
 }
 
@@ -95,16 +99,15 @@ fn aomi_toml_paths_normalize_explicit_and_reject_traversal() {
     let repo = TestRepo::new();
     repo.write_aomi_toml("", "root");
     repo.commit("init");
-    let git = GitRepo::discover(repo.root()).unwrap();
 
     let mut args = deploy_args(repo.root());
     args.aomi_toml = vec!["./apps/bot/aomi.toml".into(), "apps/bot/aomi.toml".into()];
-    let paths = args.aomi_toml_paths(&git).unwrap();
+    let paths = args.aomi_toml_paths(repo.root()).unwrap();
     assert_eq!(paths, vec!["apps/bot/aomi.toml"]); // normalized + deduped
 
     let mut bad = deploy_args(repo.root());
     bad.aomi_toml = vec!["../escape/aomi.toml".into()];
-    assert!(bad.aomi_toml_paths(&git).is_err());
+    assert!(bad.aomi_toml_paths(repo.root()).is_err());
 }
 
 // ── deploy: platform resolution ─────────────────────────────────────────────
@@ -114,33 +117,38 @@ fn platform_defaults_from_aomi_toml_then_community() {
     let repo = TestRepo::new();
     repo.write("aomi.toml", "[app]\nname = \"x\"\nplatform = \"krexa\"\n");
     repo.commit("init");
-    let git = GitRepo::discover(repo.root()).unwrap();
-    assert_eq!(deploy_args(repo.root()).platform(&git).as_str(), "krexa");
+    assert_eq!(
+        deploy_args(repo.root())
+            .platform(repo.root(), repo.root())
+            .as_str(),
+        "krexa"
+    );
 
     let bare = TestRepo::new();
     bare.write("README.md", "no aomi.toml\n");
     bare.commit("init");
-    let git = GitRepo::discover(bare.root()).unwrap();
     assert_eq!(
-        deploy_args(bare.root()).platform(&git),
+        deploy_args(bare.root()).platform(bare.root(), bare.root()),
         Platform::community()
     );
 }
 
 // ── activate: request building ──────────────────────────────────────────────
 
-fn sample_state() -> DeploymentRecord {
+fn sample_state() -> LocalRecord {
     serde_json::from_value(json!({
+        "id": "dep_1",
+        "status": "pr_created",
         "source": {
             "installation_id": 1, "repository_id": 2,
             "repository_link": "https://github.com/a/b.git",
             "ref": { "kind": "branch", "value": "main" },
             "commit_hash": "abc1234", "aomi_toml_paths": ["aomi.toml", "apps/b2/aomi.toml"]
         },
-        "managed": {
+        "platform": {
             "platform": "krexa", "repository": "aomi-labs/krexa-apps",
-            "base_branch": "main", "deploy_branch": "deploy/1/abc1234",
-            "commit_sha": "def5678", "pr_number": 9,
+            "source_branch": "main", "deploy_branch": "deploy/1/abc1234",
+            "commit_hash": "def5678", "pr_number": 9,
             "pr_url": "https://github.com/aomi-labs/krexa-apps/pull/9",
             "apps": [
                 { "name": "bot", "path": "apps/1/bot", "aomi_toml_path": "aomi.toml", "release_tag": "apps-bot-abc1234", "activated": false },
@@ -153,55 +161,58 @@ fn sample_state() -> DeploymentRecord {
 }
 
 #[test]
-fn activate_defaults_target_and_apps_from_state() {
+fn release_tag_and_app_names_from_state() {
     let state = sample_state();
-    let req = activate_args().build_request(Some(&state)).unwrap();
-    assert_eq!(req.platform, "krexa");
-    assert_eq!(req.target.kind, "managed_pr");
+    assert_eq!(state.app_names(), vec!["bot", "bot2"]);
+    assert_eq!(state.release_tag_for("bot"), Some("apps-bot-abc1234"));
+    assert_eq!(state.release_tag_for("bot2"), Some("apps-bot2-abc1234"));
+    assert_eq!(state.release_tag_for("nope"), None);
+}
+
+#[test]
+fn activate_request_serializes_single_app_body() {
+    let req = ActivateRequest {
+        app_release_tag: "apps-bot-abc1234".into(),
+        target_tags: vec!["staging".into()],
+    };
     assert_eq!(
-        req.target.value,
-        TargetValue::One("https://github.com/aomi-labs/krexa-apps/pull/9".into())
+        serde_json::to_value(&req).unwrap(),
+        json!({ "app_release_tag": "apps-bot-abc1234", "target_tags": ["staging"] })
     );
-    assert_eq!(req.apps, vec!["bot", "bot2"]);
-}
-
-#[test]
-fn activate_positional_apps_narrow_the_subset() {
-    let state = sample_state();
-    let mut args = activate_args();
-    args.apps = vec!["bot2".into()];
-    let req = args.build_request(Some(&state)).unwrap();
-    assert_eq!(req.apps, vec!["bot2"]);
-}
-
-#[test]
-fn activate_infers_target_kind_from_value() {
-    let mut pr = activate_args();
-    pr.target = Some("https://github.com/aomi-labs/krexa-apps/pull/9".into());
-    pr.apps = vec!["bot".into()];
-    assert_eq!(pr.build_request(None).unwrap().target.kind, "managed_pr");
-
-    let mut branch = activate_args();
-    branch.target = Some("deploy/1/abc1234".into());
-    branch.apps = vec!["bot".into()];
+    // empty target_tags is omitted
+    let bare = ActivateRequest {
+        app_release_tag: "t".into(),
+        target_tags: vec![],
+    };
     assert_eq!(
-        branch.build_request(None).unwrap().target.kind,
-        "managed_branch"
+        serde_json::to_value(&bare).unwrap(),
+        json!({ "app_release_tag": "t" })
     );
 }
 
-#[test]
-fn activate_errors_without_state_or_target() {
-    // no deployment.json, no --target
-    assert!(activate_args().build_request(None).is_err());
+fn activation(name: &str) -> ActivateResponse {
+    ActivateResponse {
+        id: 1,
+        name: name.to_string(),
+        label: name.to_string(),
+        platform: "krexa".into(),
+        is_active: true,
+        is_public: false,
+        app_source_id: Some(1),
+        app_release_tag: Some(format!("apps-{name}-abc1234")),
+        status: "activated".into(),
+    }
 }
 
 #[test]
-fn activate_errors_without_apps() {
-    let mut args = activate_args();
-    args.target = Some("deploy/1/abc1234".into());
-    // target given but no apps and no state -> no apps to activate
-    assert!(args.build_request(None).is_err());
+fn apply_activation_marks_app_then_overall_state() {
+    let mut state = sample_state();
+    state.apply_activation(&activation("bot"));
+    assert_eq!(state.deployment.platform.apps[0].activated, Some(true));
+    assert!(!state.state.activated, "bot2 still inactive");
+
+    state.apply_activation(&activation("bot2"));
+    assert!(state.state.activated, "all apps active");
 }
 
 // ── deployment.json round-trip via the state file ───────────────────────────
@@ -211,11 +222,11 @@ fn local_deployment_write_then_read_round_trips() {
     let repo = TestRepo::new();
     let state = sample_state();
     state.write(repo.root()).unwrap();
-    let read = DeploymentRecord::read(repo.root()).unwrap().unwrap();
+    let read = LocalRecord::read(repo.root()).unwrap().unwrap();
     assert_eq!(read, state);
     // a repo with no .aomi/deployment.json reads as None, not an error
     let empty = TestRepo::new();
-    assert!(DeploymentRecord::read(empty.root()).unwrap().is_none());
+    assert!(LocalRecord::read(empty.root()).unwrap().is_none());
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
@@ -223,25 +234,12 @@ fn local_deployment_write_then_read_round_trips() {
 fn deploy_args(path: &Path) -> DeployArgs {
     DeployArgs {
         platform: None,
+        app_source_id: None,
         branch: None,
         commit: None,
         aomi_toml: vec![],
         backend: None,
         path: path.to_path_buf(),
-        dry_run: false,
-        json: false,
-    }
-}
-
-fn activate_args() -> ActivateArgs {
-    ActivateArgs {
-        apps: vec![],
-        target: None,
-        platform: None,
-        backend: None,
-        activation_token: None,
-        target_tags: vec![],
-        path: PathBuf::from("."),
         dry_run: false,
         json: false,
     }

@@ -3,10 +3,8 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::git::GitRepo;
-
 #[derive(Debug, Clone, Default, Eq, PartialEq, Deserialize, Serialize)]
-pub struct App {
+pub struct AomiAppFiles {
     /// Validated app identifier (`aomi.toml [app].name`).
     pub name: String,
     #[serde(default)]
@@ -42,9 +40,9 @@ pub struct App {
 /// Chosen to fail safe: unconfigured deploys reach the staging class only.
 pub const DEFAULT_SERVER_TAG: &str = "staging";
 
-impl App {
-    pub fn discover(repo: &GitRepo) -> Result<Self> {
-        let mut dir = repo.start_dir().to_path_buf();
+impl AomiAppFiles {
+    pub fn discover(start_dir: &Path, git_root: &Path) -> Result<Self> {
+        let mut dir = start_dir.to_path_buf();
 
         loop {
             for candidate in [
@@ -53,37 +51,42 @@ impl App {
                 dir.join("app.toml"),
             ] {
                 if candidate.is_file() {
-                    return Self::from_aomi_toml(&candidate, repo.root());
+                    return Self::from_aomi_toml(&candidate, git_root);
                 }
             }
 
             let cargo = dir.join("Cargo.toml");
             if cargo.is_file()
-                && let Some(app) = Self::from_cargo_toml(&cargo, repo.root())?
+                && let Some(app) = Self::from_cargo_toml(&cargo, git_root)?
             {
                 return Ok(app);
             }
 
-            if dir == repo.root() || !dir.pop() {
+            if dir == git_root || !dir.pop() {
                 break;
             }
         }
 
         bail!(
             "could not discover app config from {}; expected aomi.toml, .aomi/app.toml, app.toml, or a Cargo.toml with [package].name",
-            repo.start_dir().display()
+            start_dir.display()
         );
     }
 
     fn from_aomi_toml(path: &Path, git_root: &Path) -> Result<Self> {
-        let raw: AomiConfigFile = toml::from_str(
-            &std::fs::read_to_string(path)
-                .with_context(|| format!("failed to read app config {}", path.display()))?,
-        )
-        .with_context(|| format!("failed to parse app config {}", path.display()))?;
+        let content = std::fs::read_to_string(path)
+            .with_context(|| format!("failed to read app config {}", path.display()))?;
+        let file: toml::Table = toml::from_str(&content)
+            .with_context(|| format!("failed to parse app config {}", path.display()))?;
+        let raw: AomiAppConfig = file
+            .get("app")
+            .ok_or_else(|| anyhow!("{} must define an [app] table", path.display()))?
+            .clone()
+            .try_into()
+            .with_context(|| format!("failed to parse [app] in {}", path.display()))?;
 
-        let source_subdir = raw.app.source_subdir.clone();
-        let mut app = raw.app.into_app();
+        let source_subdir = raw.source_subdir.clone();
+        let mut app = raw.into_app();
         if app.name.trim().is_empty() {
             bail!("{} must define `name` under [app]", path.display());
         }
@@ -106,14 +109,17 @@ impl App {
     }
 
     fn from_cargo_toml(path: &Path, git_root: &Path) -> Result<Option<Self>> {
-        let manifest: CargoManifest = toml::from_str(
-            &std::fs::read_to_string(path)
-                .with_context(|| format!("failed to read Cargo manifest {}", path.display()))?,
-        )
-        .with_context(|| format!("failed to parse Cargo manifest {}", path.display()))?;
-        let Some(package) = manifest.package else {
+        let content = std::fs::read_to_string(path)
+            .with_context(|| format!("failed to read Cargo manifest {}", path.display()))?;
+        let file: toml::Table = toml::from_str(&content)
+            .with_context(|| format!("failed to parse Cargo manifest {}", path.display()))?;
+        let Some(package_value) = file.get("package") else {
             return Ok(None);
         };
+        let package: CargoPackage = package_value
+            .clone()
+            .try_into()
+            .with_context(|| format!("failed to parse [package] in {}", path.display()))?;
 
         let name = normalize_slug(&package.name, path)?;
         let display_name = package
@@ -122,12 +128,12 @@ impl App {
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| humanize_slug(&name));
 
-        let mut app = App {
+        let mut app = AomiAppFiles {
             name,
             display_name,
             server_tags: vec![DEFAULT_SERVER_TAG.to_string()],
             server_tags_defaulted: true,
-            ..App::default()
+            ..AomiAppFiles::default()
         };
         app.fill_paths(path, git_root, None)?;
         Ok(Some(app))
@@ -150,12 +156,6 @@ impl App {
         self.config_path = relative_to(config_path, git_root)?;
         Ok(())
     }
-}
-
-#[derive(Debug, Default, Deserialize)]
-struct AomiConfigFile {
-    #[serde(default)]
-    app: AomiAppConfig,
 }
 
 #[derive(Debug, Clone, Default, Eq, PartialEq, Deserialize, Serialize)]
@@ -181,21 +181,16 @@ struct AomiAppConfig {
 }
 
 impl AomiAppConfig {
-    fn into_app(self) -> App {
-        App {
+    fn into_app(self) -> AomiAppFiles {
+        AomiAppFiles {
             name: self.name,
             display_name: self.display_name,
             platform: self.platform,
             public: self.public,
             server_tags: self.server_tags,
-            ..App::default()
+            ..AomiAppFiles::default()
         }
     }
-}
-
-#[derive(Debug, Deserialize)]
-struct CargoManifest {
-    package: Option<CargoPackage>,
 }
 
 #[derive(Debug, Deserialize)]

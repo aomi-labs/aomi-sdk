@@ -5,7 +5,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::platform::Platform;
-use crate::wire::{ActivateRequest, ActivateResponse, DeployRequest, DeployResponse};
+use crate::types::{ActivateRequest, ActivateResponse, DeployRequest, DeployResponse};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
@@ -43,24 +43,33 @@ impl BackendClient {
         })
     }
 
-    /// Repo-scoped deploy: `POST /api/admin/platforms/:platform/deploy`.
+    /// Repo-scoped deploy: `POST /api/platforms/:platform/deploy`.
     pub async fn deploy(
         &self,
         platform: &Platform,
         request: &DeployRequest,
     ) -> Result<DeployResponse> {
         self.post(
-            &format!("/api/admin/platforms/{}/deploy", platform.as_str()),
+            &format!("/api/platforms/{}/deploy", platform.as_str()),
             request,
             "deploy",
         )
         .await
     }
 
-    /// Target-based activation: `POST /api/admin/apps/activate`.
-    pub async fn activate(&self, request: &ActivateRequest) -> Result<ActivateResponse> {
-        self.post("/api/admin/apps/activate", request, "activation")
-            .await
+    /// Single-app activation: `POST /api/platforms/:platform/apps/:app/activate`.
+    pub async fn activate(
+        &self,
+        platform: &Platform,
+        app: &str,
+        request: &ActivateRequest,
+    ) -> Result<ActivateResponse> {
+        self.post(
+            &format!("/api/platforms/{}/apps/{}/activate", platform.as_str(), app),
+            request,
+            "activation",
+        )
+        .await
     }
 
     pub fn endpoint(&self, path: &str) -> String {
