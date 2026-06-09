@@ -4,8 +4,8 @@ use anyhow::{Context, Result, bail};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::platform::Platform;
-use crate::types::{ActivateRequest, ActivateResponse, DeployRequest, DeployResponse};
+use super::platform::Platform;
+use super::types::{ActivateRequest, ActivateResponse, DeployRequest, DeployResponse};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(6);

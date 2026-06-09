@@ -1,36 +1,16 @@
 use clap::{Parser, Subcommand};
 use eyre::Result;
 
-#[path = "hosted/app.rs"]
-mod app;
-#[path = "hosted/backend.rs"]
-mod backend;
-#[allow(dead_code)]
-#[path = "hosted/cli.rs"]
-mod cli;
 mod client;
 mod compile;
-#[allow(dead_code)]
-#[path = "hosted/discord.rs"]
-mod discord;
+mod deploy;
 mod init;
 mod new_app;
-#[allow(dead_code)]
-#[path = "hosted/platform.rs"]
-mod platform;
 mod spec_load;
 mod specs;
-#[path = "hosted/status.rs"]
-mod status;
 mod test_schema;
 mod tighten;
 mod tool;
-#[path = "hosted/types.rs"]
-mod types;
-
-#[cfg(test)]
-#[path = "hosted/tests.rs"]
-mod tests;
 
 #[derive(Parser)]
 #[command(
@@ -64,13 +44,13 @@ enum Cmd {
     /// codesign on macOS.
     Compile(compile::CompileArgs),
     /// Deploy tracked `aomi.toml` apps from a source ref through the backend.
-    Deploy(cli::DeployArgs),
+    Deploy(deploy::cli::DeployArgs),
     /// Show local + backend deployment status.
-    Status(cli::StatusArgs),
+    Status(deploy::cli::StatusArgs),
     /// Activate platform releases from a PR, branch, commit, or release tag.
-    Activate(cli::ActivateArgs),
+    Activate(deploy::cli::ActivateArgs),
     /// Ask platform ops for legacy onboarding details.
-    Request(cli::RequestArgs),
+    Request(deploy::cli::RequestArgs),
 }
 
 #[tokio::main]

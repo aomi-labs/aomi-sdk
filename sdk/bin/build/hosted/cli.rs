@@ -40,48 +40,18 @@ use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
 use anyhow::{Context, Result, anyhow, bail};
-use clap::{Args, Parser, Subcommand};
+use clap::Args;
 
-use crate::app::AomiAppFiles;
-use crate::backend::BackendClient;
-use crate::platform::{Platform, normalize_github_repo};
-use crate::status::StatusReport;
-use crate::types::{ActivateRequest, DeployRequest, LocalRecord, SourceRef, TargetRef};
+use super::app::AomiAppFiles;
+use super::backend::BackendClient;
+use super::discord;
+use super::platform::{Platform, normalize_github_repo};
+use super::status::StatusReport;
+use super::types::{ActivateRequest, DeployRequest, LocalRecord, SourceRef, TargetRef};
 
 pub(crate) const ACTIVATION_TOKEN_ENV: &str = "AOMI_APP_ACTIVATION_TOKEN";
 pub(crate) const BACKEND_URL_ENV: &str = "AOMI_BACKEND_URL";
 pub(crate) const APP_SOURCE_ID_ENV: &str = "AOMI_APP_SOURCE_ID";
-
-#[derive(Debug, Parser)]
-#[command(name = "aomi-build")]
-#[command(about = "Deploy Aomi app source through the Aomi backend.")]
-pub struct Cli {
-    #[command(subcommand)]
-    pub command: Command,
-}
-
-impl Cli {
-    pub async fn run(self) -> Result<()> {
-        match self.command {
-            Command::Deploy(args) => args.run().await,
-            Command::Activate(args) => args.run().await,
-            Command::Status(args) => args.run().await,
-            Command::Request(args) => args.run().await,
-        }
-    }
-}
-
-#[derive(Debug, Subcommand)]
-pub enum Command {
-    /// Deploy tracked `aomi.toml` apps from a source ref through the backend.
-    Deploy(DeployArgs),
-    /// Activate built platform releases.
-    Activate(ActivateArgs),
-    /// Show local + backend deployment status.
-    Status(StatusArgs),
-    /// Ask platform ops for legacy onboarding details.
-    Request(RequestArgs),
-}
 
 fn env_value(key: &str) -> Option<String> {
     std::env::var(key)
@@ -840,7 +810,7 @@ impl RequestArgs {
                 anyhow!("source repo is unknown - run from a source repo with a GitHub origin")
             })?;
 
-        let request = crate::discord::ActivationRequest {
+        let request = discord::ActivationRequest {
             email: email.to_string(),
             git_account: git_account.to_string(),
             app,
@@ -861,7 +831,7 @@ impl RequestArgs {
         );
         println!(
             "Join the Aomi apps Discord if needed: {}",
-            crate::discord::DISCORD_INVITE
+            discord::DISCORD_INVITE
         );
         Ok(())
     }

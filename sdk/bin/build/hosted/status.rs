@@ -7,7 +7,7 @@ use std::time::Duration;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::types::LocalRecord;
+use super::types::LocalRecord;
 
 const UA: &str = concat!("aomi-build/", env!("CARGO_PKG_VERSION"));
 const PROBE_TIMEOUT: Duration = Duration::from_secs(12);

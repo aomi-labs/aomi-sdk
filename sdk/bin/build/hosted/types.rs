@@ -180,6 +180,21 @@ pub struct ActivationTarget {
     pub ci_status: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ci_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub promoted: Vec<ActivationPromotion>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ActivationPromotion {
+    pub name: String,
+    pub release_tag: String,
+    pub source_branch: String,
+    pub platform_commit_hash: String,
+    pub ci_status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ci_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub release_assets: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -200,11 +215,13 @@ pub struct ActivatedApp {
 /// Local `.aomi/deployment.json`: the backend's [`Deployment`] (flattened — the
 /// single canonical shape, not a re-declared copy) plus a local activation
 /// overlay (`state`, and per-app `AppRecord::activated`).
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LocalRecord {
     #[serde(flatten)]
     pub deployment: DeployPayload,
     pub state: LocalState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_activation: Option<ActivationPayload>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default, Serialize, Deserialize)]
@@ -229,6 +246,7 @@ impl LocalRecord {
                 ci_passed: false,
                 activated: false,
             },
+            last_activation: None,
         }
     }
 
@@ -297,12 +315,21 @@ impl LocalRecord {
                 }
             }
         }
-        if response.activation.target.ci_status.as_deref() == Some("passed") {
+        let target_ci_passed = response.activation.target.ci_status.as_deref() == Some("passed");
+        let promoted_ci_passed = !response.activation.target.promoted.is_empty()
+            && response
+                .activation
+                .target
+                .promoted
+                .iter()
+                .all(|promotion| promotion.ci_status == "passed");
+        if target_ci_passed || promoted_ci_passed {
             self.state.ci_passed = true;
         }
         let apps = &self.deployment.platform.apps;
         self.state.activated =
             !apps.is_empty() && apps.iter().all(|a| a.activated.unwrap_or(false));
+        self.last_activation = Some(response.activation.clone());
     }
 }
 
