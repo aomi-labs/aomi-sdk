@@ -57,15 +57,15 @@ impl BackendClient {
         .await
     }
 
-    /// Single-app activation: `POST /api/platforms/:platform/apps/:app/activate`.
+    /// Target-based multi-app activation:
+    /// `POST /api/platforms/:platform/apps/activate`.
     pub async fn activate(
         &self,
         platform: &Platform,
-        app: &str,
         request: &ActivateRequest,
     ) -> Result<ActivateResponse> {
         self.post(
-            &format!("/api/platforms/{}/apps/{}/activate", platform.as_str(), app),
+            &format!("/api/platforms/{}/apps/activate", platform.as_str()),
             request,
             "activation",
         )

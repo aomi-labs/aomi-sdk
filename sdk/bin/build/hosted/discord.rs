@@ -1,9 +1,7 @@
 //! Discord activation-request delivery.
 //!
-//! A new contributor can't use the direct-Git transport until ops invites their
-//! GitHub account to the platform repo, and can't self-activate until ops issues
-//! an activation bearer. So the first step is to *ask* ops for onboarding. This
-//! module posts that ask to the Aomi apps Discord
+//! A new contributor may need ops to issue an activation bearer before they can
+//! self-activate. This module posts that ask to the Aomi apps Discord
 //! via an incoming webhook, tagging ops and carrying the requester's GitHub
 //! account + email + app so ops can act without a round-trip.
 //!
@@ -38,7 +36,7 @@ const DISCORD_ADMIN: &str = "<@&1510790865520693348>";
 const EMBED_COLOR: u32 = 5_793_266;
 
 /// Provenance stamp on the structured payload.
-const SOURCE: &str = concat!("aomi-git/", env!("CARGO_PKG_VERSION"));
+const SOURCE: &str = concat!("aomi-build/", env!("CARGO_PKG_VERSION"));
 
 /// The onboarding/activation ask, independent of how it's delivered.
 ///
@@ -105,8 +103,8 @@ impl ActivationRequest {
     pub async fn post(&self) -> Result<()> {
         if DISCORD_WEBHOOK.contains("REPLACE_ME") || DISCORD_ADMIN.contains("REPLACE_ME") {
             bail!(
-                "Discord request target is not configured in sdk/bin/git/discord.rs; \
-                 run `aomi-git request --dry-run` and post the message manually"
+                "Discord request target is not configured in sdk/bin/build/hosted/discord.rs; \
+                 run `aomi-build request --dry-run` and post the message manually"
             );
         }
         let response = reqwest::Client::new()
@@ -152,7 +150,7 @@ mod tests {
         assert_eq!(p["repo"], "aomi-labs/community-apps");
         assert!(p["requested_at"].as_str().unwrap().contains('T'), "{p}");
         assert!(
-            p["source"].as_str().unwrap().starts_with("aomi-git/"),
+            p["source"].as_str().unwrap().starts_with("aomi-build/"),
             "{p}"
         );
     }

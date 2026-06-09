@@ -9,16 +9,21 @@ use clap::Parser;
 use serde_json::json;
 use tempfile::TempDir;
 
-use crate::cli::{Cli, DeployArgs};
+use crate::cli::{ActivateArgs, Cli, DeployArgs};
 use crate::platform::Platform;
-use crate::types::{ActivateRequest, ActivateResponse, LocalRecord, SourceRef};
+use crate::types::{ActivateRequest, ActivateResponse, LocalRecord, SourceRef, TargetRef};
 
 // ── deploy: arg parsing ─────────────────────────────────────────────────────
 
 #[test]
 fn deploy_rejects_branch_and_commit_together() {
     let parsed = Cli::try_parse_from([
-        "aomi-git", "deploy", "--branch", "main", "--commit", "abc1234",
+        "aomi-build",
+        "deploy",
+        "--branch",
+        "main",
+        "--commit",
+        "abc1234",
     ]);
     assert!(parsed.is_err(), "--branch and --commit must conflict");
 }
@@ -26,7 +31,7 @@ fn deploy_rejects_branch_and_commit_together() {
 #[test]
 fn deploy_parses_repeated_aomi_toml() {
     let cli = Cli::try_parse_from([
-        "aomi-git",
+        "aomi-build",
         "deploy",
         "--aomi-toml",
         "apps/a/aomi.toml",
@@ -170,49 +175,197 @@ fn release_tag_and_app_names_from_state() {
 }
 
 #[test]
-fn activate_request_serializes_single_app_body() {
+fn activate_request_serializes_target_based_body() {
     let req = ActivateRequest {
-        app_release_tag: "apps-bot-abc1234".into(),
+        target: TargetRef::PlatformPr {
+            value: "https://github.com/aomi-labs/krexa-apps/pull/9".into(),
+        },
+        apps: vec!["bot".into(), "bot2".into()],
+        release_tags: vec![],
         target_tags: vec!["staging".into()],
     };
     assert_eq!(
         serde_json::to_value(&req).unwrap(),
-        json!({ "app_release_tag": "apps-bot-abc1234", "target_tags": ["staging"] })
+        json!({
+            "target": { "kind": "platform_pr", "value": "https://github.com/aomi-labs/krexa-apps/pull/9" },
+            "apps": ["bot", "bot2"],
+            "target_tags": ["staging"]
+        })
     );
-    // empty target_tags is omitted
-    let bare = ActivateRequest {
-        app_release_tag: "t".into(),
+    // Empty apps/release_tags/target_tags are omitted; commit target carries tags.
+    let commit = ActivateRequest {
+        target: TargetRef::PlatformCommit {
+            value: "def5678".into(),
+        },
+        apps: vec!["bot".into()],
+        release_tags: vec!["apps-bot-abc1234".into()],
         target_tags: vec![],
     };
     assert_eq!(
-        serde_json::to_value(&bare).unwrap(),
-        json!({ "app_release_tag": "t" })
+        serde_json::to_value(&commit).unwrap(),
+        json!({
+            "target": { "kind": "platform_commit", "value": "def5678" },
+            "apps": ["bot"],
+            "release_tags": ["apps-bot-abc1234"]
+        })
     );
 }
 
-fn activation(name: &str) -> ActivateResponse {
-    ActivateResponse {
-        id: 1,
-        name: name.to_string(),
-        label: name.to_string(),
-        platform: "krexa".into(),
-        is_active: true,
-        is_public: false,
-        app_source_id: Some(1),
-        app_release_tag: Some(format!("apps-{name}-abc1234")),
-        status: "activated".into(),
+/// A multi-app activation response, as the target-based endpoint returns it.
+fn activation(ci_status: &str, apps: &[(&str, bool, bool)]) -> ActivateResponse {
+    let app_values: Vec<_> = apps
+        .iter()
+        .map(|(name, is_active, loaded)| {
+            json!({
+                "name": name,
+                "path": format!("apps/1/{name}"),
+                "release_tag": format!("apps-{name}-abc1234"),
+                "is_active": is_active,
+                "loaded": loaded,
+                "error": if *loaded { serde_json::Value::Null } else { json!("post-activation hot-reload failed") }
+            })
+        })
+        .collect();
+    serde_json::from_value(json!({
+        "ok": apps.iter().all(|(_, _, loaded)| *loaded),
+        "activation": {
+            "status": "activated",
+            "platform": "krexa",
+            "target": {
+                "kind": "platform_pr",
+                "value": "https://github.com/aomi-labs/krexa-apps/pull/9",
+                "platform_repo": "aomi-labs/krexa-apps",
+                "ci_status": ci_status,
+                "ci_url": "https://github.com/aomi-labs/krexa-apps/actions/runs/1"
+            },
+            "apps": app_values
+        }
+    }))
+    .unwrap()
+}
+
+#[test]
+fn apply_target_activation_marks_apps_ci_and_overall_state() {
+    let mut state = sample_state();
+    // First call activates only `bot`; CI passed should flip `ci_passed`.
+    state.apply_target_activation(&activation("passed", &[("bot", true, true)]));
+    assert_eq!(state.deployment.platform.apps[0].activated, Some(true));
+    assert!(
+        state.state.ci_passed,
+        "ci_status=passed mirrors into ci_passed"
+    );
+    assert!(!state.state.activated, "bot2 still inactive");
+
+    // Second call activates `bot2`; now all apps are active.
+    state.apply_target_activation(&activation("passed", &[("bot2", true, true)]));
+    assert!(state.state.activated, "all apps active");
+}
+
+#[test]
+fn apply_target_activation_keeps_failed_app_inactive() {
+    let mut state = sample_state();
+    state.apply_target_activation(&activation(
+        "passed",
+        &[("bot", true, true), ("bot2", false, false)],
+    ));
+    assert_eq!(state.deployment.platform.apps[0].activated, Some(true));
+    assert_eq!(state.deployment.platform.apps[1].activated, Some(false));
+    assert!(
+        !state.state.activated,
+        "a failed app blocks overall activation"
+    );
+}
+
+#[test]
+fn apply_target_activation_keeps_unloaded_active_row_inactive() {
+    let mut state = sample_state();
+    state.apply_target_activation(&activation("passed", &[("bot", true, false)]));
+    assert_eq!(
+        state.deployment.platform.apps[0].activated,
+        Some(false),
+        "hot-reload failure should not persist as a usable activation"
+    );
+    assert!(!state.state.activated);
+}
+
+#[test]
+fn infer_target_picks_kind_from_value() {
+    use crate::cli::infer_target;
+    assert!(matches!(
+        infer_target("https://github.com/o/r/pull/9"),
+        TargetRef::PlatformPr { .. }
+    ));
+    assert!(matches!(
+        infer_target("def5678"),
+        TargetRef::PlatformCommit { .. }
+    ));
+    assert!(matches!(
+        infer_target("feature/login"),
+        TargetRef::PlatformBranch { .. }
+    ));
+}
+
+fn activate_args() -> ActivateArgs {
+    ActivateArgs {
+        apps: Vec::new(),
+        platform: None,
+        target: None,
+        pr: None,
+        branch: None,
+        commit: None,
+        release_tags: Vec::new(),
+        backend: None,
+        activation_token: None,
+        target_tags: Vec::new(),
+        path: ".".into(),
+        dry_run: false,
+        json: false,
     }
 }
 
 #[test]
-fn apply_activation_marks_app_then_overall_state() {
-    let mut state = sample_state();
-    state.apply_activation(&activation("bot"));
-    assert_eq!(state.deployment.platform.apps[0].activated, Some(true));
-    assert!(!state.state.activated, "bot2 still inactive");
+fn activation_target_supports_explicit_target_flags() {
+    let state = sample_state();
 
-    state.apply_activation(&activation("bot2"));
-    assert!(state.state.activated, "all apps active");
+    let mut pr = activate_args();
+    pr.pr = Some("https://github.com/o/r/pull/9".into());
+    assert!(matches!(
+        pr.activation_target(&state, &[]).unwrap(),
+        TargetRef::PlatformPr { .. }
+    ));
+
+    let mut branch = activate_args();
+    branch.branch = Some("alice/repo/12345678/abc1234def56".into());
+    assert!(matches!(
+        branch.activation_target(&state, &[]).unwrap(),
+        TargetRef::PlatformBranch { .. }
+    ));
+
+    let mut commit = activate_args();
+    commit.commit = Some("abc1234".into());
+    assert!(matches!(
+        commit.activation_target(&state, &[]).unwrap(),
+        TargetRef::PlatformCommit { .. }
+    ));
+
+    let release = activate_args();
+    assert_eq!(
+        release
+            .activation_target(&state, &["apps-123-demo-abc1234".to_string()])
+            .unwrap(),
+        TargetRef::ReleaseTags {
+            value: vec!["apps-123-demo-abc1234".to_string()]
+        }
+    );
+}
+
+#[test]
+fn activation_target_rejects_ambiguous_targets() {
+    let state = sample_state();
+    let mut args = activate_args();
+    args.target = Some("abc1234".into());
+    args.pr = Some("https://github.com/o/r/pull/9".into());
+    assert!(args.activation_target(&state, &[]).is_err());
 }
 
 // ── deployment.json round-trip via the state file ───────────────────────────

@@ -1,4 +1,4 @@
-//! `aomi-git status` — local deploy state plus the backend's registry/runtime
+//! `aomi-build status` — local deploy state plus the backend's registry/runtime
 //! view, per app. GitHub credentials and CI/release verification live on the
 //! backend; the CLI never calls the GitHub API here.
 
@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::types::LocalRecord;
 
-const UA: &str = concat!("aomi-git/", env!("CARGO_PKG_VERSION"));
+const UA: &str = concat!("aomi-build/", env!("CARGO_PKG_VERSION"));
 const PROBE_TIMEOUT: Duration = Duration::from_secs(12);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
 
