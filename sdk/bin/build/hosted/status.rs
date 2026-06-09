@@ -7,14 +7,14 @@ use std::time::Duration;
 use serde::Serialize;
 use serde_json::Value;
 
-use super::types::LocalRecord;
+use super::types::LocalDeployment;
 
 const UA: &str = concat!("aomi-build/", env!("CARGO_PKG_VERSION"));
 const PROBE_TIMEOUT: Duration = Duration::from_secs(12);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
 
 #[derive(Debug, Serialize)]
-pub struct StatusReport {
+pub struct StatusResult {
     pub platform: String,
     pub pr_url: String,
     pub deploy_branch: String,
@@ -44,10 +44,10 @@ pub enum BackendAppStatus {
     Unknown { detail: String },
 }
 
-impl StatusReport {
+impl StatusResult {
     /// Collect a report from local state, optionally enriched with the backend's
     /// live view (a single `GET /api/control/apps/status`).
-    pub async fn collect(state: &LocalRecord, backend_url: Option<String>) -> Self {
+    pub async fn collect(state: &LocalDeployment, backend_url: Option<String>) -> Self {
         let rows = match &backend_url {
             Some(url) => fetch_apps(url).await,
             None => None,

@@ -1,9 +1,9 @@
 //! Hosted deployment CLI surface for `aomi-build`.
 //!
 //! These commands are thin backend relays: they read local git facts and post the
-//! repo-scoped deploy/activate requests defined in CONTRACTS.md. They never
-//! handle a GitHub token, never clone or push a platform repo, and never
-//! generates release tags or manifests — the backend owns all of that.
+//! repo-scoped deploy/activate requests defined in `hosted/types.rs`. They
+//! never handle a GitHub token, never clone or push a platform repo, and never
+//! generate release tags or manifests — the backend owns all of that.
 //!
 //! ```text
 //! deploy                     # deploy tracked aomi.toml apps from a source ref
@@ -16,13 +16,9 @@
 //!   --dry-run                # resolve + print the plan; deploy nothing
 //!   --json
 //!
-//! activate [APP]...          # apps to activate (default: all from deployment.json)
+//! activate [APP]...          # activate release tags (default: deployment.json tags)
 //!   --platform <NAME>        # default: deployment.json platform
-//!   --target <REF>           # infer PR URL | branch | commit (default: deploy PR)
-//!   --pr <URL>               # explicit platform_pr target
-//!   --branch <NAME>          # explicit platform_branch target
-//!   --commit <SHA>           # explicit platform_commit target
-//!   --release-tag <TAG>      # repeatable release_tags target
+//!   --release-tag <TAG>      # repeatable; overrides deployment.json tags
 //!   --backend <URL>          # AOMI_BACKEND_URL
 //!   --activation-token <T>   # AOMI_APP_ACTIVATION_TOKEN
 //!   --target-tag <TAG>       # repeatable
@@ -46,8 +42,8 @@ use super::app::AomiAppFiles;
 use super::backend::BackendClient;
 use super::discord;
 use super::platform::{Platform, normalize_github_repo};
-use super::status::StatusReport;
-use super::types::{ActivateRequest, DeployRequest, LocalRecord, SourceRef, TargetRef};
+use super::status::StatusResult;
+use super::types::{ActivateInput, DeployInput, LocalDeployment, SourceRef, TargetRef};
 
 pub(crate) const ACTIVATION_TOKEN_ENV: &str = "AOMI_APP_ACTIVATION_TOKEN";
 pub(crate) const BACKEND_URL_ENV: &str = "AOMI_BACKEND_URL";
@@ -136,7 +132,7 @@ impl DeployArgs {
         let aomi_toml_paths = self.aomi_toml_paths(&git_root)?;
         let app_source_id = self.resolve_app_source_id()?;
 
-        let request = DeployRequest {
+        let request = DeployInput {
             app_source_id,
             source_ref,
             aomi_toml_paths,
@@ -153,7 +149,7 @@ impl DeployArgs {
             .deploy(&platform, &request)
             .await?;
 
-        let state = LocalRecord::from_deploy(response);
+        let state = LocalDeployment::from_deploy(response);
         let path = state.write(&git_root)?;
 
         if self.json {
@@ -192,7 +188,7 @@ impl DeployArgs {
     /// Dry-run: POST with `dry_run: true` when a backend + token are available
     /// (the backend resolves the branch and validates scope); otherwise print
     /// the request we would send, fully offline.
-    async fn run_dry_run(&self, platform: &Platform, request: &DeployRequest) -> Result<()> {
+    async fn run_dry_run(&self, platform: &Platform, request: &DeployInput) -> Result<()> {
         match (self.backend_url().ok(), activation_token().ok()) {
             (Some(url), Some(token)) => {
                 let response = BackendClient::new(url, token)?
@@ -387,25 +383,9 @@ pub struct ActivateArgs {
     #[arg(long, value_name = "NAME")]
     pub platform: Option<Platform>,
 
-    /// Platform target to activate: a PR URL, branch, or commit. Defaults to the
-    /// deploy PR recorded in `.aomi/deployment.json`.
-    #[arg(long, value_name = "REF")]
-    pub target: Option<String>,
-
-    /// Activate a platform pull request URL.
-    #[arg(long, value_name = "URL")]
-    pub pr: Option<String>,
-
-    /// Activate a platform source branch (`owner/repo/installation/commit`).
-    #[arg(long, value_name = "NAME")]
-    pub branch: Option<String>,
-
-    /// Activate a platform commit hash.
-    #[arg(long, value_name = "SHA")]
-    pub commit: Option<String>,
-
     /// Activate explicit release tag(s). Repeat for multi-app activation. App
     /// names are optional; when provided, their count must match the tags.
+    /// Defaults to the release tags recorded in `.aomi/deployment.json`.
     #[arg(long = "release-tag", value_name = "TAG")]
     pub release_tags: Vec<String>,
 
@@ -436,7 +416,7 @@ pub struct ActivateArgs {
 
 impl ActivateArgs {
     pub async fn run(self) -> Result<()> {
-        let mut state = LocalRecord::read(&self.path)?.ok_or_else(|| {
+        let mut state = LocalDeployment::read(&self.path)?.ok_or_else(|| {
             anyhow!(
                 "no .aomi/deployment.json at {} — run `{} deploy` first",
                 self.path.display(),
@@ -448,59 +428,7 @@ impl ActivateArgs {
             .clone()
             .unwrap_or_else(|| Platform::new(&state.deployment.platform.platform));
 
-        let explicit_release_tags = clean_list(&self.release_tags);
-        let uses_release_tag_target = !explicit_release_tags.is_empty();
-
-        // Apps to activate: positional subset, else every app from the deploy.
-        // For explicit release-tag activation, omit app names when the user did
-        // not provide them so the backend can derive names from the tags.
-        let app_names = if uses_release_tag_target && self.apps.is_empty() {
-            Vec::new()
-        } else if self.apps.is_empty() {
-            state.app_names()
-        } else {
-            clean_list(&self.apps)
-        };
-        if app_names.is_empty() && !uses_release_tag_target {
-            bail!("no apps to activate — deploy first or name them positionally");
-        }
-        if uses_release_tag_target
-            && !app_names.is_empty()
-            && app_names.len() != explicit_release_tags.len()
-        {
-            bail!("--release-tag activation requires the same number of apps and release tags");
-        }
-        // Each named app must be known to the last deploy so its release tag
-        // resolves; this also rejects typos before we hit the backend. Release
-        // tag targets can intentionally activate tags not present in local state.
-        if !uses_release_tag_target {
-            for app in &app_names {
-                if state.release_tag_for(app).is_none() {
-                    bail!("app `{app}` is not in .aomi/deployment.json; deploy it first");
-                }
-            }
-        }
-
-        let target = self.activation_target(&state, &explicit_release_tags)?;
-
-        // `platform_commit` needs explicit release tags; the backend derives them
-        // for PR / branch targets. `release_tags` target carries tags in
-        // `target.value`, matching the backend and TypeScript deploy client.
-        let release_tags = if matches!(target, TargetRef::PlatformCommit { .. }) {
-            app_names
-                .iter()
-                .filter_map(|app| state.release_tag_for(app).map(str::to_string))
-                .collect()
-        } else {
-            Vec::new()
-        };
-
-        let request = ActivateRequest {
-            target,
-            apps: app_names.clone(),
-            release_tags,
-            target_tags: self.target_tags.clone(),
-        };
+        let request = self.activation_request(&state)?;
 
         if self.dry_run {
             let printable = serde_json::json!({
@@ -559,90 +487,55 @@ impl ActivateArgs {
         Ok(())
     }
 
-    pub(crate) fn activation_target(
-        &self,
-        state: &LocalRecord,
-        release_tags: &[String],
-    ) -> Result<TargetRef> {
-        let mut explicit = 0usize;
-        for present in [
-            self.target.as_deref().map(non_empty).unwrap_or(false),
-            self.pr.as_deref().map(non_empty).unwrap_or(false),
-            self.branch.as_deref().map(non_empty).unwrap_or(false),
-            self.commit.as_deref().map(non_empty).unwrap_or(false),
-            !release_tags.is_empty(),
-        ] {
-            if present {
-                explicit += 1;
+    pub(crate) fn activation_request(&self, state: &LocalDeployment) -> Result<ActivateInput> {
+        let explicit_release_tags = clean_list(&self.release_tags);
+        let has_explicit_release_tags = !explicit_release_tags.is_empty();
+        let app_names = if has_explicit_release_tags && self.apps.is_empty() {
+            Vec::new()
+        } else if self.apps.is_empty() {
+            state.app_names()
+        } else {
+            clean_list(&self.apps)
+        };
+
+        if has_explicit_release_tags
+            && !app_names.is_empty()
+            && app_names.len() != explicit_release_tags.len()
+        {
+            bail!("--release-tag activation requires the same number of apps and release tags");
+        }
+
+        let release_tags = if has_explicit_release_tags {
+            explicit_release_tags
+        } else {
+            if app_names.is_empty() {
+                bail!("no apps to activate — deploy first or pass --release-tag");
             }
-        }
-        if explicit > 1 {
-            bail!(
-                "pass only one activation target: --target, --pr, --branch, --commit, or --release-tag"
-            );
+            app_names
+                .iter()
+                .map(|app| {
+                    state
+                        .release_tag_for(app)
+                        .map(str::to_string)
+                        .ok_or_else(|| {
+                            anyhow!("app `{app}` is not in .aomi/deployment.json; deploy it first")
+                        })
+                })
+                .collect::<Result<Vec<_>>>()?
+        };
+
+        if release_tags.is_empty() {
+            bail!("activation needs at least one release tag");
         }
 
-        if !release_tags.is_empty() {
-            return Ok(TargetRef::ReleaseTags {
-                value: release_tags.to_vec(),
-            });
-        }
-        if let Some(value) = self.pr.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
-            return Ok(TargetRef::PlatformPr {
-                value: value.to_string(),
-            });
-        }
-        if let Some(value) = self
-            .branch
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            return Ok(TargetRef::PlatformBranch {
-                value: value.to_string(),
-            });
-        }
-        if let Some(value) = self
-            .commit
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-        {
-            return Ok(TargetRef::PlatformCommit {
-                value: value.to_string(),
-            });
-        }
-        match self
-            .target
-            .as_deref()
-            .map(str::trim)
-            .filter(|t| !t.is_empty())
-        {
-            Some(value) => Ok(infer_target(value)),
-            None => default_target(state),
-        }
+        Ok(ActivateInput {
+            target: TargetRef::ReleaseTags {
+                value: release_tags,
+            },
+            apps: app_names,
+            target_tags: clean_list(&self.target_tags),
+        })
     }
-}
-
-/// Infer the activation target kind from a `--target` value: a PR URL, a commit
-/// SHA, or (the fallback) a branch name.
-pub(crate) fn infer_target(value: &str) -> TargetRef {
-    let value = value.trim().to_string();
-    if value.contains("://") && value.contains("/pull/") {
-        TargetRef::PlatformPr { value }
-    } else if is_commit_sha(&value) {
-        TargetRef::PlatformCommit { value }
-    } else {
-        TargetRef::PlatformBranch { value }
-    }
-}
-
-fn is_commit_sha(value: &str) -> bool {
-    (7..=40).contains(&value.len()) && value.chars().all(|c| c.is_ascii_hexdigit())
-}
-
-fn non_empty(value: &str) -> bool {
-    !value.trim().is_empty()
 }
 
 fn clean_list(values: &[String]) -> Vec<String> {
@@ -652,33 +545,6 @@ fn clean_list(values: &[String]) -> Vec<String> {
         .filter(|value| !value.is_empty())
         .map(str::to_string)
         .collect()
-}
-
-/// Default target from the recorded deploy: prefer the PR, then the source
-/// branch, then the platform commit.
-fn default_target(state: &LocalRecord) -> Result<TargetRef> {
-    let platform = &state.deployment.platform;
-    if let Some(pr) = platform
-        .pr_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-    {
-        return Ok(TargetRef::PlatformPr {
-            value: pr.to_string(),
-        });
-    }
-    if !platform.source_branch.trim().is_empty() {
-        return Ok(TargetRef::PlatformBranch {
-            value: platform.source_branch.clone(),
-        });
-    }
-    if let Some(commit) = platform.commit_hash.as_deref().filter(|s| !s.is_empty()) {
-        return Ok(TargetRef::PlatformCommit {
-            value: commit.to_string(),
-        });
-    }
-    bail!("no platform target in .aomi/deployment.json — pass --target <pr-url|branch|commit>")
 }
 
 // ---------------------------------------------------------------------------
@@ -703,7 +569,7 @@ pub struct StatusArgs {
 
 impl StatusArgs {
     pub async fn run(self) -> Result<()> {
-        let state = LocalRecord::read(&self.path)?.ok_or_else(|| {
+        let state = LocalDeployment::read(&self.path)?.ok_or_else(|| {
             anyhow!(
                 "no .aomi/deployment.json at {} — run `{} deploy` first",
                 self.path.display(),
@@ -717,7 +583,7 @@ impl StatusArgs {
             other => resolve_backend(other),
         };
 
-        let report = StatusReport::collect(&state, backend_url).await;
+        let report = StatusResult::collect(&state, backend_url).await;
         if self.json {
             println!("{}", serde_json::to_string_pretty(&report)?);
         } else {

@@ -5,7 +5,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use super::platform::Platform;
-use super::types::{ActivateRequest, ActivateResponse, DeployRequest, DeployResponse};
+use super::types::{ActivateInput, ActivateResult, DeployInput, DeployResult};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
@@ -44,11 +44,7 @@ impl BackendClient {
     }
 
     /// Repo-scoped deploy: `POST /api/platforms/:platform/deploy`.
-    pub async fn deploy(
-        &self,
-        platform: &Platform,
-        request: &DeployRequest,
-    ) -> Result<DeployResponse> {
+    pub async fn deploy(&self, platform: &Platform, request: &DeployInput) -> Result<DeployResult> {
         self.post(
             &format!("/api/platforms/{}/deploy", platform.as_str()),
             request,
@@ -62,8 +58,8 @@ impl BackendClient {
     pub async fn activate(
         &self,
         platform: &Platform,
-        request: &ActivateRequest,
-    ) -> Result<ActivateResponse> {
+        request: &ActivateInput,
+    ) -> Result<ActivateResult> {
         self.post(
             &format!("/api/platforms/{}/apps/activate", platform.as_str()),
             request,

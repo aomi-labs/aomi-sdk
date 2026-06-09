@@ -145,8 +145,8 @@ aomi-build activate foo \
 ```
 
 `deploy` writes `.aomi/deployment.json` in the source repo. `status` reads that
-file and checks backend load state. `activate` uses the recorded PR/branch/commit
-target unless you pass `--pr`, `--branch`, `--commit`, or `--release-tag`.
+file and checks backend load state. `activate` sends a `release_tags` target,
+using the recorded release tags unless you pass `--release-tag`.
 
 The CLI is only the relay. It does not push platform branches or hold a GitHub
 token; the backend writes platform repo changes through the connected GitHub App
@@ -325,7 +325,7 @@ Run `aomi-build init <name>` (bare skeleton) or `aomi-build new-app <platform>` 
 This repo publishes GitHub Releases with pre-built plugin tarballs per target (Linux x86_64, macOS ARM64). The backend polls for new releases every 5 minutes, downloads and verifies the tarball, then atomically swaps new plugin binaries in via `dlopen`. Active sessions keep their old plugin `Arc`; new sessions get the new one. No restart required.
 
 **Do I need to deploy infrastructure to get my plugin running?**
-No for official apps in this SDK repo: once your PR merges to `publish`, CI builds and publishes the plugin tarball, and the runtime picks it up on the next poll. Hosted community and partner apps use `aomi-build deploy`, then `aomi-build activate` after the backend platform PR is ready.
+No for official apps in this SDK repo: once your PR merges to `publish`, CI builds and publishes the plugin tarball, and the runtime picks it up on the next poll. Hosted community and partner apps use `aomi-build deploy`, then `aomi-build activate` after release tags are recorded in `.aomi/deployment.json`.
 
 **Can I test a plugin locally before opening a PR?**
 Yes. Build with `aomi-build compile --app <name>`, run unit tests using the `aomi_sdk::testing` helpers (`TestCtxBuilder`, `run_tool`, `run_async_tool`), and point a local product-mono instance at your working copy with `LOCAL_AOMI_SDK=/path/to/aomi-sdk`.

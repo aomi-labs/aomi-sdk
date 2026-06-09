@@ -5,10 +5,9 @@
 //! aomi_toml_paths, dry_run?}`; activation is target-based and multi-app,
 //! `POST /api/platforms/:platform/apps/activate` with `{target, apps,
 //! release_tags?, target_tags?}` returning `{ok, activation:{…, apps[]}}` with a
-//! per-app partial-failure shape. JSON is snake_case to match the backend. This
-//! is the single canonical home for the deploy/activate contract and the local
-//! `.aomi/deployment.json` state, mirrored by the TypeScript `@aomi-labs/deploy`
-//! client.
+//! per-app partial-failure shape. JSON is snake_case to match the backend. Type
+//! names intentionally mirror the backend deploy payload where the concept is
+//! shared; local-only persistence types keep a `Local*` prefix.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -44,9 +43,15 @@ impl SourceRef {
 
 // ── Deploy ─────────────────────────────────────────────────────────────────
 
+/// Mirrors TypeScript `DeployStatus`; the backend may add more status strings.
+pub type DeployStatus = String;
+
+/// Mirrors TypeScript `CiStatus`; the backend may add more status strings.
+pub type CiStatus = String;
+
 /// Body of `POST /api/platforms/:platform/deploy`.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
-pub struct DeployRequest {
+pub struct DeployInput {
     /// The connected GitHub App install (`app_source`) to deploy from.
     pub app_source_id: i64,
     pub source_ref: SourceRef,
@@ -57,7 +62,7 @@ pub struct DeployRequest {
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
-pub struct DeployResponse {
+pub struct DeployResult {
     pub ok: bool,
     pub deployment: DeployPayload,
 }
@@ -66,7 +71,7 @@ pub struct DeployResponse {
 pub struct DeployPayload {
     pub id: String,
     /// `pr_created` | `pr_updated` (and dry-run plan states).
-    pub status: String,
+    pub status: DeployStatus,
     pub source: Source,
     pub platform: Platform,
 }
@@ -99,7 +104,7 @@ pub struct Platform {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pr_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ci_status: Option<String>,
+    pub ci_status: Option<CiStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ci_url: Option<String>,
     pub apps: Vec<AppRecord>,
@@ -112,51 +117,45 @@ pub struct AppRecord {
     pub aomi_toml_path: String,
     pub release_tag: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    /// Local `.aomi/deployment.json` overlay; absent from backend deploy result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub activated: Option<bool>,
 }
 
 // ── Activate ───────────────────────────────────────────────────────────────
 //
-// Activation is target-based and multi-app:
-// `POST /api/platforms/:platform/apps/activate`. One call resolves a platform
-// PR / branch / commit (or explicit release tags), verifies Aomi CI, and
-// activates every requested app, returning per-app results with a
-// partial-failure shape. Mirrors the backend `ActivateAppsRequest` /
-// `ActivateAppsResponse` and the TypeScript `@aomi-labs/deploy` client.
+// Activation is release-tag based and multi-app:
+// `POST /api/platforms/:platform/apps/activate`. One call promotes the requested
+// release candidates to the platform live branch, then activates every requested
+// app, returning per-app results with a partial-failure shape. Mirrors the
+// backend `ActivateAppsRequest` / `ActivateAppsResponse`.
 
-/// `{ "kind": "platform_pr", "value": "<pr url>" }` and friends. `release_tags`
-/// carries an array value; the others carry a single string.
+/// `{ "kind": "release_tags", "value": ["<release tag>", ...] }`.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum TargetRef {
-    PlatformPr { value: String },
-    PlatformBranch { value: String },
-    PlatformCommit { value: String },
     ReleaseTags { value: Vec<String> },
 }
 
 /// Body of `POST /api/platforms/:platform/apps/activate`.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
-pub struct ActivateRequest {
+pub struct ActivateInput {
     pub target: TargetRef,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub apps: Vec<String>,
-    /// Explicit release tags — required for `platform_commit` targets, ignored
-    /// for `platform_pr` / `platform_branch` (the backend derives those).
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub release_tags: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub target_tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ActivateResponse {
+pub struct ActivateResult {
     pub ok: bool,
-    pub activation: ActivationPayload,
+    pub activation: Activation,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ActivationPayload {
+pub struct Activation {
     /// `activated` | `partial_failed`.
     pub status: String,
     pub platform: String,
@@ -167,7 +166,7 @@ pub struct ActivationPayload {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ActivationTarget {
     pub kind: String,
-    /// String for PR/branch/commit, array for release tags.
+    /// Array for `release_tags`.
     #[serde(default)]
     pub value: serde_json::Value,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -177,7 +176,7 @@ pub struct ActivationTarget {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub platform_commit_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ci_status: Option<String>,
+    pub ci_status: Option<CiStatus>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ci_url: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -190,7 +189,9 @@ pub struct ActivationPromotion {
     pub release_tag: String,
     pub source_branch: String,
     pub platform_commit_hash: String,
-    pub ci_status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_commit_hash: Option<String>,
+    pub ci_status: CiStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ci_url: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -212,36 +213,36 @@ pub struct ActivatedApp {
 
 // ── Local state (.aomi/deployment.json) ─────────────────────────────────────
 
-/// Local `.aomi/deployment.json`: the backend's [`Deployment`] (flattened — the
+/// Local `.aomi/deployment.json`: the backend's [`DeployPayload`] (flattened — the
 /// single canonical shape, not a re-declared copy) plus a local activation
 /// overlay (`state`, and per-app `AppRecord::activated`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct LocalRecord {
+pub struct LocalDeployment {
     #[serde(flatten)]
     pub deployment: DeployPayload,
-    pub state: LocalState,
+    pub state: LocalDeploymentState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_activation: Option<ActivationPayload>,
+    pub last_activation: Option<Activation>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default, Serialize, Deserialize)]
-pub struct LocalState {
+pub struct LocalDeploymentState {
     pub deployed: bool,
     pub ci_passed: bool,
     pub activated: bool,
 }
 
-impl LocalRecord {
+impl LocalDeployment {
     /// Build local state from a fresh deploy response (deployed=true, nothing
     /// activated yet).
-    pub fn from_deploy(resp: DeployResponse) -> Self {
+    pub fn from_deploy(resp: DeployResult) -> Self {
         let mut deployment = resp.deployment;
         for app in &mut deployment.platform.apps {
             app.activated = Some(false);
         }
         Self {
             deployment,
-            state: LocalState {
+            state: LocalDeploymentState {
                 deployed: true,
                 ci_passed: false,
                 activated: false,
@@ -306,7 +307,7 @@ impl LocalRecord {
     /// Fold a target-based multi-app activation response back into local state:
     /// set each returned app's usable activation flag, mirror the target's CI
     /// outcome into `ci_passed`, then recompute the overall `activated` state.
-    pub fn apply_target_activation(&mut self, response: &ActivateResponse) {
+    pub fn apply_target_activation(&mut self, response: &ActivateResult) {
         for activated in &response.activation.apps {
             for app in self.deployment.platform.apps.iter_mut() {
                 if app.name == activated.name {

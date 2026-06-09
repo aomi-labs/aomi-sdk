@@ -71,7 +71,7 @@ aomi-build test-schema  <p>   # schemathesis validation against live API
 aomi-build compile            # build local cdylib plugins into plugins/
 aomi-build deploy             # deploy tracked aomi.toml apps through the backend
 aomi-build status             # local deployment.json + backend load status
-aomi-build activate [APP]...  # activate a PR, branch, commit, or release tag
+aomi-build activate [APP]...  # activate release tags
 aomi-build request            # legacy ops onboarding request
 ```
 
@@ -107,7 +107,6 @@ aomi-build deploy \
 aomi-build status --backend https://staging-api.aomi.dev
 
 aomi-build activate foo \
-  --pr https://github.com/aomi-labs/community-apps/pull/9 \
   --target-tag staging \
   --backend https://staging-api.aomi.dev
 ```
@@ -176,9 +175,10 @@ only the local file. Pass `--json` for machine-readable output.
 
 ### `activate`
 
-`activate` sends one target-based request to
-`POST /api/platforms/:platform/apps/activate`. It can activate every app from
-`.aomi/deployment.json` or a positional subset:
+`activate` sends one release-tag target request to
+`POST /api/platforms/:platform/apps/activate`. By default it reads the release
+tags recorded in `.aomi/deployment.json`; it can activate every app from that
+file or a positional subset:
 
 ```sh
 aomi-build activate                 # all apps from deployment.json
@@ -186,26 +186,19 @@ aomi-build activate foo bar         # named subset
 aomi-build activate --release-tag apps-foo-abc1234
 ```
 
-Activation target flags are mutually exclusive:
+The only activation target sent by the CLI is:
 
 | Flag | Backend target |
 |---|---|
-| `--pr <URL>` | `platform_pr` |
-| `--branch <NAME>` | `platform_branch`; use the generated source branch from deployment.json |
-| `--commit <SHA>` | `platform_commit`; release tags are read from deployment.json |
+| omitted | `release_tags` using tags from `.aomi/deployment.json` |
 | `--release-tag <TAG>` | `release_tags`; repeat for multi-app activation |
-| `--target <REF>` | Compatibility shortcut that infers PR URL, commit SHA, or branch |
 
-When no target flag is passed, `activate` uses the recorded deploy PR, then the
-recorded platform source branch, then the recorded platform commit. Local
+When app names are provided with `--release-tag`, their count must match the tag
+count and the backend verifies each app name matches its release tag. Local
 activation state is recorded only when the backend reports the app row is active
-and the runtime load succeeded.
-
-For `platform_commit` targets, `activate` includes the app release tags recorded
-by the last deploy. For `platform_pr` and `platform_branch` targets, the backend
-derives release tags from the platform artifact. Use repeatable
-`--target-tag <TAG>` when the backend should load the activated apps only on
-specific server tags such as `staging`.
+and the runtime load succeeded. Use repeatable `--target-tag <TAG>` when the
+backend should load the activated apps only on specific server tags such as
+`staging`.
 
 ### `request`
 

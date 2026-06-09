@@ -3,7 +3,7 @@ use eyre::Result;
 
 mod client;
 mod compile;
-mod deploy;
+mod hosted;
 mod init;
 mod new_app;
 mod spec_load;
@@ -44,13 +44,13 @@ enum Cmd {
     /// codesign on macOS.
     Compile(compile::CompileArgs),
     /// Deploy tracked `aomi.toml` apps from a source ref through the backend.
-    Deploy(deploy::cli::DeployArgs),
+    Deploy(hosted::cli::DeployArgs),
     /// Show local + backend deployment status.
-    Status(deploy::cli::StatusArgs),
-    /// Activate platform releases from a PR, branch, commit, or release tag.
-    Activate(deploy::cli::ActivateArgs),
+    Status(hosted::cli::StatusArgs),
+    /// Activate platform releases by release tag.
+    Activate(hosted::cli::ActivateArgs),
     /// Ask platform ops for legacy onboarding details.
-    Request(deploy::cli::RequestArgs),
+    Request(hosted::cli::RequestArgs),
 }
 
 #[tokio::main]
