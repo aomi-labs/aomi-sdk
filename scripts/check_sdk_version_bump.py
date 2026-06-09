@@ -41,13 +41,46 @@ def base_sdk_version(base_rev: str) -> str | None:
     return parse_version(show.stdout, f"{base_rev}:sdk/Cargo.toml")
 
 
+def file_at(rev: str, path: str) -> str | None:
+    show = subprocess.run(
+        ["git", "show", f"{rev}:{path}"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    if show.returncode != 0:
+        return None
+    return show.stdout
+
+
+def sdk_manifest_change_requires_version_bump(base_rev: str, head_rev: str) -> bool:
+    base_text = file_at(base_rev, "sdk/Cargo.toml")
+    head_text = file_at(head_rev, "sdk/Cargo.toml")
+    if base_text is None or head_text is None:
+        return True
+
+    base = tomllib.loads(base_text)
+    head = tomllib.loads(head_text)
+    for manifest in (base, head):
+        manifest.pop("bin", None)
+        package = manifest.get("package", {})
+        package.pop("version", None)
+        package.pop("description", None)
+    return base != head
+
+
 def changed_sdk_files(base_rev: str, head_rev: str) -> list[str]:
     output = run("git", "diff", "--name-only", base_rev, head_rev, "--", "sdk")
-    return [
-        line
-        for line in output.splitlines()
-        if line and not line.startswith(("sdk/bin/", "sdk/examples/"))
-    ]
+    changed = []
+    for line in output.splitlines():
+        if not line or line.startswith(("sdk/bin/", "sdk/examples/")):
+            continue
+        if line == "sdk/Cargo.toml" and not sdk_manifest_change_requires_version_bump(
+            base_rev, head_rev
+        ):
+            continue
+        changed.append(line)
+    return changed
 
 
 def write_output(path: str | None, key: str, value: str) -> None:
