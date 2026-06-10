@@ -3,6 +3,7 @@ use eyre::Result;
 
 mod client;
 mod compile;
+mod hosted;
 mod init;
 mod new_app;
 mod spec_load;
@@ -14,7 +15,7 @@ mod tool;
 #[derive(Parser)]
 #[command(
     name = "aomi-build",
-    about = "Build pipeline for Aomi apps: spec → client → tool"
+    about = "Build, deploy, and activate Aomi apps: spec → client → tool → backend"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -42,9 +43,18 @@ enum Cmd {
     /// Build every app's cdylib, copy validated plugins into `plugins/`,
     /// codesign on macOS.
     Compile(compile::CompileArgs),
+    /// Deploy tracked `aomi.toml` apps from a source ref through the backend.
+    Deploy(hosted::cli::DeployArgs),
+    /// Show local + backend deployment status.
+    Status(hosted::cli::StatusArgs),
+    /// Activate platform releases by release tag.
+    Activate(hosted::cli::ActivateArgs),
+    /// Ask platform ops for legacy onboarding details.
+    Request(hosted::cli::RequestArgs),
 }
 
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.cmd {
         Cmd::GenSpecs(args) => specs::run(args),
@@ -55,5 +65,13 @@ fn main() -> Result<()> {
         Cmd::TightenSpec(args) => tighten::run(args),
         Cmd::Init(args) => init::run(args),
         Cmd::Compile(args) => compile::run(args),
+        Cmd::Deploy(args) => args.run().await.map_err(git_error),
+        Cmd::Status(args) => args.run().await.map_err(git_error),
+        Cmd::Activate(args) => args.run().await.map_err(git_error),
+        Cmd::Request(args) => args.run().await.map_err(git_error),
     }
+}
+
+fn git_error(err: anyhow::Error) -> eyre::Report {
+    eyre::eyre!("{err:#}")
 }

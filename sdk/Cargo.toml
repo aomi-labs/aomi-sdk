@@ -4,11 +4,11 @@ version = "3.0.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/aomi-labs/aomi-sdk"
-description = "Lightweight SDK for building dynamic Aomi plugins (cdylib), the aomi-git deploy CLI, and the aomi-build scaffolding CLI"
+description = "Lightweight SDK for building dynamic Aomi plugins (cdylib) and the aomi-build CLI"
 
 [features]
 default = []
-# Compile the `aomi-git` and `aomi-build` binaries and their supporting
+# Compile the `aomi-build` binary and its supporting
 # modules. Off by default so library consumers don't drag in
 # clap/tokio/reqwest/progenitor/syn just to depend on the SDK. Enable via
 # `cargo install aomi-sdk --features cli` or
@@ -82,11 +82,6 @@ rustyline = { version = "14", optional = true }
 tracing-subscriber = { version = "0.3", optional = true, features = ["env-filter"] }
 thiserror = { version = "2", optional = true }
 futures = { version = "0.3", optional = true }
-
-[[bin]]
-name = "aomi-git"
-path = "bin/git/main.rs"
-required-features = ["cli"]
 
 [[bin]]
 name = "aomi-build"
