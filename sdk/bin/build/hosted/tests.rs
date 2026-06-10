@@ -12,7 +12,7 @@ use tempfile::TempDir;
 use super::cli::{ActivateArgs, DeployArgs};
 use super::platform::Platform;
 use super::types::{
-    ActivateInput, ActivateResult, DeployInput, LocalDeployment, SourceRef, TargetRef,
+    ActivateInput, ActivateResult, DeployInput, LocalDeployment, ReleaseTags, SourceRef,
 };
 
 // ── deploy: arg parsing ─────────────────────────────────────────────────────
@@ -199,9 +199,7 @@ fn release_tag_and_app_names_from_state() {
 #[test]
 fn activate_request_serializes_target_based_body() {
     let req = ActivateInput {
-        target: TargetRef::ReleaseTags {
-            value: vec!["apps-1-bot-abc1234".into()],
-        },
+        target: ReleaseTags::new(vec!["apps-1-bot-abc1234".into()]),
         apps: vec!["bot".into()],
         target_tags: vec!["staging".into()],
     };
@@ -215,9 +213,7 @@ fn activate_request_serializes_target_based_body() {
     );
 
     let release_tags = ActivateInput {
-        target: TargetRef::ReleaseTags {
-            value: vec!["apps-1-bot-abc1234".into()],
-        },
+        target: ReleaseTags::new(vec!["apps-1-bot-abc1234".into()]),
         apps: vec![],
         target_tags: vec![],
     };

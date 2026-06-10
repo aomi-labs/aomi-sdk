@@ -53,7 +53,7 @@ impl BackendClient {
         .await
     }
 
-    /// Target-based multi-app activation:
+    /// Release-tags activation:
     /// `POST /api/platforms/:platform/apps/activate`.
     pub async fn activate(
         &self,

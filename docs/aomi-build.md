@@ -175,7 +175,7 @@ only the local file. Pass `--json` for machine-readable output.
 
 ### `activate`
 
-`activate` sends one release-tag target request to
+`activate` sends one release-tags target request to
 `POST /api/platforms/:platform/apps/activate`. By default it reads the release
 tags recorded in `.aomi/deployment.json`; it can activate every app from that
 file or a positional subset:

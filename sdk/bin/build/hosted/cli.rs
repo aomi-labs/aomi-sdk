@@ -43,7 +43,7 @@ use super::backend::BackendClient;
 use super::discord;
 use super::platform::{Platform, normalize_github_repo};
 use super::status::StatusResult;
-use super::types::{ActivateInput, DeployInput, LocalDeployment, SourceRef, TargetRef};
+use super::types::{ActivateInput, DeployInput, LocalDeployment, ReleaseTags, SourceRef};
 
 pub(crate) const ACTIVATION_TOKEN_ENV: &str = "AOMI_APP_ACTIVATION_TOKEN";
 pub(crate) const BACKEND_URL_ENV: &str = "AOMI_BACKEND_URL";
@@ -383,7 +383,7 @@ pub struct ActivateArgs {
     #[arg(long, value_name = "NAME")]
     pub platform: Option<Platform>,
 
-    /// Activate explicit release tag(s). Repeat for multi-app activation. App
+    /// Activate explicit release tags. Repeat for multi-app activation. App
     /// names are optional; when provided, their count must match the tags.
     /// Defaults to the release tags recorded in `.aomi/deployment.json`.
     #[arg(long = "release-tag", value_name = "TAG")]
@@ -529,9 +529,7 @@ impl ActivateArgs {
         }
 
         Ok(ActivateInput {
-            target: TargetRef::ReleaseTags {
-                value: release_tags,
-            },
+            target: ReleaseTags::new(release_tags),
             apps: app_names,
             target_tags: clean_list(&self.target_tags),
         })

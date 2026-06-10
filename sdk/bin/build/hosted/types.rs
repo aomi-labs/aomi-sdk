@@ -2,9 +2,9 @@
 //!
 //! Aligned to the live backend (`/api/platforms`): deploy is
 //! `POST /api/platforms/:platform/deploy` with `{app_source_id, source_ref,
-//! aomi_toml_paths, dry_run?}`; activation is target-based and multi-app,
-//! `POST /api/platforms/:platform/apps/activate` with `{target, apps,
-//! release_tags?, target_tags?}` returning `{ok, activation:{…, apps[]}}` with a
+//! aomi_toml_paths, dry_run?}`; activation is release-tags based,
+//! `POST /api/platforms/:platform/apps/activate` with `{target, apps?,
+//! target_tags?}` returning `{ok, activation:{…, apps[]}}` with a
 //! per-app partial-failure shape. JSON is snake_case to match the backend. Type
 //! names intentionally mirror the backend deploy payload where the concept is
 //! shared; local-only persistence types keep a `Local*` prefix.
@@ -13,7 +13,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Serialize, Serializer};
 
 const DEPLOYMENT_DIR: &str = ".aomi";
 const DEPLOYMENT_FILE: &str = "deployment.json";
@@ -125,23 +126,39 @@ pub struct AppRecord {
 
 // ── Activate ───────────────────────────────────────────────────────────────
 //
-// Activation is release-tag based and multi-app:
-// `POST /api/platforms/:platform/apps/activate`. One call promotes the requested
-// release candidates to the platform live branch, then activates every requested
-// app, returning per-app results with a partial-failure shape. Mirrors the
-// backend `ActivateAppsRequest` / `ActivateAppsResponse`.
+// Activation is release-tags based:
+// `POST /api/platforms/:platform/apps/activate`. One call promotes the
+// requested release candidates to the platform live branch, then activates each
+// requested app, returning per-app results with a partial-failure shape. Mirrors
+// the backend `ActivateAppsRequest` / `ActivateAppsResponse`.
 
-/// `{ "kind": "release_tags", "value": ["<release tag>", ...] }`.
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum TargetRef {
-    ReleaseTags { value: Vec<String> },
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
+pub struct ReleaseTags {
+    pub value: Vec<String>,
+}
+
+impl ReleaseTags {
+    pub fn new(value: Vec<String>) -> Self {
+        Self { value }
+    }
+}
+
+impl Serialize for ReleaseTags {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut target = serializer.serialize_struct("ReleaseTags", 2)?;
+        target.serialize_field("kind", "release_tags")?;
+        target.serialize_field("value", &self.value)?;
+        target.end()
+    }
 }
 
 /// Body of `POST /api/platforms/:platform/apps/activate`.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct ActivateInput {
-    pub target: TargetRef,
+    pub target: ReleaseTags,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub apps: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
