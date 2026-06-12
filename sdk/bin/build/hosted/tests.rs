@@ -178,8 +178,8 @@ fn sample_state() -> LocalDeployment {
             "commit_hash": "def5678", "pr_number": 9,
             "pr_url": "https://github.com/aomi-labs/krexa-apps/pull/9",
             "apps": [
-                { "name": "bot", "path": "apps/1/bot", "aomi_toml_path": "aomi.toml", "release_tag": "apps-1-bot-abc1234", "target": "x86_64-unknown-linux-gnu", "activated": false },
-                { "name": "bot2", "path": "apps/1/bot2", "aomi_toml_path": "apps/b2/aomi.toml", "release_tag": "apps-1-bot2-abc1234", "target": "x86_64-unknown-linux-gnu", "activated": false }
+                { "name": "bot", "path": "apps/1/r00a1b2c3d4/bot", "aomi_toml_path": "aomi.toml", "release_tag": "apps-1-r00a1b2c3d4-bot-abc1234", "target": "x86_64-unknown-linux-gnu", "activated": false },
+                { "name": "bot2", "path": "apps/1/r00a1b2c3d4/bot2", "aomi_toml_path": "apps/b2/aomi.toml", "release_tag": "apps-1-r00a1b2c3d4-bot2-abc1234", "target": "x86_64-unknown-linux-gnu", "activated": false }
             ]
         },
         "state": { "deployed": true, "ci_passed": false, "activated": false }
@@ -191,36 +191,36 @@ fn sample_state() -> LocalDeployment {
 fn release_tag_and_app_names_from_state() {
     let state = sample_state();
     assert_eq!(state.app_names(), vec!["bot", "bot2"]);
-    assert_eq!(state.release_tag_for("bot"), Some("apps-1-bot-abc1234"));
-    assert_eq!(state.release_tag_for("bot2"), Some("apps-1-bot2-abc1234"));
+    assert_eq!(state.release_tag_for("bot"), Some("apps-1-r00a1b2c3d4-bot-abc1234"));
+    assert_eq!(state.release_tag_for("bot2"), Some("apps-1-r00a1b2c3d4-bot2-abc1234"));
     assert_eq!(state.release_tag_for("nope"), None);
 }
 
 #[test]
 fn activate_request_serializes_target_based_body() {
     let req = ActivateInput {
-        target: ReleaseTags::new(vec!["apps-1-bot-abc1234".into()]),
+        target: ReleaseTags::new(vec!["apps-1-r00a1b2c3d4-bot-abc1234".into()]),
         apps: vec!["bot".into()],
         target_tags: vec!["staging".into()],
     };
     assert_eq!(
         serde_json::to_value(&req).unwrap(),
         json!({
-            "target": { "kind": "release_tags", "value": ["apps-1-bot-abc1234"] },
+            "target": { "kind": "release_tags", "value": ["apps-1-r00a1b2c3d4-bot-abc1234"] },
             "apps": ["bot"],
             "target_tags": ["staging"]
         })
     );
 
     let release_tags = ActivateInput {
-        target: ReleaseTags::new(vec!["apps-1-bot-abc1234".into()]),
+        target: ReleaseTags::new(vec!["apps-1-r00a1b2c3d4-bot-abc1234".into()]),
         apps: vec![],
         target_tags: vec![],
     };
     assert_eq!(
         serde_json::to_value(&release_tags).unwrap(),
         json!({
-            "target": { "kind": "release_tags", "value": ["apps-1-bot-abc1234"] }
+            "target": { "kind": "release_tags", "value": ["apps-1-r00a1b2c3d4-bot-abc1234"] }
         })
     );
 }
@@ -231,8 +231,8 @@ fn release_tag_activation(apps: &[(&str, bool, bool)]) -> ActivateResult {
         .map(|(name, is_active, loaded)| {
             json!({
                 "name": name,
-                "path": format!("apps/1/{name}"),
-                "release_tag": format!("apps-1-{name}-abc1234"),
+                "path": format!("apps/1/r00a1b2c3d4/{name}"),
+                "release_tag": format!("apps-1-r00a1b2c3d4-{name}-abc1234"),
                 "is_active": is_active,
                 "loaded": loaded,
                 "error": if *loaded { serde_json::Value::Null } else { json!("post-activation hot-reload failed") }
@@ -246,19 +246,19 @@ fn release_tag_activation(apps: &[(&str, bool, bool)]) -> ActivateResult {
             "platform": "krexa",
             "target": {
                 "kind": "release_tags",
-                "value": apps.iter().map(|(name, _, _)| format!("apps-1-{name}-abc1234")).collect::<Vec<_>>(),
+                "value": apps.iter().map(|(name, _, _)| format!("apps-1-r00a1b2c3d4-{name}-abc1234")).collect::<Vec<_>>(),
                 "platform_repo": "aomi-labs/krexa-apps",
                 "platform_branch": "publish",
                 "promoted": apps.iter().map(|(name, _, _)| json!({
                     "name": name,
-                    "release_tag": format!("apps-1-{name}-abc1234"),
+                    "release_tag": format!("apps-1-r00a1b2c3d4-{name}-abc1234"),
                     "source_branch": "a/b/1/abc1234",
                     "platform_commit_hash": "def5678",
                     "live_commit_hash": "fed7654",
                     "ci_status": "passed",
                     "ci_url": "https://github.com/aomi-labs/krexa-apps/actions/runs/1",
                     "release_assets": [
-                        format!("aomi-plugins-apps-1-{name}-abc1234-x86_64-unknown-linux-gnu.tar.gz"),
+                        format!("aomi-plugins-apps-1-r00a1b2c3d4-{name}-abc1234-x86_64-unknown-linux-gnu.tar.gz"),
                         "manifest.json",
                         "aomi-release.json"
                     ]
@@ -306,7 +306,7 @@ fn release_tag_activation_promotions_mark_ci_and_sync_last_activation() {
     let last = state.last_activation.as_ref().expect("last activation");
     assert_eq!(last.target.kind, "release_tags");
     assert_eq!(last.target.promoted.len(), 2);
-    assert_eq!(last.target.promoted[0].release_tag, "apps-1-bot-abc1234");
+    assert_eq!(last.target.promoted[0].release_tag, "apps-1-r00a1b2c3d4-bot-abc1234");
     assert_eq!(
         last.target.promoted[0].live_commit_hash.as_deref(),
         Some("fed7654")
@@ -363,7 +363,7 @@ fn activation_request_defaults_to_deployment_release_tags() {
         json!({
             "target": {
                 "kind": "release_tags",
-                "value": ["apps-1-bot-abc1234", "apps-1-bot2-abc1234"]
+                "value": ["apps-1-r00a1b2c3d4-bot-abc1234", "apps-1-r00a1b2c3d4-bot2-abc1234"]
             },
             "apps": ["bot", "bot2"]
         })
@@ -376,7 +376,7 @@ fn activation_request_defaults_to_deployment_release_tags() {
     assert_eq!(
         serde_json::to_value(&request).unwrap(),
         json!({
-            "target": { "kind": "release_tags", "value": ["apps-1-bot-abc1234"] },
+            "target": { "kind": "release_tags", "value": ["apps-1-r00a1b2c3d4-bot-abc1234"] },
             "apps": ["bot"],
             "target_tags": ["staging"]
         })
