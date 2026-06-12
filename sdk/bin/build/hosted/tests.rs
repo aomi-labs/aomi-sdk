@@ -191,8 +191,14 @@ fn sample_state() -> LocalDeployment {
 fn release_tag_and_app_names_from_state() {
     let state = sample_state();
     assert_eq!(state.app_names(), vec!["bot", "bot2"]);
-    assert_eq!(state.release_tag_for("bot"), Some("apps-1-r00a1b2c3d4-bot-abc1234"));
-    assert_eq!(state.release_tag_for("bot2"), Some("apps-1-r00a1b2c3d4-bot2-abc1234"));
+    assert_eq!(
+        state.release_tag_for("bot"),
+        Some("apps-1-r00a1b2c3d4-bot-abc1234")
+    );
+    assert_eq!(
+        state.release_tag_for("bot2"),
+        Some("apps-1-r00a1b2c3d4-bot2-abc1234")
+    );
     assert_eq!(state.release_tag_for("nope"), None);
 }
 
@@ -306,7 +312,10 @@ fn release_tag_activation_promotions_mark_ci_and_sync_last_activation() {
     let last = state.last_activation.as_ref().expect("last activation");
     assert_eq!(last.target.kind, "release_tags");
     assert_eq!(last.target.promoted.len(), 2);
-    assert_eq!(last.target.promoted[0].release_tag, "apps-1-r00a1b2c3d4-bot-abc1234");
+    assert_eq!(
+        last.target.promoted[0].release_tag,
+        "apps-1-r00a1b2c3d4-bot-abc1234"
+    );
     assert_eq!(
         last.target.promoted[0].live_commit_hash.as_deref(),
         Some("fed7654")
