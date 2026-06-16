@@ -439,8 +439,6 @@ mod tests {
     /// dispatch:
     ///   - wrong `bind_as` / `awaits` alias (sign result wouldn't
     ///     land in `submit_swap`'s `signed_tx`)
-    ///   - wrong `artifact_field` on the continuation pointer
-    ///     (runtime wouldn't know where to splice the signature)
     ///   - wrong tool name in `next.add` (host marker references the
     ///     wrong wallet verb)
     ///   - missing `confirmation` / `unsigned_tx` / `router_type`
@@ -516,20 +514,10 @@ mod tests {
             "the venue-supplied tx blob is what gets signed"
         );
         assert_eq!(sign_args["description"], json!(description));
-        let continuation = &sign_args["continuation"];
-        assert_eq!(
-            continuation["tool"],
-            json!(SubmitSwap::NAME),
-            "continuation must point at the matched submit tool"
-        );
-        assert_eq!(
-            continuation["artifact_field"],
-            json!("signed_tx"),
-            "runtime splices the signed bytes into submit_swap.signed_tx"
-        );
-        assert_eq!(
-            continuation["args"], submit_template,
-            "continuation args carry the submit template with signed_tx=null until splice"
+        assert!(
+            sign_args.get("continuation").is_none(),
+            "sign step carries no embedded continuation — the submit step is wired \
+             entirely via `.after()` / on_bound_event (see Node 2 below)"
         );
 
         // Node 2 — submit_swap. Triggered by the bound `signed_tx`
