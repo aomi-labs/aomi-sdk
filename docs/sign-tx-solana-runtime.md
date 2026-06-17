@@ -2,9 +2,17 @@
 
 The SDK marker for this host primitive lives in [sdk/src/builder.rs](../sdk/src/builder.rs) (look for `host_target!(SvmSignTx, "svm_sign_tx")`). The host runtime now exposes the same verb; this doc records the app-facing contract.
 
+2026-05-29 verification note: `product-mono` currently has a separate
+agent-facing `svm-core` namespace (`svm_stage_ix` → `svm_simulate_tx` →
+`svm_commit_tx`, plus `svm_commit_message`). It does not implement a
+`sign_tx_solana` tool. This doc remains specifically about supporting
+existing app route plans, especially `apps/byreal`, that emit the SDK
+`host::SignTxSolana` marker and expect signed serialized transaction bytes
+to be routed into a submit tool.
+
 ## Why this primitive exists
 
-All existing host signing primitives (`commit_tx`, `evm_commit_message`) are EVM-only. The byreal app ([apps/byreal](../apps/byreal)) — and any future Solana app — needs an equivalent for SVM. We chose a **sign-only, singular** primitive that mirrors `evm_commit_message`'s shape: app builds an unsigned tx, host wallet signs, app submits. No batching, no host-side broadcast — those are caller concerns.
+Existing route-oriented host signing primitives (`commit_tx`, `evm_commit_message`) are EVM-only. The byreal app ([apps/byreal](../apps/byreal)) - and any future Solana app - needs an equivalent for SVM. We chose a **sign-only, singular** primitive that mirrors `evm_commit_message`'s shape: app builds an unsigned tx, host wallet signs, app submits. No batching, no host-side broadcast - those are caller concerns.
 
 ## Tool contract
 
