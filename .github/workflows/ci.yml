@@ -2,7 +2,7 @@ name: CI
 
 on:
   pull_request:
-    branches: [main, publish]
+    branches: [publish]
   push:
     branches: [main, publish]
 
@@ -87,11 +87,11 @@ jobs:
           done
           exit $failed
 
-      - name: Build CLI binaries (aomi-git, aomi-build)
-        run: cargo build -p aomi-sdk --features cli --bins
+      - name: Build aomi-build CLI
+        run: cargo build -p aomi-sdk --features cli --bin aomi-build
 
-      - name: Test CLI binaries
-        run: cargo test -p aomi-sdk --features cli --bins
+      - name: Test aomi-build CLI
+        run: cargo test -p aomi-sdk --features cli --bin aomi-build
 
       - name: Build local runtime binary (aomi-run)
         run: cargo build -p aomi-sdk --features dev-runtime --bin aomi-run

@@ -21,8 +21,7 @@ This repository contains public dynamic app crates, the public SDK they build ag
 
 - `apps/*`: official app crates that compile to dynamic plugins
 - `sdk`: the public plugin SDK used by those apps
-- `sdk/bin/build`: the **`aomi-build`** CLI — scaffold apps from OpenAPI specs, compile and validate plugins (formerly the `xtask` crate). See [`docs/aomi-build.md`](./docs/aomi-build.md)
-- `sdk/bin/git`: the **`aomi-git`** CLI — `deploy` and `activate` for shipping apps to a platform hosting repo (community-apps, krexa-hosted-apps, etc.). See [`docs/aomi-git.md`](./docs/aomi-git.md)
+- `sdk/bin/build`: the **`aomi-build`** CLI — scaffold apps from OpenAPI specs, compile and validate plugins, and deploy/activate hosted apps. See [`docs/aomi-build.md`](./docs/aomi-build.md)
 - `sdk/examples/app-template-http`: reference app showing the recommended file layout for a new plugin
 - `docs/host-interop.md`: the public host capability contract used by execution-oriented apps
 - `docs/repo-structure.md`: how to structure a new app crate in this repo
@@ -38,11 +37,15 @@ you start authoring.
 | A **Krexa platform partner** | [`aomi-labs/krexa-hosted-apps`](https://github.com/aomi-labs/krexa-hosted-apps) (invite-only) | [krexa-hosted-apps/CONTRIBUTING.md](https://github.com/aomi-labs/krexa-hosted-apps/blob/publish/CONTRIBUTING.md) |
 | **Maintaining an official Aomi app** | this repo's `apps/` | [`docs/repo-structure.md`](./docs/repo-structure.md) + "Publication Pipeline" below |
 
-The first two paths use **`aomi-git deploy`** to stage your source into the
-target platform repo. You don't open a PR against this SDK repo — you
-author your app in your own source repo and let `aomi-git` push it through
-the platform's CI. The third path is for Aomi-team-maintained official apps
-that ship from this repo as part of the `apps-v0.x.y` SDK releases.
+The first two paths use **`aomi-build deploy`** from your source repo. The CLI
+sends the connected `app_source_id`, source ref, and `aomi.toml` paths to the
+platform backend; the backend uses the GitHub App install to open or update the
+platform PR and returns `.aomi/deployment.json` for follow-up `status` and
+`activate` commands. You do not open a PR against this SDK repo for hosted
+community or partner apps.
+
+The third path is for Aomi-team-maintained official apps that ship from this
+repo as part of the `apps-v0.x.y` SDK releases.
 
 If you're new and unsure which is yours: it's probably the **community
 contributor** row.
@@ -123,20 +126,46 @@ aomi-build compile --target aarch64-apple-darwin
 (Without installing, you can also run it ad-hoc:
 `cargo run -p aomi-sdk --features cli --bin aomi-build -- compile`.)
 
+## Deploy Hosted Apps
+
+Community and partner source repos deploy through the same `aomi-build` binary:
+
+```bash
+aomi-build deploy \
+  --platform community \
+  --app-source-id 123 \
+  --aomi-toml apps/foo/aomi.toml \
+  --backend https://staging-api.aomi.dev
+
+aomi-build status --backend https://staging-api.aomi.dev
+
+aomi-build activate foo \
+  --target-tag staging \
+  --backend https://staging-api.aomi.dev
+```
+
+`deploy` writes `.aomi/deployment.json` in the source repo. `status` reads that
+file and checks backend load state. `activate` sends a `release_tags` target,
+using the recorded release tags unless you pass `--release-tag`.
+
+The CLI is only the relay. It does not push platform branches or hold a GitHub
+token; the backend writes platform repo changes through the connected GitHub App
+install. See [`docs/aomi-build.md`](./docs/aomi-build.md#hosted-deployment).
+
 ## Publication Pipeline (official apps)
 
 > This section describes how **official Aomi apps** (the ones in `apps/` of
 > this repo) get to the runtime. Community apps and Krexa apps follow a
-> different path via `aomi-git deploy` against their own platform repos —
+> different path via `aomi-build deploy` against their own platform repos —
 > see "Where do new apps go?" above.
 
 Official apps are developed via PR, built by CI, and delivered to the runtime as pre-built dynamic plugins.
 
 ### Workflow
 
-1. Developer creates/modifies an app and opens a PR to `main`
+1. Developer creates/modifies an app and opens a PR to `publish`
 2. CI runs tests, clippy, and builds all plugins to validate
-3. PR is merged to `main`, then merged forward to `publish`
+3. PR is merged to `publish`
 4. Push to `publish` triggers the release workflow which auto-tags, cross-compiles, and publishes a GitHub Release
 5. The product-mono backend polls for new releases, downloads the tarball, and hot-reloads changed plugins
 
@@ -146,7 +175,7 @@ Official apps are developed via PR, built by CI, and delivered to the runtime as
 graph LR
     subgraph "aomi-sdk repo"
         DEV[Developer]
-        PR[PR to main]
+        PR[PR to publish]
         CI_CHECK[CI: test + build]
         PUBLISH[publish branch]
         RESOLVE[Resolve version<br/>+ auto-tag]
@@ -296,7 +325,7 @@ Run `aomi-build init <name>` (bare skeleton) or `aomi-build new-app <platform>` 
 This repo publishes GitHub Releases with pre-built plugin tarballs per target (Linux x86_64, macOS ARM64). The backend polls for new releases every 5 minutes, downloads and verifies the tarball, then atomically swaps new plugin binaries in via `dlopen`. Active sessions keep their old plugin `Arc`; new sessions get the new one. No restart required.
 
 **Do I need to deploy infrastructure to get my plugin running?**
-No. Once your PR merges to `publish`, CI builds and publishes the plugin tarball. The Aomi runtime picks it up on the next poll.
+No for official apps in this SDK repo: once your PR merges to `publish`, CI builds and publishes the plugin tarball, and the runtime picks it up on the next poll. Hosted community and partner apps use `aomi-build deploy`, then `aomi-build activate` after release tags are recorded in `.aomi/deployment.json`.
 
 **Can I test a plugin locally before opening a PR?**
 Yes. Build with `aomi-build compile --app <name>`, run unit tests using the `aomi_sdk::testing` helpers (`TestCtxBuilder`, `run_tool`, `run_async_tool`), and point a local product-mono instance at your working copy with `LOCAL_AOMI_SDK=/path/to/aomi-sdk`.

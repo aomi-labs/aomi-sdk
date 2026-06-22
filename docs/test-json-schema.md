@@ -17,7 +17,9 @@ consumed by the harness at `aomi/crates/runtime/tests/local-app-e2e.rs`.
 }
 ```
 
-The harness only reads the fields documented below. **Any field not listed here is silently ignored** — don't introduce new ones.
+The harness only reads the fields documented below. It uses strict serde
+deserialization, so **unknown fields fail spec loading**. Don't introduce new
+ones without updating `product-mono/aomi/crates/runtime/tests/app_e2e/spec.rs`.
 
 ## `user_story` (required)
 
@@ -70,8 +72,10 @@ Run after all turns complete. Sub-blocks below are optional.
 ```jsonc
 {
   "min_count": 1,                              // at least N txs queued
+  "max_count": 2,                              // at most N txs queued
   "expect_any": [
     {
+      "kind": "swap",                          // exact match (optional)
       "chain_id": 1,                           // exact match (optional)
       "data_starts_with": "0x",                // calldata prefix (optional)
       "data_min_len": 10                       // calldata length sanity (optional)
@@ -80,7 +84,10 @@ Run after all turns complete. Sub-blocks below are optional.
 }
 ```
 
-A tx matches an `expect_any` entry if it satisfies every field specified in that entry. `min_count` runs first; `expect_any` matches against the resulting set.
+A tx matches an `expect_any` entry if it satisfies every field specified in that
+entry. Supported predicate fields are `kind`, `chain_id`, `data_starts_with`,
+and `data_min_len`. `min_count` / `max_count` run before `expect_any` matches
+against the resulting set.
 
 ### `final_assertion.user_state.pending_eip712s`
 
@@ -96,17 +103,22 @@ Use `max_count: 0` to assert no signatures were prompted (catches stray sig flow
 
 ```json
 {
+  "tool_responses": {
+    "any_returned_substring": "USDC"
+  },
   "no_errors": true,
   "max_turns": 6
 }
 ```
 
+- `tool_responses.any_returned_substring` — passes when at least one
+  `tool_result` body contains the substring.
 - `no_errors` — fails the test if any tool returned `Err(...)`. Set `false` to disable the check (rare; only for tests where errors are part of the scenario).
 - `max_turns` — upper bound on session length. Catches runaway LLM loops. Set to `len(turns) * 1.5` rounded up, with a minimum of 6 to allow re-asks.
 
 ## Anti-patterns
 
-- **Don't add fields the harness doesn't read.** No `tool_responses`, `topics_emitted`, `max_cost_usd`, `name`, `expect_all`, `max_count` on `pending_txs`, `kind`/`to`/`value_non_zero` on `expect_any` — none are wired. The harness silently ignores them.
+- **Don't add fields the harness doesn't read.** No `topics_emitted`, `max_cost_usd`, `name`, `expect_all`, `to`, `value_non_zero`, etc. Unknown fields fail spec parsing.
 - **Don't wrap in a `stories[]` array.** Single test per file.
 - **Don't assert on volatile values** in `expect_any`: prices, gas, exact `to:` (router upgrades), exact `value:`, exact `data:`.
 - **Don't set `no_errors: false`** unless the test scenario specifically needs to tolerate errors (very rare).
