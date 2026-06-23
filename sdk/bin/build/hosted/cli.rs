@@ -36,18 +36,23 @@ use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
 use anyhow::{Context, Result, anyhow, bail};
-use clap::Args;
+use clap::{Args, Subcommand};
 
 use super::app::AomiAppFiles;
 use super::backend::BackendClient;
 use super::discord;
 use super::platform::{Platform, normalize_github_repo};
 use super::status::StatusResult;
-use super::types::{ActivateInput, DeployInput, LocalDeployment, ReleaseTags, SourceRef};
+use super::types::{
+    ActivateInput, CreateTemplateInput, DeployInput, LocalDeployment, MintTokenInput, ReleaseTags,
+    SourceRef, SyncSourceInput,
+};
 
 pub(crate) const ACTIVATION_TOKEN_ENV: &str = "AOMI_APP_ACTIVATION_TOKEN";
 pub(crate) const BACKEND_URL_ENV: &str = "AOMI_BACKEND_URL";
 pub(crate) const APP_SOURCE_ID_ENV: &str = "AOMI_APP_SOURCE_ID";
+pub(crate) const ADMIN_KEY_ENV: &str = "AOMI_ADMIN_KEY";
+pub(crate) const ADMIN_KID_ENV: &str = "AOMI_ADMIN_KID";
 
 fn env_value(key: &str) -> Option<String> {
     std::env::var(key)
@@ -149,7 +154,7 @@ impl DeployArgs {
             .deploy(&platform, &request)
             .await?;
 
-        let state = LocalDeployment::from_deploy(response);
+        let state = LocalDeployment::from_deploy(response, app_source_id);
         let path = state.write(&git_root)?;
 
         if self.json {
@@ -265,16 +270,32 @@ impl DeployArgs {
     }
 
     fn resolve_app_source_id(&self) -> Result<i64> {
-        self.app_source_id
-            .or_else(|| env_value(APP_SOURCE_ID_ENV).and_then(|v| v.parse::<i64>().ok()))
+        // Resolution order: flag → env → the id recorded by a prior deploy /
+        // `source sync` in `.aomi/deployment.json`. The last step is what lets a
+        // re-deploy run with no `--app-source-id` once the source is known.
+        if let Some(id) = self.app_source_id.filter(|id| *id > 0) {
+            return Ok(id);
+        }
+        if let Some(id) = env_value(APP_SOURCE_ID_ENV)
+            .and_then(|v| v.parse::<i64>().ok())
             .filter(|id| *id > 0)
-            .ok_or_else(|| {
-                anyhow!(
-                    "deploy needs --app-source-id (or {APP_SOURCE_ID_ENV}): the connected GitHub \
-                     App install to deploy from. Install the Aomi GitHub App on your source repo, \
-                     then use the app_source id ops/the portal issued you."
-                )
-            })
+        {
+            return Ok(id);
+        }
+        if let Some(id) = LocalDeployment::read(&self.path)
+            .ok()
+            .flatten()
+            .and_then(|state| state.app_source_id())
+            .filter(|id| *id > 0)
+        {
+            return Ok(id);
+        }
+        Err(anyhow!(
+            "deploy needs --app-source-id (or {APP_SOURCE_ID_ENV}): the connected GitHub \
+             App install to deploy from. Install the Aomi GitHub App on your source repo, \
+             then run `aomi-build source sync --repo <owner/repo>` (or use the app_source id \
+             ops/the portal issued you)."
+        ))
     }
 }
 
@@ -697,6 +718,442 @@ impl RequestArgs {
             "Join the Aomi apps Discord if needed: {}",
             discord::DISCORD_INVITE
         );
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Bootstrap: token / source / scaffold / apps
+//
+// These wrap the platform-token + source-resolution endpoints that precede
+// deploy. `token mint` signs a privileged admin AomiBearer locally (from
+// `AOMI_ADMIN_KEY`); everything else runs on the activation token that mint
+// produces.
+// ---------------------------------------------------------------------------
+
+/// `--backend`/env + activation token resolution shared by the activation-token
+/// bootstrap commands (source/apps/token list+revoke).
+fn resolve_activation(backend: &Option<String>, token: &Option<String>) -> Result<(String, String)> {
+    let url = resolve_backend(backend)
+        .ok_or_else(|| anyhow!("needs a backend URL — set --backend or {BACKEND_URL_ENV}"))?;
+    let tok = token
+        .clone()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .or_else(|| env_value(ACTIVATION_TOKEN_ENV))
+        .ok_or_else(|| {
+            anyhow!("needs an activation token via --activation-token or {ACTIVATION_TOKEN_ENV}")
+        })?;
+    Ok((url, tok))
+}
+
+/// Record a resolved `app_source_id` into an existing `.aomi/deployment.json`
+/// (if one exists) so the next deploy auto-resolves it. Returns the written
+/// path, or `None` when there's no deployment record yet.
+fn persist_app_source_id(path: &Path, app_source_id: i64) -> Option<PathBuf> {
+    let mut state = LocalDeployment::read(path).ok().flatten()?;
+    state.set_app_source_id(app_source_id);
+    state.write(path).ok()
+}
+
+// ── token ───────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Args, Clone)]
+pub struct TokenArgs {
+    #[command(subcommand)]
+    pub cmd: TokenCmd,
+}
+
+#[derive(Debug, Subcommand, Clone)]
+pub enum TokenCmd {
+    /// Mint a platform/app activation token (signs an admin bearer from AOMI_ADMIN_KEY).
+    Mint(TokenMintArgs),
+    /// List a platform's activation tokens.
+    List(TokenListArgs),
+    /// Revoke a token by id.
+    Revoke(TokenRevokeArgs),
+}
+
+impl TokenArgs {
+    pub async fn run(self) -> Result<()> {
+        match self.cmd {
+            TokenCmd::Mint(a) => a.run().await,
+            TokenCmd::List(a) => a.run().await,
+            TokenCmd::Revoke(a) => a.run().await,
+        }
+    }
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct TokenMintArgs {
+    /// Platform tag the token is scoped to.
+    #[arg(long, value_name = "NAME")]
+    pub platform: Platform,
+
+    /// Token scope: `platform` or `app`.
+    #[arg(long, default_value = "platform")]
+    pub scope: String,
+
+    /// App id — required when `--scope app`.
+    #[arg(long = "app-id", value_name = "ID")]
+    pub app_id: Option<i64>,
+
+    /// Backend base URL (default: `AOMI_BACKEND_URL`).
+    #[arg(long, value_name = "URL")]
+    pub backend: Option<String>,
+
+    /// File holding the admin Ed25519 private key PEM. Falls back to
+    /// `AOMI_ADMIN_KEY` (the PEM text itself, or a path to it).
+    #[arg(long = "admin-key-file", value_name = "PATH")]
+    pub admin_key_file: Option<PathBuf>,
+
+    /// Admin issuer key id (e.g. `aomi-admin-staging-1`). Falls back to
+    /// `AOMI_ADMIN_KID`.
+    #[arg(long = "admin-kid", value_name = "KID")]
+    pub admin_kid: Option<String>,
+
+    /// Admin issuer name (the trusted `iss` on the backend).
+    #[arg(long = "admin-iss", default_value = "aomi-admin")]
+    pub admin_iss: String,
+
+    /// Audience the backend accepts.
+    #[arg(long = "admin-aud", default_value = "aomi-backend")]
+    pub admin_aud: String,
+
+    /// Subject recorded in the bearer.
+    #[arg(long = "admin-sub", default_value = "aomi-build-cli")]
+    pub admin_sub: String,
+
+    /// Bearer lifetime, seconds.
+    #[arg(long = "admin-ttl", value_name = "SECS", default_value_t = 900)]
+    pub admin_ttl: i64,
+
+    /// Print machine-readable JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+impl TokenMintArgs {
+    pub async fn run(self) -> Result<()> {
+        // Fail fast: minting needs the privileged signing key. Resolve it (and
+        // the kid) before any network call so a missing credential is an
+        // immediate, clear error rather than a 401 round-trip.
+        let key = resolve_admin_key(&self.admin_key_file)?;
+        let kid = self
+            .admin_kid
+            .clone()
+            .or_else(|| env_value(ADMIN_KID_ENV))
+            .ok_or_else(|| {
+                anyhow!(
+                    "`token mint` requires the admin issuer key id — set --admin-kid or \
+                     {ADMIN_KID_ENV} (e.g. aomi-admin-staging-1)."
+                )
+            })?;
+
+        let scope = self.scope.trim().to_string();
+        if scope == "app" && self.app_id.is_none() {
+            bail!("--scope app requires --app-id");
+        }
+        if scope != "app" && scope != "platform" {
+            bail!("--scope must be `platform` or `app` (got `{scope}`)");
+        }
+
+        let backend_url = resolve_backend(&self.backend).ok_or_else(|| {
+            anyhow!("token mint needs a backend URL — set --backend or {BACKEND_URL_ENV}")
+        })?;
+
+        let now = chrono::Utc::now().timestamp();
+        let bearer = super::auth::AdminBearer {
+            private_key_pem: &key,
+            kid: &kid,
+            iss: &self.admin_iss,
+            aud: &self.admin_aud,
+            sub: &self.admin_sub,
+            ttl_secs: self.admin_ttl,
+        }
+        .sign(now)?;
+
+        let request = MintTokenInput {
+            scope: scope.clone(),
+            app_id: self.app_id,
+        };
+        let result = BackendClient::new(backend_url, bearer)?
+            .mint_token(&self.platform, &request)
+            .await?;
+
+        if self.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "id": result.id,
+                    "token": result.token,
+                    "scope": result.scope,
+                }))?
+            );
+        } else {
+            println!(
+                "Minted `{}` token id {} for platform `{}`",
+                result.scope, result.id, self.platform
+            );
+            println!("  token: {}", result.token);
+            println!(
+                "  store this now — the backend keeps only the hash, the plaintext is shown once."
+            );
+            println!();
+            println!("Use it for deploy/activate:");
+            println!("  export {ACTIVATION_TOKEN_ENV}={}", result.token);
+        }
+        Ok(())
+    }
+}
+
+/// Resolve the admin signing key: `--admin-key-file`, else `AOMI_ADMIN_KEY`
+/// (PEM text, or a path to a PEM file). This is the privileged, out-of-band
+/// signing key — not an activation token.
+fn resolve_admin_key(file: &Option<PathBuf>) -> Result<Vec<u8>> {
+    if let Some(path) = file {
+        return std::fs::read(path)
+            .with_context(|| format!("failed to read admin key file {}", path.display()));
+    }
+    let raw = env_value(ADMIN_KEY_ENV).ok_or_else(|| {
+        anyhow!(
+            "`token mint` requires a privileged admin signing key. Set {ADMIN_KEY_ENV} \
+             (a PKCS#8 Ed25519 private key PEM) or pass --admin-key-file. This is an \
+             out-of-band admin/service signing key, not an activation token."
+        )
+    })?;
+    if raw.contains("BEGIN") {
+        Ok(raw.into_bytes())
+    } else {
+        std::fs::read(&raw).with_context(|| {
+            format!("{ADMIN_KEY_ENV} is neither a PEM nor a readable file path: {raw}")
+        })
+    }
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct TokenListArgs {
+    #[arg(long, value_name = "NAME")]
+    pub platform: Platform,
+    #[arg(long, value_name = "URL")]
+    pub backend: Option<String>,
+    #[arg(long, value_name = "TOKEN")]
+    pub activation_token: Option<String>,
+}
+
+impl TokenListArgs {
+    pub async fn run(self) -> Result<()> {
+        let (url, token) = resolve_activation(&self.backend, &self.activation_token)?;
+        let value = BackendClient::new(url, token)?
+            .list_tokens(&self.platform)
+            .await?;
+        println!("{}", serde_json::to_string_pretty(&value)?);
+        Ok(())
+    }
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct TokenRevokeArgs {
+    /// Token id to revoke.
+    #[arg(value_name = "ID")]
+    pub id: i64,
+    #[arg(long, value_name = "NAME")]
+    pub platform: Platform,
+    #[arg(long, value_name = "URL")]
+    pub backend: Option<String>,
+    #[arg(long, value_name = "TOKEN")]
+    pub activation_token: Option<String>,
+}
+
+impl TokenRevokeArgs {
+    pub async fn run(self) -> Result<()> {
+        let (url, token) = resolve_activation(&self.backend, &self.activation_token)?;
+        BackendClient::new(url, token)?
+            .revoke_token(&self.platform, self.id)
+            .await?;
+        println!("Revoked token id {} on platform `{}`", self.id, self.platform);
+        Ok(())
+    }
+}
+
+// ── source ───────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Args, Clone)]
+pub struct SourceArgs {
+    #[command(subcommand)]
+    pub cmd: SourceCmd,
+}
+
+#[derive(Debug, Subcommand, Clone)]
+pub enum SourceCmd {
+    /// Resolve-or-bind an installed source repo and print its `app_source_id`.
+    Sync(SourceSyncArgs),
+}
+
+impl SourceArgs {
+    pub async fn run(self) -> Result<()> {
+        match self.cmd {
+            SourceCmd::Sync(a) => a.run().await,
+        }
+    }
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct SourceSyncArgs {
+    /// Source repo, `owner/name`.
+    #[arg(long, value_name = "OWNER/REPO")]
+    pub repo: String,
+    #[arg(long, value_name = "NAME")]
+    pub platform: Platform,
+    #[arg(long, value_name = "URL")]
+    pub backend: Option<String>,
+    #[arg(long, value_name = "TOKEN")]
+    pub activation_token: Option<String>,
+    /// Source repo path for `.aomi/deployment.json` persistence.
+    #[arg(long, default_value = ".")]
+    pub path: PathBuf,
+    #[arg(long)]
+    pub json: bool,
+}
+
+impl SourceSyncArgs {
+    pub async fn run(self) -> Result<()> {
+        let repo = normalize_github_repo(&self.repo)?;
+        let (url, token) = resolve_activation(&self.backend, &self.activation_token)?;
+        let result = BackendClient::new(url, token)?
+            .sync_installed(&self.platform, &SyncSourceInput { repo: repo.clone() })
+            .await?;
+        report_source(&result, &self.path, self.json, "synced")
+    }
+}
+
+/// Shared output + persistence for `source sync` / `scaffold` — both return a
+/// resolved `app_source` whose id deploy needs.
+fn report_source(
+    result: &super::types::SourceResult,
+    path: &Path,
+    json: bool,
+    verb: &str,
+) -> Result<()> {
+    let id = result.source.id;
+    let persisted = persist_app_source_id(path, id);
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "app_source_id": id,
+                "repository_link": result.source.repository_link,
+                "installation_id": result.source.installation_id,
+                "bound_platform_id": result.source.bound_platform_id,
+                "persisted": persisted.is_some(),
+            }))?
+        );
+    } else {
+        println!(
+            "{verb} source `{}` (installation {})",
+            result.source.repository_link, result.source.installation_id
+        );
+        println!("  app_source_id: {id}");
+        match persisted {
+            Some(p) => println!("  recorded in {} — deploy will auto-resolve it", p.display()),
+            None => {
+                println!("  no .aomi/deployment.json yet; pass it to the first deploy:");
+                println!("    aomi-build deploy --app-source-id {id}   (or export {APP_SOURCE_ID_ENV}={id})");
+            }
+        }
+    }
+    Ok(())
+}
+
+// ── scaffold ─────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Args, Clone)]
+pub struct ScaffoldArgs {
+    /// Name of the new repo to create in the connected account.
+    #[arg(long = "repo-name", value_name = "NAME")]
+    pub repo_name: String,
+
+    /// The one-shot GitHub App installation to create the repo under.
+    #[arg(long = "installation-id", value_name = "ID")]
+    pub installation_id: i64,
+
+    #[arg(long, value_name = "NAME")]
+    pub platform: Platform,
+
+    /// Template repo to fork from.
+    #[arg(long, default_value = "aomi-labs/playground-example")]
+    pub template: String,
+
+    /// Create the new repo as private.
+    #[arg(long)]
+    pub private: bool,
+
+    #[arg(long, value_name = "URL")]
+    pub backend: Option<String>,
+    #[arg(long, value_name = "TOKEN")]
+    pub activation_token: Option<String>,
+    /// Source repo path for `.aomi/deployment.json` persistence.
+    #[arg(long, default_value = ".")]
+    pub path: PathBuf,
+    #[arg(long)]
+    pub json: bool,
+}
+
+impl ScaffoldArgs {
+    pub async fn run(self) -> Result<()> {
+        let (url, token) = resolve_activation(&self.backend, &self.activation_token)?;
+        let request = CreateTemplateInput {
+            installation_id: self.installation_id,
+            template_repo: self.template.clone(),
+            repo_name: self.repo_name.clone(),
+            private: self.private,
+        };
+        let result = BackendClient::new(url, token)?
+            .create_from_template(&self.platform, &request)
+            .await?;
+        report_source(&result, &self.path, self.json, "created")
+    }
+}
+
+// ── apps ──────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Args, Clone)]
+pub struct AppsArgs {
+    #[command(subcommand)]
+    pub cmd: AppsCmd,
+}
+
+#[derive(Debug, Subcommand, Clone)]
+pub enum AppsCmd {
+    /// List a platform's apps.
+    List(AppsListArgs),
+}
+
+impl AppsArgs {
+    pub async fn run(self) -> Result<()> {
+        match self.cmd {
+            AppsCmd::List(a) => a.run().await,
+        }
+    }
+}
+
+#[derive(Debug, Args, Clone)]
+pub struct AppsListArgs {
+    #[arg(long, value_name = "NAME")]
+    pub platform: Platform,
+    #[arg(long, value_name = "URL")]
+    pub backend: Option<String>,
+    #[arg(long, value_name = "TOKEN")]
+    pub activation_token: Option<String>,
+}
+
+impl AppsListArgs {
+    pub async fn run(self) -> Result<()> {
+        let (url, token) = resolve_activation(&self.backend, &self.activation_token)?;
+        let value = BackendClient::new(url, token)?
+            .list_apps(&self.platform)
+            .await?;
+        println!("{}", serde_json::to_string_pretty(&value)?);
         Ok(())
     }
 }

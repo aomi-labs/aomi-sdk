@@ -89,6 +89,11 @@ pub struct Source {
     pub source_ref: SourceRef,
     pub commit_hash: String,
     pub aomi_toml_paths: Vec<String>,
+    /// The connected GitHub App install (`app_source`) this deploy ran from.
+    /// Absent from the backend deploy response; the CLI records the id it sent
+    /// so re-deploys and `activate` can auto-resolve it instead of re-asking.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_source_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -228,6 +233,73 @@ pub struct ActivatedApp {
     pub error: Option<String>,
 }
 
+// ── Bootstrap: tokens, sources, scaffold ────────────────────────────────────
+//
+// The platform-token + source-resolution surface that precedes deploy. These
+// mirror the backend's `/api/platforms/:platform/*` bodies (token mint, source
+// sync/resolve) and `/api/integrations/github-app/.../create-from-template`.
+
+/// Body of `POST /api/platforms/:platform/tokens`.
+#[derive(Debug, Clone, Serialize)]
+pub struct MintTokenInput {
+    /// `platform` | `app`.
+    pub scope: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_id: Option<i64>,
+}
+
+/// Response of a token mint — the plaintext `token` is returned exactly once.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MintTokenResult {
+    pub id: i64,
+    pub token: String,
+    pub scope: String,
+}
+
+/// Body of `POST /api/platforms/:platform/sources/sync-installed`.
+#[derive(Debug, Clone, Serialize)]
+pub struct SyncSourceInput {
+    pub repo: String,
+}
+
+/// Body of `POST /api/integrations/github-app/platforms/:platform/sources/create-from-template`.
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateTemplateInput {
+    pub installation_id: i64,
+    pub template_repo: String,
+    pub repo_name: String,
+    #[serde(skip_serializing_if = "is_false")]
+    pub private: bool,
+}
+
+/// A connected GitHub App source row — the `source` payload returned by
+/// sync-installed / resolve / create-from-template. Its `id` is the
+/// `app_source_id` deploy needs. Fields mirror the backend response; not all
+/// are consumed by the CLI today.
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+pub struct AppSource {
+    pub id: i64,
+    pub installation_id: i64,
+    pub repository_id: i64,
+    pub repository_link: String,
+    #[serde(default)]
+    pub github_account: Option<String>,
+    #[serde(default)]
+    pub github_user_id: Option<i64>,
+    #[serde(default)]
+    pub bound_platform_id: Option<i64>,
+}
+
+/// Envelope around a single source row (`{ ok, source }`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct SourceResult {
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub ok: bool,
+    pub source: AppSource,
+}
+
 // ── Local state (.aomi/deployment.json) ─────────────────────────────────────
 
 /// Local `.aomi/deployment.json`: the backend's [`DeployPayload`] (flattened — the
@@ -251,9 +323,12 @@ pub struct LocalDeploymentState {
 
 impl LocalDeployment {
     /// Build local state from a fresh deploy response (deployed=true, nothing
-    /// activated yet).
-    pub fn from_deploy(resp: DeployResult) -> Self {
+    /// activated yet). `app_source_id` is the connected source the CLI deployed
+    /// from; the backend omits it from the response, so we record it here for
+    /// later re-deploys / `activate` to auto-resolve.
+    pub fn from_deploy(resp: DeployResult, app_source_id: i64) -> Self {
         let mut deployment = resp.deployment;
+        deployment.source.app_source_id = Some(app_source_id);
         for app in &mut deployment.platform.apps {
             app.activated = Some(false);
         }
@@ -309,6 +384,17 @@ impl LocalDeployment {
             .iter()
             .map(|a| a.name.clone())
             .collect()
+    }
+
+    /// The connected source id recorded by the last deploy, if any.
+    pub fn app_source_id(&self) -> Option<i64> {
+        self.deployment.source.app_source_id
+    }
+
+    /// Record the connected source id (used by `source sync` / `scaffold` to
+    /// patch an existing deployment record so the next deploy auto-resolves it).
+    pub fn set_app_source_id(&mut self, app_source_id: i64) {
+        self.deployment.source.app_source_id = Some(app_source_id);
     }
 
     /// The recorded release tag for an app from the last deploy.

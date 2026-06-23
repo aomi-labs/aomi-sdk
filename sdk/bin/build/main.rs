@@ -49,6 +49,14 @@ enum Cmd {
     Status(hosted::cli::StatusArgs),
     /// Activate platform releases by release tag.
     Activate(hosted::cli::ActivateArgs),
+    /// Mint, list, or revoke platform/app activation tokens.
+    Token(hosted::cli::TokenArgs),
+    /// Resolve a connected source repo to its `app_source_id`.
+    Source(hosted::cli::SourceArgs),
+    /// Create a source repo from a template and deploy-ready it (one-shot).
+    Scaffold(hosted::cli::ScaffoldArgs),
+    /// List a platform's apps.
+    Apps(hosted::cli::AppsArgs),
     /// Ask platform ops for legacy onboarding details.
     Request(hosted::cli::RequestArgs),
 }
@@ -68,6 +76,10 @@ async fn main() -> Result<()> {
         Cmd::Deploy(args) => args.run().await.map_err(git_error),
         Cmd::Status(args) => args.run().await.map_err(git_error),
         Cmd::Activate(args) => args.run().await.map_err(git_error),
+        Cmd::Token(args) => args.run().await.map_err(git_error),
+        Cmd::Source(args) => args.run().await.map_err(git_error),
+        Cmd::Scaffold(args) => args.run().await.map_err(git_error),
+        Cmd::Apps(args) => args.run().await.map_err(git_error),
         Cmd::Request(args) => args.run().await.map_err(git_error),
     }
 }

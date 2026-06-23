@@ -1,4 +1,5 @@
 pub(crate) mod app;
+pub(crate) mod auth;
 pub(crate) mod backend;
 pub(crate) mod cli;
 pub(crate) mod discord;

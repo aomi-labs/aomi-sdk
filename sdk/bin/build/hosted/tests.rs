@@ -12,7 +12,8 @@ use tempfile::TempDir;
 use super::cli::{ActivateArgs, DeployArgs};
 use super::platform::Platform;
 use super::types::{
-    ActivateInput, ActivateResult, DeployInput, LocalDeployment, ReleaseTags, SourceRef,
+    ActivateInput, ActivateResult, DeployInput, DeployResult, LocalDeployment, ReleaseTags,
+    SourceRef,
 };
 
 // ── deploy: arg parsing ─────────────────────────────────────────────────────
@@ -424,6 +425,59 @@ fn local_deployment_write_then_read_round_trips() {
     // a repo with no .aomi/deployment.json reads as None, not an error
     let empty = TestRepo::new();
     assert!(LocalDeployment::read(empty.root()).unwrap().is_none());
+}
+
+#[test]
+fn deploy_records_app_source_id_and_round_trips() {
+    // The backend deploy response omits app_source_id; the CLI stamps the id it
+    // deployed from so re-deploys / activate can auto-resolve it.
+    let resp: DeployResult = serde_json::from_value(json!({
+        "ok": true,
+        "deployment": {
+            "id": "dep_1",
+            "status": "pr_created",
+            "source": {
+                "installation_id": 1, "repository_id": 2,
+                "repository_link": "https://github.com/a/b.git",
+                "ref": { "kind": "branch", "value": "main" },
+                "commit_hash": "abc1234", "aomi_toml_paths": ["aomi.toml"]
+            },
+            "platform": {
+                "platform": "playground", "repository": "aomi-labs/aomi-playground",
+                "source_branch": "main", "deploy_branch": "main",
+                "apps": [
+                    { "name": "bot", "path": "apps/1/r0/bot", "aomi_toml_path": "aomi.toml", "release_tag": "apps-1-r0-bot-abc1234" }
+                ]
+            }
+        }
+    }))
+    .unwrap();
+
+    let state = LocalDeployment::from_deploy(resp, 219);
+    assert_eq!(state.app_source_id(), Some(219));
+
+    // Persists into .aomi/deployment.json and reads back intact.
+    let repo = TestRepo::new();
+    state.write(repo.root()).unwrap();
+    assert_eq!(
+        LocalDeployment::read(repo.root())
+            .unwrap()
+            .unwrap()
+            .app_source_id(),
+        Some(219)
+    );
+
+    // `source sync` / `scaffold` patch path: set + persist on an existing record.
+    let mut patched = LocalDeployment::read(repo.root()).unwrap().unwrap();
+    patched.set_app_source_id(321);
+    patched.write(repo.root()).unwrap();
+    assert_eq!(
+        LocalDeployment::read(repo.root())
+            .unwrap()
+            .unwrap()
+            .app_source_id(),
+        Some(321)
+    );
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────
