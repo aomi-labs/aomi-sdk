@@ -18,8 +18,9 @@ mod tool;
     about = "Build, deploy, and activate Aomi apps: spec → client → tool → backend"
 )]
 struct Cli {
+    /// No subcommand launches the interactive wizard (connect → deploy → activate).
     #[command(subcommand)]
-    cmd: Cmd,
+    cmd: Option<Cmd>,
 }
 
 #[derive(Subcommand)]
@@ -49,6 +50,8 @@ enum Cmd {
     Status(hosted::cli::StatusArgs),
     /// Activate platform releases by release tag.
     Activate(hosted::cli::ActivateArgs),
+    /// Connect: install the Aomi GitHub App and save your activation token.
+    Connect(hosted::cli::ConnectArgs),
     /// Mint, list, or revoke platform/app activation tokens.
     Token(hosted::cli::TokenArgs),
     /// Resolve a connected source repo to its `app_source_id`.
@@ -64,7 +67,10 @@ enum Cmd {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
-    match cli.cmd {
+    let Some(cmd) = cli.cmd else {
+        return hosted::wizard::run().await.map_err(git_error);
+    };
+    match cmd {
         Cmd::GenSpecs(args) => specs::run(args),
         Cmd::GenClient(args) => client::run(args),
         Cmd::GenTool(args) => tool::run(args),
@@ -76,6 +82,7 @@ async fn main() -> Result<()> {
         Cmd::Deploy(args) => args.run().await.map_err(git_error),
         Cmd::Status(args) => args.run().await.map_err(git_error),
         Cmd::Activate(args) => args.run().await.map_err(git_error),
+        Cmd::Connect(args) => args.run().await.map_err(git_error),
         Cmd::Token(args) => args.run().await.map_err(git_error),
         Cmd::Source(args) => args.run().await.map_err(git_error),
         Cmd::Scaffold(args) => args.run().await.map_err(git_error),

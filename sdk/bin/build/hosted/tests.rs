@@ -43,7 +43,7 @@ fn deploy_parses_repeated_aomi_toml() {
     ])
     .expect("parse");
     match cli.cmd {
-        crate::Cmd::Deploy(args) => {
+        Some(crate::Cmd::Deploy(args)) => {
             assert_eq!(args.aomi_toml.len(), 2);
         }
         _ => panic!("expected deploy"),

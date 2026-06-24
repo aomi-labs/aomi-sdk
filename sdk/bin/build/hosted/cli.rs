@@ -40,6 +40,7 @@ use clap::{Args, Subcommand};
 
 use super::app::AomiAppFiles;
 use super::backend::BackendClient;
+use super::config::AomiConfig;
 use super::discord;
 use super::platform::{Platform, normalize_github_repo};
 use super::status::StatusResult;
@@ -74,12 +75,23 @@ fn bin_name() -> String {
         .unwrap_or_else(|| "aomi-build".to_string())
 }
 
-/// `--backend` flag, else `AOMI_BACKEND_URL`.
+/// `--backend` flag → `AOMI_BACKEND_URL` → saved `connect` config.
 fn resolve_backend(flag: &Option<String>) -> Option<String> {
     flag.clone()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
         .or_else(|| env_value(BACKEND_URL_ENV))
+        .or_else(|| AomiConfig::load().backend_url)
+}
+
+/// `--activation-token` flag → `AOMI_APP_ACTIVATION_TOKEN` → saved `connect`
+/// config. Lets a connected user run deploy/activate with no env wiring.
+fn resolve_activation_token(flag: &Option<String>) -> Option<String> {
+    flag.clone()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .or_else(|| env_value(ACTIVATION_TOKEN_ENV))
+        .or_else(|| AomiConfig::load().activation_token)
 }
 
 // ---------------------------------------------------------------------------
@@ -300,8 +312,12 @@ impl DeployArgs {
 }
 
 fn activation_token() -> Result<String> {
-    env_value(ACTIVATION_TOKEN_ENV)
-        .ok_or_else(|| anyhow!("deploy requires an activation token via {ACTIVATION_TOKEN_ENV}"))
+    resolve_activation_token(&None).ok_or_else(|| {
+        anyhow!(
+            "deploy requires an activation token via {ACTIVATION_TOKEN_ENV} \
+             (or run `aomi-build connect`)"
+        )
+    })
 }
 
 fn git_context(start: impl AsRef<Path>) -> Result<(PathBuf, PathBuf)> {
@@ -463,17 +479,12 @@ impl ActivateArgs {
         let backend_url = resolve_backend(&self.backend).ok_or_else(|| {
             anyhow!("activate needs a backend URL — set --backend or {BACKEND_URL_ENV}")
         })?;
-        let token = self
-            .activation_token
-            .clone()
-            .map(|t| t.trim().to_string())
-            .filter(|t| !t.is_empty())
-            .or_else(|| env_value(ACTIVATION_TOKEN_ENV))
-            .ok_or_else(|| {
-                anyhow!(
-                    "activate requires a token via --activation-token or {ACTIVATION_TOKEN_ENV}"
-                )
-            })?;
+        let token = resolve_activation_token(&self.activation_token).ok_or_else(|| {
+            anyhow!(
+                "activate requires a token via --activation-token or {ACTIVATION_TOKEN_ENV} \
+                 (or run `aomi-build connect`)"
+            )
+        })?;
         let client = BackendClient::new(backend_url, token)?;
 
         // One call activates every requested app; the response carries per-app
@@ -736,14 +747,12 @@ impl RequestArgs {
 fn resolve_activation(backend: &Option<String>, token: &Option<String>) -> Result<(String, String)> {
     let url = resolve_backend(backend)
         .ok_or_else(|| anyhow!("needs a backend URL — set --backend or {BACKEND_URL_ENV}"))?;
-    let tok = token
-        .clone()
-        .map(|t| t.trim().to_string())
-        .filter(|t| !t.is_empty())
-        .or_else(|| env_value(ACTIVATION_TOKEN_ENV))
-        .ok_or_else(|| {
-            anyhow!("needs an activation token via --activation-token or {ACTIVATION_TOKEN_ENV}")
-        })?;
+    let tok = resolve_activation_token(token).ok_or_else(|| {
+        anyhow!(
+            "needs an activation token via --activation-token or {ACTIVATION_TOKEN_ENV} \
+             (or run `aomi-build connect`)"
+        )
+    })?;
     Ok((url, tok))
 }
 
@@ -1154,6 +1163,163 @@ impl AppsListArgs {
             .list_apps(&self.platform)
             .await?;
         println!("{}", serde_json::to_string_pretty(&value)?);
+        Ok(())
+    }
+}
+
+// ── connect ───────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Args, Clone)]
+pub struct ConnectArgs {
+    /// Platform to connect for (scopes the install + token check).
+    #[arg(long, value_name = "NAME")]
+    pub platform: Platform,
+
+    /// Optionally scope the GitHub App install to a single repo.
+    #[arg(long, value_name = "OWNER/REPO")]
+    pub repo: Option<String>,
+
+    /// Connected GitHub App installation id. Prompted if omitted (the value the
+    /// portal redirect shows after you install).
+    #[arg(long = "installation-id", value_name = "ID")]
+    pub installation_id: Option<i64>,
+
+    /// Backend base URL (default: AOMI_BACKEND_URL, then saved config).
+    #[arg(long, value_name = "URL")]
+    pub backend: Option<String>,
+
+    /// Activation token to store (issued by your Aomi admin). Prompted if omitted.
+    #[arg(long, value_name = "TOKEN")]
+    pub activation_token: Option<String>,
+
+    /// Print the install URL without opening a browser.
+    #[arg(long)]
+    pub no_browser: bool,
+
+    /// Skip polling and paste the installation_id manually.
+    #[arg(long)]
+    pub manual: bool,
+
+    /// How long to wait for the browser install before falling back to manual.
+    #[arg(long = "timeout-secs", value_name = "SECS", default_value_t = 300)]
+    pub timeout_secs: u64,
+}
+
+fn prompt_installation_id() -> Result<i64> {
+    inquire::Text::new("After installing, paste your installation_id:")
+        .prompt()
+        .context("connect cancelled")?
+        .trim()
+        .parse()
+        .context("installation_id must be a number")
+}
+
+impl ConnectArgs {
+    pub async fn run(self) -> Result<()> {
+        let backend_url = resolve_backend(&self.backend).ok_or_else(|| {
+            anyhow!("connect needs a backend URL — set --backend or {BACKEND_URL_ENV}")
+        })?;
+        let repo = match &self.repo {
+            Some(r) => Some(normalize_github_repo(r)?),
+            None => None,
+        };
+
+        // 1. GitHub App install URL.
+        let start =
+            super::flow::oauth_install_url(&backend_url, self.platform.as_str(), repo.as_deref())
+                .await?;
+        println!("Connect your source by installing the Aomi GitHub App:");
+        println!("  {}", start.install_url);
+        if self.no_browser {
+            println!("  (open the URL above to install)");
+        } else if let Err(e) = open::that(&start.install_url) {
+            eprintln!("  (couldn't open a browser automatically: {e})");
+            println!("  open the URL above to install.");
+        } else {
+            println!("  (opened in your browser)");
+        }
+        println!();
+
+        // 2. Capture the installation: explicit flag → poll-by-state (wait for
+        //    the browser install) → manual paste fallback.
+        let installation_id: i64 = if let Some(id) = self.installation_id {
+            id
+        } else if !self.manual {
+            match start.state.as_deref() {
+                Some(state) => {
+                    println!(
+                        "Waiting for the install to finish in your browser (up to {}s, Ctrl-C to cancel)…",
+                        self.timeout_secs
+                    );
+                    match super::flow::poll_installation(
+                        &backend_url,
+                        state,
+                        std::time::Duration::from_secs(self.timeout_secs),
+                    )
+                    .await?
+                    {
+                        Some(id) => {
+                            println!("  detected installation_id {id}");
+                            id
+                        }
+                        None => {
+                            println!("  timed out waiting — enter it manually.");
+                            prompt_installation_id()?
+                        }
+                    }
+                }
+                None => prompt_installation_id()?,
+            }
+        } else {
+            prompt_installation_id()?
+        };
+
+        // 3. Activation token (issued by your Aomi admin).
+        let token = match resolve_activation_token(&self.activation_token) {
+            Some(t) => t,
+            None => inquire::Password::new("Paste your activation token (from your Aomi admin):")
+                .without_confirmation()
+                .prompt()
+                .context("connect cancelled")?
+                .trim()
+                .to_string(),
+        };
+        if token.is_empty() {
+            bail!("an activation token is required to connect");
+        }
+        if super::flow::validate_activation_token(&backend_url, &token, self.platform.as_str()).await
+        {
+            println!("  token verified for platform `{}`", self.platform);
+        } else {
+            println!(
+                "  warning: could not verify the token against `{}` — saving anyway",
+                self.platform
+            );
+        }
+
+        // 4. Persist account identity.
+        let path = AomiConfig {
+            backend_url: Some(backend_url),
+            platform: Some(self.platform.to_string()),
+            installation_id: Some(installation_id),
+            activation_token: Some(token),
+        }
+        .save()?;
+
+        println!();
+        println!("Connected. Saved to {}", path.display());
+        println!("  installation_id: {installation_id}");
+        println!();
+        println!("Next:");
+        println!(
+            "  aomi-build scaffold --repo-name <name> --installation-id {installation_id} --platform {}",
+            self.platform
+        );
+        println!("  # or, from an existing source repo:");
+        println!(
+            "  aomi-build source sync --repo <owner/repo> --platform {}",
+            self.platform
+        );
         Ok(())
     }
 }

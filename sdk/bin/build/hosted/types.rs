@@ -291,6 +291,26 @@ pub struct AppSource {
     pub bound_platform_id: Option<i64>,
 }
 
+/// Response of `GET /api/integrations/github-app/oauth/start` — the GitHub App
+/// install URL the user opens to connect. `state` (the poll handle) is embedded
+/// in the URL today; the field is here for when the backend returns it directly.
+#[derive(Debug, Clone, Deserialize)]
+pub struct OAuthStart {
+    pub install_url: String,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub state: Option<String>,
+}
+
+/// Response of `GET /api/integrations/github-app/oauth/result?state=…` — the
+/// poll the CLI runs after the user installs the App in the browser.
+#[derive(Debug, Clone, Deserialize)]
+pub struct OAuthResult {
+    pub status: String,
+    #[serde(default)]
+    pub installation_id: Option<i64>,
+}
+
 /// Envelope around a single source row (`{ ok, source }`).
 #[derive(Debug, Clone, Deserialize)]
 pub struct SourceResult {
