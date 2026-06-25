@@ -2,7 +2,7 @@
 //!
 //! Aligned to the live backend (`/api/platforms`): deploy is
 //! `POST /api/platforms/:platform/deploy` with `{app_source_id, source_ref,
-//! aomi_toml_paths, dry_run?}`; activation is release-tags based,
+//! aomi_toml_paths, preflight?}`; activation is release-tags based,
 //! `POST /api/platforms/:platform/apps/activate` with `{target, apps?,
 //! target_tags?}` returning `{ok, activation:{…, apps[]}}` with a
 //! per-app partial-failure shape. JSON is snake_case to match the backend. Type
@@ -57,9 +57,9 @@ pub struct DeployInput {
     pub app_source_id: i64,
     pub source_ref: SourceRef,
     pub aomi_toml_paths: Vec<String>,
-    /// Resolve + validate only; open no PR, write nothing. Omitted when false.
+    /// Preview the deployment plan; may materialize backend source metadata but opens no PR.
     #[serde(default, skip_serializing_if = "is_false")]
-    pub dry_run: bool,
+    pub preflight: bool,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -71,7 +71,7 @@ pub struct DeployResult {
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DeployPayload {
     pub id: String,
-    /// `pr_created` | `pr_updated` (and dry-run plan states).
+    /// `preflight` | `pr_created` | `pr_updated`.
     pub status: DeployStatus,
     pub source: Source,
     pub platform: Platform,
@@ -210,7 +210,10 @@ pub struct ActivationPromotion {
     pub name: String,
     pub release_tag: String,
     pub source_branch: String,
-    pub platform_commit_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform_commit_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activated_commit_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub live_commit_hash: Option<String>,
     pub ci_status: CiStatus,
@@ -233,11 +236,11 @@ pub struct ActivatedApp {
     pub error: Option<String>,
 }
 
-// ── Bootstrap: tokens, sources, scaffold ────────────────────────────────────
+// ── Bootstrap: tokens, sources ──────────────────────────────────────────────
 //
 // The platform-token + source-resolution surface that precedes deploy. These
 // mirror the backend's `/api/platforms/:platform/*` bodies (token mint, source
-// sync/resolve) and `/api/integrations/github-app/.../create-from-template`.
+// sync-installed).
 
 /// Body of `POST /api/platforms/:platform/tokens`.
 #[derive(Debug, Clone, Serialize)]
@@ -262,20 +265,9 @@ pub struct SyncSourceInput {
     pub repo: String,
 }
 
-/// Body of `POST /api/integrations/github-app/platforms/:platform/sources/create-from-template`.
-#[derive(Debug, Clone, Serialize)]
-pub struct CreateTemplateInput {
-    pub installation_id: i64,
-    pub template_repo: String,
-    pub repo_name: String,
-    #[serde(skip_serializing_if = "is_false")]
-    pub private: bool,
-}
-
 /// A connected GitHub App source row — the `source` payload returned by
-/// sync-installed / resolve / create-from-template. Its `id` is the
-/// `app_source_id` deploy needs. Fields mirror the backend response; not all
-/// are consumed by the CLI today.
+/// sync-installed. Its `id` is the `app_source_id` deploy needs. Fields mirror
+/// the backend response; not all are consumed by the CLI today.
 #[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)]
 pub struct AppSource {
@@ -292,23 +284,24 @@ pub struct AppSource {
 }
 
 /// Response of `GET /api/integrations/github-app/oauth/start` — the GitHub App
-/// install URL the user opens to connect. `state` (the poll handle) is embedded
-/// in the URL today; the field is here for when the backend returns it directly.
+/// install URL the user opens to connect. Mirrors the portal's response shape
+/// (`{ ok, install_url }`); the CLI only needs `install_url`. GitHub returns the
+/// resolved `installation_id` to the App's configured redirect, not to the CLI,
+/// so there is no result/poll endpoint — the user reads it from that redirect.
 #[derive(Debug, Clone, Deserialize)]
 pub struct OAuthStart {
     pub install_url: String,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub state: Option<String>,
 }
 
-/// Response of `GET /api/integrations/github-app/oauth/result?state=…` — the
-/// poll the CLI runs after the user installs the App in the browser.
+/// Minimal projection of `GET /api/platforms/:platform/deployments/:id/status`
+/// — enough to gate activation on the release build, matching the portal's
+/// poll. `state` is one of `pending` | `building` | `releasing` | `ready` |
+/// `failed`.
 #[derive(Debug, Clone, Deserialize)]
-pub struct OAuthResult {
-    pub status: String,
+pub struct DeploymentStatusResult {
+    pub state: String,
     #[serde(default)]
-    pub installation_id: Option<i64>,
+    pub message: Option<String>,
 }
 
 /// Envelope around a single source row (`{ ok, source }`).

@@ -11,27 +11,35 @@ use std::time::{Duration, Instant};
 
 use anyhow::Result;
 
+pub use super::backend::TokenCheck;
 use super::backend::{self, BackendClient};
 use super::platform::Platform;
 use super::types::{OAuthStart, SyncSourceInput};
 
-/// Fetch the GitHub App install URL for `platform` (optionally scoped to a
-/// single `repo`). The returned `state` (when present) is the poll handle for
-/// the future result endpoint.
+/// Fetch the aomi-build GitHub App install URL for `platform` (optionally scoped
+/// to a single `repo`). `mode` is `"install"` for a fresh install or
+/// `"authorize"` to re-consent an existing one.
 pub async fn oauth_install_url(
     backend_url: &str,
     platform: &str,
     repo: Option<&str>,
+    mode: &str,
 ) -> Result<OAuthStart> {
-    backend::oauth_start(backend_url, platform, repo).await
+    backend::oauth_start(backend_url, platform, repo, mode).await
 }
 
-/// Light check that an activation token works for `platform` — a successful
-/// `apps` read means the token is valid and scoped to that platform.
-pub async fn validate_activation_token(backend_url: &str, token: &str, platform: &str) -> bool {
+/// Check whether an activation token works for `platform`. Returns
+/// [`TokenCheck::Invalid`] for an empty/malformed token or an auth rejection,
+/// and [`TokenCheck::Unreachable`] when the backend couldn't be reached (so a
+/// network blip isn't mistaken for a bad token).
+pub async fn validate_activation_token(
+    backend_url: &str,
+    token: &str,
+    platform: &str,
+) -> TokenCheck {
     match BackendClient::new(backend_url.to_string(), token.to_string()) {
-        Ok(client) => client.list_apps(&Platform::new(platform)).await.is_ok(),
-        Err(_) => false,
+        Ok(client) => client.check_token(&Platform::new(platform)).await,
+        Err(_) => TokenCheck::Invalid,
     }
 }
 
@@ -54,27 +62,69 @@ pub async fn sync_source(
     Ok(result.source.id)
 }
 
-/// Poll `oauth/result?state=…` until the browser install resolves an
-/// installation id, or `timeout` elapses. `Ok(None)` means it timed out (the
-/// caller falls back to manual entry); transient poll errors are ignored so a
-/// blip doesn't abort the wait.
-pub async fn poll_installation(
+/// Terminal outcome of waiting on a deployment's release build.
+pub enum DeployReady {
+    Ready,
+    Failed(String),
+    TimedOut,
+}
+
+/// Consecutive status-poll failures tolerated before surfacing the error. Right
+/// after deploy the status row can briefly 404 while it materializes (the portal
+/// no longer masks that as `pending`), so we ride out a short window — but a
+/// persistent error is surfaced, not silently waited out to the timeout.
+const MAX_STATUS_FAILURES: u32 = 15;
+
+/// Poll `deployments/:id/status` until the release build reaches a terminal
+/// state or `timeout` elapses, calling `on_state` whenever the reported state
+/// changes (for progress output). Transient errors are tolerated for the brief
+/// post-deploy window where the status row hasn't materialized, but a persistent
+/// error is surfaced rather than masked (matching the portal, which stopped
+/// turning status 404s into a fake `pending`). Mirrors the portal gating
+/// activation on `ready`.
+pub async fn poll_deployment_ready(
     backend_url: &str,
-    state: &str,
+    token: &str,
+    platform: &str,
+    deployment_id: &str,
     timeout: Duration,
-) -> Result<Option<i64>> {
+    mut on_state: impl FnMut(&str),
+) -> Result<DeployReady> {
+    let client = BackendClient::new(backend_url.to_string(), token.to_string())?;
+    let platform = Platform::new(platform);
     let started = Instant::now();
+    let mut last_state: Option<String> = None;
+    let mut failures: u32 = 0;
     loop {
-        if let Ok(result) = backend::oauth_result(backend_url, state).await {
-            if result.status == "installed" {
-                if let Some(id) = result.installation_id {
-                    return Ok(Some(id));
+        match client.deployment_status(&platform, deployment_id).await {
+            Ok(status) => {
+                failures = 0;
+                if last_state.as_deref() != Some(status.state.as_str()) {
+                    on_state(&status.state);
+                    last_state = Some(status.state.clone());
+                }
+                match status.state.as_str() {
+                    "ready" => return Ok(DeployReady::Ready),
+                    "failed" => {
+                        return Ok(DeployReady::Failed(
+                            status
+                                .message
+                                .unwrap_or_else(|| "release build failed".to_string()),
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+            Err(e) => {
+                failures += 1;
+                if failures >= MAX_STATUS_FAILURES {
+                    return Err(e.context("deployment status polling failed repeatedly"));
                 }
             }
         }
         if started.elapsed() >= timeout {
-            return Ok(None);
+            return Ok(DeployReady::TimedOut);
         }
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        tokio::time::sleep(Duration::from_secs(6)).await;
     }
 }

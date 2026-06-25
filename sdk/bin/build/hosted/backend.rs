@@ -6,13 +6,22 @@ use serde::de::DeserializeOwned;
 
 use super::platform::Platform;
 use super::types::{
-    ActivateInput, ActivateResult, CreateTemplateInput, DeployInput, DeployResult, MintTokenInput,
-    MintTokenResult, OAuthResult, OAuthStart, SourceResult, SyncSourceInput,
+    ActivateInput, ActivateResult, DeployInput, DeployResult, DeploymentStatusResult,
+    MintTokenInput, MintTokenResult, OAuthStart, SourceResult, SyncSourceInput,
 };
 
-/// Unauthenticated GET for the public GitHub App OAuth start endpoint — it
-/// takes no bearer, so it doesn't go through [`BackendClient`].
-pub async fn oauth_start(base_url: &str, platform: &str, repo: Option<&str>) -> Result<OAuthStart> {
+/// GET the aomi-build GitHub App install URL for `platform`. Query params mirror
+/// the portal's bootstrap path: `repo` scopes the install to one repo, and
+/// `mode=authorize` re-consents an already-installed App (vs a fresh `install`).
+/// Like the portal this call carries no activation bearer — install association
+/// is an account-session concern the CLI doesn't own — so it doesn't go through
+/// [`BackendClient`].
+pub async fn oauth_start(
+    base_url: &str,
+    platform: &str,
+    repo: Option<&str>,
+    mode: &str,
+) -> Result<OAuthStart> {
     let base = base_url.trim().trim_end_matches('/');
     if base.is_empty() {
         bail!("backend URL is required via --backend or AOMI_BACKEND_URL");
@@ -27,6 +36,10 @@ pub async fn oauth_start(base_url: &str, platform: &str, repo: Option<&str>) -> 
     if let Some(repo) = repo {
         query.push(("repo", repo.to_string()));
     }
+    // The portal only sends `mode` for re-authorization; `install` is the default.
+    if mode == "authorize" {
+        query.push(("mode", "authorize".to_string()));
+    }
     let response = http
         .get(&endpoint)
         .query(&query)
@@ -39,42 +52,27 @@ pub async fn oauth_start(base_url: &str, platform: &str, repo: Option<&str>) -> 
         .await
         .context("failed to read oauth start response body")?;
     if !matches!(status.as_u16(), 200 | 201) {
-        bail!("oauth start endpoint {endpoint} returned {status}: {}", text.trim());
+        bail!(
+            "oauth start endpoint {endpoint} returned {status}: {}",
+            text.trim()
+        );
     }
     serde_json::from_str(&text)
         .with_context(|| format!("oauth start endpoint {endpoint} returned invalid JSON"))
 }
 
-/// Unauthenticated poll for the installation resolved for a given OAuth `state`
-/// (set by the browser callback). Public endpoint, no bearer.
-pub async fn oauth_result(base_url: &str, state: &str) -> Result<OAuthResult> {
-    let base = base_url.trim().trim_end_matches('/');
-    let endpoint = format!("{base}/api/integrations/github-app/oauth/result");
-    let http = reqwest::Client::builder()
-        .timeout(REQUEST_TIMEOUT)
-        .connect_timeout(CONNECT_TIMEOUT)
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new());
-    let response = http
-        .get(&endpoint)
-        .query(&[("state", state)])
-        .send()
-        .await
-        .with_context(|| format!("failed to call oauth result endpoint {endpoint}"))?;
-    let status = response.status();
-    let text = response
-        .text()
-        .await
-        .context("failed to read oauth result response body")?;
-    if !matches!(status.as_u16(), 200 | 201) {
-        bail!("oauth result endpoint {endpoint} returned {status}: {}", text.trim());
-    }
-    serde_json::from_str(&text)
-        .with_context(|| format!("oauth result endpoint {endpoint} returned invalid JSON"))
-}
-
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
+
+/// Outcome of probing an activation token against a platform. Separates an
+/// auth rejection from a transport failure so callers don't report "bad token"
+/// when the backend was merely unreachable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenCheck {
+    Valid,
+    Invalid,
+    Unreachable,
+}
 
 /// Authenticated relay to the Aomi backend's repo-scoped deploy/activate
 /// endpoints. The CLI never talks to GitHub; every privileged call goes through
@@ -178,27 +176,12 @@ impl BackendClient {
         request: &SyncSourceInput,
     ) -> Result<SourceResult> {
         self.post(
-            &format!("/api/platforms/{}/sources/sync-installed", platform.as_str()),
-            request,
-            "source sync",
-        )
-        .await
-    }
-
-    /// Create a source repo from a template (one-shot scaffold):
-    /// `POST /api/integrations/github-app/platforms/:platform/sources/create-from-template`.
-    pub async fn create_from_template(
-        &self,
-        platform: &Platform,
-        request: &CreateTemplateInput,
-    ) -> Result<SourceResult> {
-        self.post(
             &format!(
-                "/api/integrations/github-app/platforms/{}/sources/create-from-template",
+                "/api/platforms/{}/sources/sync-installed",
                 platform.as_str()
             ),
             request,
-            "scaffold",
+            "source sync",
         )
         .await
     }
@@ -210,6 +193,47 @@ impl BackendClient {
             "apps list",
         )
         .await
+    }
+
+    /// Build status of a deployment:
+    /// `GET /api/platforms/:platform/deployments/:id/status`. Matches the
+    /// portal's poll source — used to gate activation on the release build.
+    pub async fn deployment_status(
+        &self,
+        platform: &Platform,
+        deployment_id: &str,
+    ) -> Result<DeploymentStatusResult> {
+        self.get(
+            &format!(
+                "/api/platforms/{}/deployments/{}/status",
+                platform.as_str(),
+                deployment_id
+            ),
+            "deployment status",
+        )
+        .await
+    }
+
+    /// Probe whether the bearer is a valid activation token for `platform`. A
+    /// successful `apps` read means valid; a 401/403 means the token was
+    /// rejected; anything else (transport error, 5xx, etc.) is `Unreachable` so
+    /// a network blip isn't misreported as a bad token.
+    pub async fn check_token(&self, platform: &Platform) -> TokenCheck {
+        let endpoint = self.endpoint(&format!("/api/platforms/{}/apps", platform.as_str()));
+        match self
+            .http
+            .get(&endpoint)
+            .bearer_auth(&self.bearer)
+            .send()
+            .await
+        {
+            Err(_) => TokenCheck::Unreachable,
+            Ok(resp) => match resp.status().as_u16() {
+                200 | 201 => TokenCheck::Valid,
+                401 | 403 => TokenCheck::Invalid,
+                _ => TokenCheck::Unreachable,
+            },
+        }
     }
 
     pub fn endpoint(&self, path: &str) -> String {

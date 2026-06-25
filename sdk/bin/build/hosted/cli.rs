@@ -13,7 +13,7 @@
 //!   --commit <SHA>           # deploy this source commit (default: HEAD)
 //!   --aomi-toml <PATH>       # repeatable; default: all tracked aomi.toml
 //!   --backend <URL>          # AOMI_BACKEND_URL
-//!   --dry-run                # resolve + print the plan; deploy nothing
+//!   --preflight              # resolve + print the plan without opening a PR
 //!   --json
 //!
 //! activate [APP]...          # activate release tags (default: deployment.json tags)
@@ -42,11 +42,12 @@ use super::app::AomiAppFiles;
 use super::backend::BackendClient;
 use super::config::AomiConfig;
 use super::discord;
+use super::flow::TokenCheck;
 use super::platform::{Platform, normalize_github_repo};
 use super::status::StatusResult;
 use super::types::{
-    ActivateInput, CreateTemplateInput, DeployInput, LocalDeployment, MintTokenInput, ReleaseTags,
-    SourceRef, SyncSourceInput,
+    ActivateInput, DeployInput, LocalDeployment, MintTokenInput, ReleaseTags, SourceRef,
+    SyncSourceInput,
 };
 
 pub(crate) const ACTIVATION_TOKEN_ENV: &str = "AOMI_APP_ACTIVATION_TOKEN";
@@ -132,9 +133,9 @@ pub struct DeployArgs {
     #[arg(long, default_value = ".")]
     pub path: PathBuf,
 
-    /// Resolve and print the deploy plan without deploying.
-    #[arg(long)]
-    pub dry_run: bool,
+    /// Preview the deployment plan without opening a PR.
+    #[arg(long, alias = "dry-run")]
+    pub preflight: bool,
 
     /// Print machine-readable JSON.
     #[arg(long)]
@@ -153,11 +154,11 @@ impl DeployArgs {
             app_source_id,
             source_ref,
             aomi_toml_paths,
-            dry_run: self.dry_run,
+            preflight: self.preflight,
         };
 
-        if self.dry_run {
-            return self.run_dry_run(&platform, &request).await;
+        if self.preflight {
+            return self.run_preflight(&platform, &request).await;
         }
 
         let backend_url = self.backend_url()?;
@@ -202,10 +203,10 @@ impl DeployArgs {
         Ok(())
     }
 
-    /// Dry-run: POST with `dry_run: true` when a backend + token are available
-    /// (the backend resolves the branch and validates scope); otherwise print
-    /// the request we would send, fully offline.
-    async fn run_dry_run(&self, platform: &Platform, request: &DeployInput) -> Result<()> {
+    /// Preflight: POST with `preflight: true` when a backend + token are
+    /// available (the backend resolves the branch and validates scope);
+    /// otherwise print the request we would send, fully offline.
+    async fn run_preflight(&self, platform: &Platform, request: &DeployInput) -> Result<()> {
         match (self.backend_url().ok(), activation_token().ok()) {
             (Some(url), Some(token)) => {
                 let response = BackendClient::new(url, token)?
@@ -215,7 +216,7 @@ impl DeployArgs {
             }
             _ => {
                 println!("{}", serde_json::to_string_pretty(request)?);
-                println!("\n(dry-run: no backend/token; printed the request only)");
+                println!("\n(preflight: no backend/token; printed the request only)");
             }
         }
         Ok(())
@@ -592,6 +593,10 @@ pub struct StatusArgs {
     #[arg(long, default_value = ".")]
     pub path: PathBuf,
 
+    /// Activation token for backend app status checks.
+    #[arg(long, value_name = "TOKEN")]
+    pub activation_token: Option<String>,
+
     /// Print the status report as JSON.
     #[arg(long)]
     pub json: bool,
@@ -612,8 +617,11 @@ impl StatusArgs {
             Some(flag) if flag.trim().is_empty() => None,
             other => resolve_backend(other),
         };
+        let token = backend_url
+            .as_ref()
+            .and_then(|_| resolve_activation_token(&self.activation_token));
 
-        let report = StatusResult::collect(&state, backend_url).await;
+        let report = StatusResult::collect(&state, backend_url, token).await;
         if self.json {
             println!("{}", serde_json::to_string_pretty(&report)?);
         } else {
@@ -744,7 +752,10 @@ impl RequestArgs {
 
 /// `--backend`/env + activation token resolution shared by the activation-token
 /// bootstrap commands (source/apps/token list+revoke).
-fn resolve_activation(backend: &Option<String>, token: &Option<String>) -> Result<(String, String)> {
+fn resolve_activation(
+    backend: &Option<String>,
+    token: &Option<String>,
+) -> Result<(String, String)> {
     let url = resolve_backend(backend)
         .ok_or_else(|| anyhow!("needs a backend URL — set --backend or {BACKEND_URL_ENV}"))?;
     let tok = resolve_activation_token(token).ok_or_else(|| {
@@ -803,7 +814,8 @@ pub struct TokenMintArgs {
     #[arg(long, default_value = "platform")]
     pub scope: String,
 
-    /// App id — required when `--scope app`.
+    /// App id for `--scope app`. Omit to mint an *unbound* app token that binds
+    /// to the app it deploys first, then is locked to it 1-to-1.
     #[arg(long = "app-id", value_name = "ID")]
     pub app_id: Option<i64>,
 
@@ -860,9 +872,6 @@ impl TokenMintArgs {
             })?;
 
         let scope = self.scope.trim().to_string();
-        if scope == "app" && self.app_id.is_none() {
-            bail!("--scope app requires --app-id");
-        }
         if scope != "app" && scope != "platform" {
             bail!("--scope must be `platform` or `app` (got `{scope}`)");
         }
@@ -908,6 +917,11 @@ impl TokenMintArgs {
             println!(
                 "  store this now — the backend keeps only the hash, the plaintext is shown once."
             );
+            if scope == "app" && self.app_id.is_none() {
+                println!(
+                    "  (unbound app token — its first deploy binds it to that one app, 1-to-1)"
+                );
+            }
             println!();
             println!("Use it for deploy/activate:");
             println!("  export {ACTIVATION_TOKEN_ENV}={}", result.token);
@@ -980,7 +994,10 @@ impl TokenRevokeArgs {
         BackendClient::new(url, token)?
             .revoke_token(&self.platform, self.id)
             .await?;
-        println!("Revoked token id {} on platform `{}`", self.id, self.platform);
+        println!(
+            "Revoked token id {} on platform `{}`",
+            self.id, self.platform
+        );
         Ok(())
     }
 }
@@ -1064,64 +1081,19 @@ fn report_source(
         );
         println!("  app_source_id: {id}");
         match persisted {
-            Some(p) => println!("  recorded in {} — deploy will auto-resolve it", p.display()),
+            Some(p) => println!(
+                "  recorded in {} — deploy will auto-resolve it",
+                p.display()
+            ),
             None => {
                 println!("  no .aomi/deployment.json yet; pass it to the first deploy:");
-                println!("    aomi-build deploy --app-source-id {id}   (or export {APP_SOURCE_ID_ENV}={id})");
+                println!(
+                    "    aomi-build deploy --app-source-id {id}   (or export {APP_SOURCE_ID_ENV}={id})"
+                );
             }
         }
     }
     Ok(())
-}
-
-// ── scaffold ─────────────────────────────────────────────────────────────────
-
-#[derive(Debug, Args, Clone)]
-pub struct ScaffoldArgs {
-    /// Name of the new repo to create in the connected account.
-    #[arg(long = "repo-name", value_name = "NAME")]
-    pub repo_name: String,
-
-    /// The one-shot GitHub App installation to create the repo under.
-    #[arg(long = "installation-id", value_name = "ID")]
-    pub installation_id: i64,
-
-    #[arg(long, value_name = "NAME")]
-    pub platform: Platform,
-
-    /// Template repo to fork from.
-    #[arg(long, default_value = "aomi-labs/playground-example")]
-    pub template: String,
-
-    /// Create the new repo as private.
-    #[arg(long)]
-    pub private: bool,
-
-    #[arg(long, value_name = "URL")]
-    pub backend: Option<String>,
-    #[arg(long, value_name = "TOKEN")]
-    pub activation_token: Option<String>,
-    /// Source repo path for `.aomi/deployment.json` persistence.
-    #[arg(long, default_value = ".")]
-    pub path: PathBuf,
-    #[arg(long)]
-    pub json: bool,
-}
-
-impl ScaffoldArgs {
-    pub async fn run(self) -> Result<()> {
-        let (url, token) = resolve_activation(&self.backend, &self.activation_token)?;
-        let request = CreateTemplateInput {
-            installation_id: self.installation_id,
-            template_repo: self.template.clone(),
-            repo_name: self.repo_name.clone(),
-            private: self.private,
-        };
-        let result = BackendClient::new(url, token)?
-            .create_from_template(&self.platform, &request)
-            .await?;
-        report_source(&result, &self.path, self.json, "created")
-    }
 }
 
 // ── apps ──────────────────────────────────────────────────────────────────────
@@ -1192,21 +1164,18 @@ pub struct ConnectArgs {
     #[arg(long, value_name = "TOKEN")]
     pub activation_token: Option<String>,
 
+    /// Re-consent an App that's already installed (portal's "verify existing
+    /// install") instead of a fresh install.
+    #[arg(long)]
+    pub authorize: bool,
+
     /// Print the install URL without opening a browser.
     #[arg(long)]
     pub no_browser: bool,
-
-    /// Skip polling and paste the installation_id manually.
-    #[arg(long)]
-    pub manual: bool,
-
-    /// How long to wait for the browser install before falling back to manual.
-    #[arg(long = "timeout-secs", value_name = "SECS", default_value_t = 300)]
-    pub timeout_secs: u64,
 }
 
 fn prompt_installation_id() -> Result<i64> {
-    inquire::Text::new("After installing, paste your installation_id:")
+    inquire::Text::new("Paste your installation_id (the number in the URL GitHub sent you to):")
         .prompt()
         .context("connect cancelled")?
         .trim()
@@ -1224,10 +1193,23 @@ impl ConnectArgs {
             None => None,
         };
 
-        // 1. GitHub App install URL.
-        let start =
-            super::flow::oauth_install_url(&backend_url, self.platform.as_str(), repo.as_deref())
-                .await?;
+        // 1. GitHub App install URL. After the user installs, GitHub redirects
+        //    *their browser* (not this CLI) to the App's configured callback,
+        //    whose URL carries `installation_id` — so we can't poll for it; the
+        //    user reads it off that page. `mode=authorize` re-consents an
+        //    existing install; the default App (#1) needs no `app` param.
+        let mode = if self.authorize {
+            "authorize"
+        } else {
+            "install"
+        };
+        let start = super::flow::oauth_install_url(
+            &backend_url,
+            self.platform.as_str(),
+            repo.as_deref(),
+            mode,
+        )
+        .await?;
         println!("Connect your source by installing the Aomi GitHub App:");
         println!("  {}", start.install_url);
         if self.no_browser {
@@ -1238,40 +1220,17 @@ impl ConnectArgs {
         } else {
             println!("  (opened in your browser)");
         }
+        println!(
+            "  After installing, GitHub returns you to a page whose URL ends in\n  \
+             `installation_id=NNN` — that number is what you paste below."
+        );
         println!();
 
-        // 2. Capture the installation: explicit flag → poll-by-state (wait for
-        //    the browser install) → manual paste fallback.
-        let installation_id: i64 = if let Some(id) = self.installation_id {
-            id
-        } else if !self.manual {
-            match start.state.as_deref() {
-                Some(state) => {
-                    println!(
-                        "Waiting for the install to finish in your browser (up to {}s, Ctrl-C to cancel)…",
-                        self.timeout_secs
-                    );
-                    match super::flow::poll_installation(
-                        &backend_url,
-                        state,
-                        std::time::Duration::from_secs(self.timeout_secs),
-                    )
-                    .await?
-                    {
-                        Some(id) => {
-                            println!("  detected installation_id {id}");
-                            id
-                        }
-                        None => {
-                            println!("  timed out waiting — enter it manually.");
-                            prompt_installation_id()?
-                        }
-                    }
-                }
-                None => prompt_installation_id()?,
-            }
-        } else {
-            prompt_installation_id()?
+        // 2. Capture the installation id: explicit flag, else paste it off the
+        //    redirect URL.
+        let installation_id: i64 = match self.installation_id {
+            Some(id) => id,
+            None => prompt_installation_id()?,
         };
 
         // 3. Activation token (issued by your Aomi admin).
@@ -1287,14 +1246,17 @@ impl ConnectArgs {
         if token.is_empty() {
             bail!("an activation token is required to connect");
         }
-        if super::flow::validate_activation_token(&backend_url, &token, self.platform.as_str()).await
+        match super::flow::validate_activation_token(&backend_url, &token, self.platform.as_str())
+            .await
         {
-            println!("  token verified for platform `{}`", self.platform);
-        } else {
-            println!(
-                "  warning: could not verify the token against `{}` — saving anyway",
+            TokenCheck::Valid => println!("  token verified for platform `{}`", self.platform),
+            TokenCheck::Invalid => println!(
+                "  warning: that token was rejected for `{}` — saving anyway",
                 self.platform
-            );
+            ),
+            TokenCheck::Unreachable => {
+                println!("  couldn't reach the backend to verify the token — saving anyway")
+            }
         }
 
         // 4. Persist account identity.

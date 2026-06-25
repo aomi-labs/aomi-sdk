@@ -14,7 +14,7 @@
 //! are authorized against that issuer.
 
 use anyhow::{Context, Result};
-use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
+use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use serde::Serialize;
 
 /// Claims carried by an AomiBearer assertion — mirrors the backend's
@@ -51,9 +51,8 @@ impl AdminBearer<'_> {
     /// Sign a `role = "admin"` AomiBearer (EdDSA / Ed25519). `now` (unix
     /// seconds) is passed in so signing stays pure and testable.
     pub(crate) fn sign(&self, now: i64) -> Result<String> {
-        let key = EncodingKey::from_ed_pem(self.private_key_pem).context(
-            "AOMI_ADMIN_KEY is not a valid PKCS#8 Ed25519 private key (expected PEM)",
-        )?;
+        let key = EncodingKey::from_ed_pem(self.private_key_pem)
+            .context("AOMI_ADMIN_KEY is not a valid PKCS#8 Ed25519 private key (expected PEM)")?;
         let claims = AomiBearerClaims {
             sub: self.sub.to_string(),
             iss: self.iss.to_string(),

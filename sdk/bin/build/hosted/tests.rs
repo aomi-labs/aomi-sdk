@@ -50,6 +50,48 @@ fn deploy_parses_repeated_aomi_toml() {
     }
 }
 
+// ── wizard + connect: arg parsing ───────────────────────────────────────────
+
+#[test]
+fn no_subcommand_enters_wizard() {
+    let cli = crate::Cli::try_parse_from(["aomi-build"]).expect("parse");
+    assert!(
+        cli.cmd.is_none(),
+        "a bare invocation should enter the wizard"
+    );
+}
+
+#[test]
+fn connect_parses_authorize_and_drops_polling_flags() {
+    let cli = crate::Cli::try_parse_from([
+        "aomi-build",
+        "connect",
+        "--platform",
+        "community",
+        "--authorize",
+    ])
+    .expect("parse");
+    match cli.cmd {
+        Some(crate::Cmd::Connect(args)) => assert!(args.authorize),
+        _ => panic!("expected connect"),
+    }
+
+    // The phantom-poll era flags are gone — connect now captures the
+    // installation id by paste, matching how the portal reads it off GitHub's
+    // redirect (there is no result/poll endpoint).
+    for legacy in [["--manual"].as_slice(), ["--timeout-secs", "10"].as_slice()] {
+        let argv = [
+            &["aomi-build", "connect", "--platform", "community"],
+            legacy,
+        ]
+        .concat();
+        assert!(
+            crate::Cli::try_parse_from(argv).is_err(),
+            "removed flag {legacy:?} should no longer parse"
+        );
+    }
+}
+
 // ── deploy: source ref resolution ───────────────────────────────────────────
 
 #[test]
@@ -93,7 +135,7 @@ fn deploy_input_serializes_widget_contract_body() {
         app_source_id: 42,
         source_ref: SourceRef::branch("release"),
         aomi_toml_paths: vec!["aomi.toml".into(), "apps/bot/aomi.toml".into()],
-        dry_run: true,
+        preflight: true,
     };
 
     assert_eq!(
@@ -102,7 +144,7 @@ fn deploy_input_serializes_widget_contract_body() {
             "app_source_id": 42,
             "source_ref": { "kind": "branch", "value": "release" },
             "aomi_toml_paths": ["aomi.toml", "apps/bot/aomi.toml"],
-            "dry_run": true
+            "preflight": true
         })
     );
 }
@@ -324,6 +366,49 @@ fn release_tag_activation_promotions_mark_ci_and_sync_last_activation() {
 }
 
 #[test]
+fn activation_response_accepts_live_promoted_shape() {
+    let response: ActivateResult = serde_json::from_value(json!({
+        "ok": true,
+        "activation": {
+            "status": "activated",
+            "platform": "community",
+            "target": {
+                "kind": "release_tags",
+                "value": ["apps-141779906-r2bf7fd9ccb-playground-example-6fe687c7d6e4"],
+                "platform_repo": "aomi-labs/community-apps",
+                "live_branch": "publish",
+                "promoted": [{
+                    "name": "playground-example",
+                    "release_tag": "apps-141779906-r2bf7fd9ccb-playground-example-6fe687c7d6e4",
+                    "source_branch": "ceciliaz030/playground-example-1/141779906/6fe687c7d6e4",
+                    "activated_commit_hash": "cfb6a6411712f1f65ce81d7373decd1d21be4ea1",
+                    "live_commit_hash": "cfb6a6411712f1f65ce81d7373decd1d21be4ea1",
+                    "ci_status": "passed",
+                    "ci_url": "https://github.com/aomi-labs/community-apps/actions/runs/1",
+                    "release_assets": ["manifest.json"]
+                }]
+            },
+            "apps": [{
+                "name": "playground-example",
+                "path": "apps/141779906/r2bf7fd9ccb/playground-example",
+                "release_tag": "apps-141779906-r2bf7fd9ccb-playground-example-6fe687c7d6e4",
+                "is_active": true,
+                "loaded": true,
+                "error": null
+            }]
+        }
+    }))
+    .unwrap();
+
+    let promoted = &response.activation.target.promoted[0];
+    assert_eq!(promoted.platform_commit_hash, None);
+    assert_eq!(
+        promoted.activated_commit_hash.as_deref(),
+        Some("cfb6a6411712f1f65ce81d7373decd1d21be4ea1")
+    );
+}
+
+#[test]
 fn apply_target_activation_keeps_failed_app_inactive() {
     let mut state = sample_state();
     state.apply_target_activation(&release_tag_activation(&[
@@ -491,7 +576,7 @@ fn deploy_args(path: &Path) -> DeployArgs {
         aomi_toml: vec![],
         backend: None,
         path: path.to_path_buf(),
-        dry_run: false,
+        preflight: false,
         json: false,
     }
 }
