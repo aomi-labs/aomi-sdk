@@ -9,6 +9,7 @@
 //! names intentionally mirror the backend deploy payload where the concept is
 //! shared; local-only persistence types keep a `Local*` prefix.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -71,7 +72,7 @@ pub struct DeployResult {
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DeployPayload {
     pub id: String,
-    /// `preflight` | `pr_created` | `pr_updated`.
+    /// `preflight` | `pr_created` | `pr_updated` | `unchanged`.
     pub status: DeployStatus,
     pub source: Source,
     pub platform: Platform,
@@ -221,6 +222,10 @@ pub struct ActivationPromotion {
     pub ci_url: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub release_assets: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub release_asset_digests: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activation_status: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -234,6 +239,12 @@ pub struct ActivatedApp {
     pub loaded: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_commit_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activation_status: Option<String>,
 }
 
 // ── Bootstrap: tokens, sources ──────────────────────────────────────────────
@@ -295,8 +306,8 @@ pub struct OAuthStart {
 
 /// Minimal projection of `GET /api/platforms/:platform/deployments/:id/status`
 /// — enough to gate activation on the release build, matching the portal's
-/// poll. `state` is one of `pending` | `building` | `releasing` | `ready` |
-/// `failed`.
+/// poll. `state` is one of `no_ci` | `pending` | `building` | `releasing` |
+/// `ready` | `failed`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct DeploymentStatusResult {
     pub state: String,

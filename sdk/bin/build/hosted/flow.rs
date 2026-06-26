@@ -112,6 +112,11 @@ pub async fn poll_deployment_ready(
                                 .unwrap_or_else(|| "release build failed".to_string()),
                         ));
                     }
+                    "no_ci" => {
+                        return Ok(DeployReady::Failed(status.message.unwrap_or_else(|| {
+                            "no CI ran for this deployment commit".to_string()
+                        })));
+                    }
                     _ => {}
                 }
             }
