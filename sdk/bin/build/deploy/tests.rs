@@ -9,10 +9,10 @@ use clap::Parser;
 use serde_json::json;
 use tempfile::TempDir;
 
-use super::cli::{ActivateArgs, DeployArgs};
+use super::cli::{ActivateArgs, DeployArgs, StatusArgs};
 use super::platform::Platform;
 use super::types::{
-    ActivateInput, ActivateResult, DeployInput, LocalDeployment, ReleaseTags, SourceRef,
+    ActivateInput, ActivateResult, DeployInput, DeployResult, LocalDeployment, ReleaseTags,
 };
 
 // ── deploy: arg parsing ─────────────────────────────────────────────────────
@@ -42,10 +42,52 @@ fn deploy_parses_repeated_aomi_toml() {
     ])
     .expect("parse");
     match cli.cmd {
-        crate::Cmd::Deploy(args) => {
+        Some(crate::Cmd::Deploy(args)) => {
             assert_eq!(args.aomi_toml.len(), 2);
         }
         _ => panic!("expected deploy"),
+    }
+}
+
+// ── wizard + connect: arg parsing ───────────────────────────────────────────
+
+#[test]
+fn no_subcommand_enters_wizard() {
+    let cli = crate::Cli::try_parse_from(["aomi-build"]).expect("parse");
+    assert!(
+        cli.cmd.is_none(),
+        "a bare invocation should enter the wizard"
+    );
+}
+
+#[test]
+fn connect_parses_authorize_and_drops_polling_flags() {
+    let cli = crate::Cli::try_parse_from([
+        "aomi-build",
+        "connect",
+        "--platform",
+        "community",
+        "--authorize",
+    ])
+    .expect("parse");
+    match cli.cmd {
+        Some(crate::Cmd::Connect(args)) => assert!(args.authorize),
+        _ => panic!("expected connect"),
+    }
+
+    // The phantom-poll era flags are gone — connect now captures the
+    // installation id by paste, matching how the portal reads it off GitHub's
+    // redirect (there is no result/poll endpoint).
+    for legacy in [["--manual"].as_slice(), ["--timeout-secs", "10"].as_slice()] {
+        let argv = [
+            &["aomi-build", "connect", "--platform", "community"],
+            legacy,
+        ]
+        .concat();
+        assert!(
+            crate::Cli::try_parse_from(argv).is_err(),
+            "removed flag {legacy:?} should no longer parse"
+        );
     }
 }
 
@@ -59,49 +101,44 @@ fn source_ref_defaults_to_head_commit() {
     let head = repo.head();
 
     let args = deploy_args(repo.root());
-    assert_eq!(
-        args.source_ref(repo.root()).unwrap(),
-        SourceRef::commit(head)
-    );
+    assert_eq!(args.source_ref(repo.root()).unwrap(), head);
 }
 
 #[test]
-fn source_ref_honors_branch_and_commit_flags() {
+fn source_ref_rejects_branch_and_honors_commit_flag() {
     let repo = TestRepo::new();
     repo.write_aomi_toml("", "root");
     repo.commit("init");
 
     let mut args = deploy_args(repo.root());
     args.branch = Some("release".into());
-    assert_eq!(
-        args.source_ref(repo.root()).unwrap(),
-        SourceRef::branch("release")
-    );
+    assert!(args.source_ref(repo.root()).is_err());
 
     let mut args = deploy_args(repo.root());
     args.commit = Some("0badc0de".into());
-    assert_eq!(
-        args.source_ref(repo.root()).unwrap(),
-        SourceRef::commit("0badc0de")
-    );
+    assert_eq!(args.source_ref(repo.root()).unwrap(), "0badc0de");
+
+    let mut args = deploy_args(repo.root());
+    args.commit = Some("main".into());
+    assert!(args.source_ref(repo.root()).is_err());
 }
 
 #[test]
 fn deploy_input_serializes_widget_contract_body() {
     let input = DeployInput {
         app_source_id: 42,
-        source_ref: SourceRef::branch("release"),
+        source_ref: "0badc0de".to_string(),
         aomi_toml_paths: vec!["aomi.toml".into(), "apps/bot/aomi.toml".into()],
-        dry_run: true,
+        preflight: true,
     };
 
     assert_eq!(
         serde_json::to_value(&input).unwrap(),
         json!({
             "app_source_id": 42,
-            "source_ref": { "kind": "branch", "value": "release" },
+            "source_ref": "0badc0de",
             "aomi_toml_paths": ["aomi.toml", "apps/bot/aomi.toml"],
-            "dry_run": true
+            "preflight": true
         })
     );
 }
@@ -169,7 +206,7 @@ fn sample_state() -> LocalDeployment {
         "source": {
             "installation_id": 1, "repository_id": 2,
             "repository_link": "https://github.com/a/b.git",
-            "ref": { "kind": "branch", "value": "main" },
+            "ref": "abc1234",
             "commit_hash": "abc1234", "aomi_toml_paths": ["aomi.toml", "apps/b2/aomi.toml"]
         },
         "platform": {
@@ -323,6 +360,49 @@ fn release_tag_activation_promotions_mark_ci_and_sync_last_activation() {
 }
 
 #[test]
+fn activation_response_accepts_live_promoted_shape() {
+    let response: ActivateResult = serde_json::from_value(json!({
+        "ok": true,
+        "activation": {
+            "status": "activated",
+            "platform": "community",
+            "target": {
+                "kind": "release_tags",
+                "value": ["apps-141779906-r2bf7fd9ccb-playground-example-6fe687c7d6e4"],
+                "platform_repo": "aomi-labs/community-apps",
+                "live_branch": "publish",
+                "promoted": [{
+                    "name": "playground-example",
+                    "release_tag": "apps-141779906-r2bf7fd9ccb-playground-example-6fe687c7d6e4",
+                    "source_branch": "ceciliaz030/playground-example-1/141779906/6fe687c7d6e4",
+                    "activated_commit_hash": "cfb6a6411712f1f65ce81d7373decd1d21be4ea1",
+                    "live_commit_hash": "cfb6a6411712f1f65ce81d7373decd1d21be4ea1",
+                    "ci_status": "passed",
+                    "ci_url": "https://github.com/aomi-labs/community-apps/actions/runs/1",
+                    "release_assets": ["manifest.json"]
+                }]
+            },
+            "apps": [{
+                "name": "playground-example",
+                "path": "apps/141779906/r2bf7fd9ccb/playground-example",
+                "release_tag": "apps-141779906-r2bf7fd9ccb-playground-example-6fe687c7d6e4",
+                "is_active": true,
+                "loaded": true,
+                "error": null
+            }]
+        }
+    }))
+    .unwrap();
+
+    let promoted = &response.activation.target.promoted[0];
+    assert_eq!(promoted.platform_commit_hash, None);
+    assert_eq!(
+        promoted.activated_commit_hash.as_deref(),
+        Some("cfb6a6411712f1f65ce81d7373decd1d21be4ea1")
+    );
+}
+
+#[test]
 fn apply_target_activation_keeps_failed_app_inactive() {
     let mut state = sample_state();
     state.apply_target_activation(&release_tag_activation(&[
@@ -426,6 +506,114 @@ fn local_deployment_write_then_read_round_trips() {
     assert!(LocalDeployment::read(empty.root()).unwrap().is_none());
 }
 
+#[test]
+fn deploy_records_app_source_id_and_round_trips() {
+    // The backend deploy response omits app_source_id; the CLI stamps the id it
+    // deployed from so re-deploys / activate can auto-resolve it.
+    let resp: DeployResult = serde_json::from_value(json!({
+        "ok": true,
+        "deployment": {
+            "id": "dep_1",
+            "status": "pr_created",
+            "source": {
+                "installation_id": 1, "repository_id": 2,
+                "repository_link": "https://github.com/a/b.git",
+                "ref": "abc1234",
+                "commit_hash": "abc1234", "aomi_toml_paths": ["aomi.toml"]
+            },
+            "platform": {
+                "platform": "playground", "repository": "aomi-labs/aomi-playground",
+                "source_branch": "main", "deploy_branch": "main",
+                "apps": [
+                    { "name": "bot", "path": "apps/1/r0/bot", "aomi_toml_path": "aomi.toml", "release_tag": "apps-1-r0-bot-abc1234" }
+                ]
+            }
+        }
+    }))
+    .unwrap();
+
+    let state = LocalDeployment::from_deploy(resp, 219);
+    assert_eq!(state.app_source_id(), Some(219));
+
+    // Persists into .aomi/deployment.json and reads back intact.
+    let repo = TestRepo::new();
+    state.write(repo.root()).unwrap();
+    assert_eq!(
+        LocalDeployment::read(repo.root())
+            .unwrap()
+            .unwrap()
+            .app_source_id(),
+        Some(219)
+    );
+
+    // `source sync` / `scaffold` patch path: set + persist on an existing record.
+    let mut patched = LocalDeployment::read(repo.root()).unwrap().unwrap();
+    patched.set_app_source_id(321);
+    patched.write(repo.root()).unwrap();
+    assert_eq!(
+        LocalDeployment::read(repo.root())
+            .unwrap()
+            .unwrap()
+            .app_source_id(),
+        Some(321)
+    );
+}
+
+#[test]
+fn deploy_reads_recorded_source_id_from_repo_root_state() {
+    let repo = TestRepo::new();
+    repo.write_aomi_toml("apps/bot", "bot");
+    repo.commit("init");
+
+    let mut state = sample_state();
+    state.set_app_source_id(777);
+    state.write(repo.root()).unwrap();
+
+    let app_dir = repo.path("apps/bot");
+    assert!(
+        LocalDeployment::read(&app_dir).unwrap().is_none(),
+        "deployment state is intentionally rooted at the source repo"
+    );
+
+    let args = deploy_args(&app_dir);
+    assert_eq!(args.recorded_app_source_id(repo.root()), Some(777));
+}
+
+#[tokio::test]
+async fn status_reads_deployment_from_repo_root_when_path_is_app_dir() {
+    let repo = TestRepo::new();
+    repo.write_aomi_toml("apps/bot", "bot");
+    repo.commit("init");
+    sample_state().write(repo.root()).unwrap();
+
+    StatusArgs {
+        backend: Some(String::new()),
+        path: repo.path("apps/bot"),
+        activation_token: None,
+        json: true,
+    }
+    .run()
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn activate_dry_run_reads_deployment_from_repo_root_when_path_is_app_dir() {
+    let repo = TestRepo::new();
+    repo.write_aomi_toml("apps/bot", "bot");
+    repo.commit("init");
+    sample_state().write(repo.root()).unwrap();
+
+    ActivateArgs {
+        path: repo.path("apps/bot"),
+        dry_run: true,
+        ..activate_args()
+    }
+    .run()
+    .await
+    .unwrap();
+}
+
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 fn deploy_args(path: &Path) -> DeployArgs {
@@ -437,7 +625,7 @@ fn deploy_args(path: &Path) -> DeployArgs {
         aomi_toml: vec![],
         backend: None,
         path: path.to_path_buf(),
-        dry_run: false,
+        preflight: false,
         json: false,
     }
 }

@@ -44,12 +44,15 @@ impl FromStr for Platform {
         if s.is_empty() {
             bail!("platform name cannot be empty");
         }
+        if s.starts_with('.') || s.ends_with('.') || s.contains("..") {
+            bail!("platform name `{s}` has invalid dot placement");
+        }
         if !s
             .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '-' || ch == '_')
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
         {
             bail!(
-                "platform name `{s}` contains unsupported characters (ASCII alphanumeric, '-', '_' only)"
+                "platform name `{s}` contains unsupported characters (ASCII alphanumeric, '-', '_', '.' only)"
             );
         }
         Ok(Self::new(s))

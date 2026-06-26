@@ -2,13 +2,14 @@
 //!
 //! Aligned to the live backend (`/api/platforms`): deploy is
 //! `POST /api/platforms/:platform/deploy` with `{app_source_id, source_ref,
-//! aomi_toml_paths, dry_run?}`; activation is release-tags based,
+//! aomi_toml_paths, preflight?}`; activation is release-tags based,
 //! `POST /api/platforms/:platform/apps/activate` with `{target, apps?,
 //! target_tags?}` returning `{ok, activation:{…, apps[]}}` with a
 //! per-app partial-failure shape. JSON is snake_case to match the backend. Type
 //! names intentionally mirror the backend deploy payload where the concept is
 //! shared; local-only persistence types keep a `Local*` prefix.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -18,29 +19,6 @@ use serde::{Deserialize, Serialize, Serializer};
 
 const DEPLOYMENT_DIR: &str = ".aomi";
 const DEPLOYMENT_FILE: &str = "deployment.json";
-
-// ── Source ref ─────────────────────────────────────────────────────────────
-
-/// `{ "kind": "branch", "value": "main" }` or `{ "kind": "commit", "value": "<sha>" }`.
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum SourceRef {
-    Branch { value: String },
-    Commit { value: String },
-}
-
-impl SourceRef {
-    pub fn branch(value: impl Into<String>) -> Self {
-        SourceRef::Branch {
-            value: value.into(),
-        }
-    }
-    pub fn commit(value: impl Into<String>) -> Self {
-        SourceRef::Commit {
-            value: value.into(),
-        }
-    }
-}
 
 // ── Deploy ─────────────────────────────────────────────────────────────────
 
@@ -55,11 +33,12 @@ pub type CiStatus = String;
 pub struct DeployInput {
     /// The connected GitHub App install (`app_source`) to deploy from.
     pub app_source_id: i64,
-    pub source_ref: SourceRef,
+    /// Resolved immutable source commit SHA. Branches are resolved before this request.
+    pub source_ref: String,
     pub aomi_toml_paths: Vec<String>,
-    /// Resolve + validate only; open no PR, write nothing. Omitted when false.
+    /// Preview the deployment plan; may materialize backend source metadata but opens no PR.
     #[serde(default, skip_serializing_if = "is_false")]
-    pub dry_run: bool,
+    pub preflight: bool,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -71,7 +50,7 @@ pub struct DeployResult {
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DeployPayload {
     pub id: String,
-    /// `pr_created` | `pr_updated` (and dry-run plan states).
+    /// `preflight` | `pr_created` | `pr_updated` | `unchanged`.
     pub status: DeployStatus,
     pub source: Source,
     pub platform: Platform,
@@ -86,9 +65,14 @@ pub struct Source {
     #[serde(default)]
     pub owner_repo_name: String,
     #[serde(rename = "ref")]
-    pub source_ref: SourceRef,
+    pub source_ref: String,
     pub commit_hash: String,
     pub aomi_toml_paths: Vec<String>,
+    /// The connected GitHub App install (`app_source`) this deploy ran from.
+    /// Absent from the backend deploy response; the CLI records the id it sent
+    /// so re-deploys and `activate` can auto-resolve it instead of re-asking.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_source_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -205,7 +189,10 @@ pub struct ActivationPromotion {
     pub name: String,
     pub release_tag: String,
     pub source_branch: String,
-    pub platform_commit_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub platform_commit_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activated_commit_hash: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub live_commit_hash: Option<String>,
     pub ci_status: CiStatus,
@@ -213,6 +200,10 @@ pub struct ActivationPromotion {
     pub ci_url: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub release_assets: Vec<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub release_asset_digests: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activation_status: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -226,6 +217,89 @@ pub struct ActivatedApp {
     pub loaded: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_branch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub live_commit_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activation_status: Option<String>,
+}
+
+// ── Bootstrap: tokens, sources ──────────────────────────────────────────────
+//
+// The platform-token + source-resolution surface that precedes deploy. These
+// mirror the backend's `/api/platforms/:platform/*` bodies (token mint, source
+// sync-installed).
+
+/// Body of `POST /api/platforms/:platform/tokens`.
+#[derive(Debug, Clone, Serialize)]
+pub struct MintTokenInput {
+    /// `platform` | `app`.
+    pub scope: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_id: Option<i64>,
+}
+
+/// Response of a token mint — the plaintext `token` is returned exactly once.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MintTokenResult {
+    pub id: i64,
+    pub token: String,
+    pub scope: String,
+}
+
+/// Body of `POST /api/platforms/:platform/sources/sync-installed`.
+#[derive(Debug, Clone, Serialize)]
+pub struct SyncSourceInput {
+    pub repo: String,
+}
+
+/// A connected GitHub App source row — the `source` payload returned by
+/// sync-installed. Its `id` is the `app_source_id` deploy needs. Fields mirror
+/// the backend response; not all are consumed by the CLI today.
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+pub struct AppSource {
+    pub id: i64,
+    pub installation_id: i64,
+    pub repository_id: i64,
+    pub repository_link: String,
+    #[serde(default)]
+    pub github_account: Option<String>,
+    #[serde(default)]
+    pub github_user_id: Option<i64>,
+    #[serde(default)]
+    pub bound_platform_id: Option<i64>,
+}
+
+/// Response of `GET /api/integrations/github-app/oauth/start` — the GitHub App
+/// install URL the user opens to connect. Mirrors the portal's response shape
+/// (`{ ok, install_url }`); the CLI only needs `install_url`. GitHub returns the
+/// resolved `installation_id` to the App's configured redirect, not to the CLI,
+/// so there is no result/poll endpoint — the user reads it from that redirect.
+#[derive(Debug, Clone, Deserialize)]
+pub struct OAuthStart {
+    pub install_url: String,
+}
+
+/// Minimal projection of `GET /api/platforms/:platform/deployments/:id/status`
+/// — enough to gate activation on the release build, matching the portal's
+/// poll. `state` is one of `no_ci` | `pending` | `building` | `releasing` |
+/// `ready` | `failed`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeploymentStatusResult {
+    pub state: String,
+    #[serde(default)]
+    pub message: Option<String>,
+}
+
+/// Envelope around a single source row (`{ ok, source }`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct SourceResult {
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub ok: bool,
+    pub source: AppSource,
 }
 
 // ── Local state (.aomi/deployment.json) ─────────────────────────────────────
@@ -251,9 +325,12 @@ pub struct LocalDeploymentState {
 
 impl LocalDeployment {
     /// Build local state from a fresh deploy response (deployed=true, nothing
-    /// activated yet).
-    pub fn from_deploy(resp: DeployResult) -> Self {
+    /// activated yet). `app_source_id` is the connected source the CLI deployed
+    /// from; the backend omits it from the response, so we record it here for
+    /// later re-deploys / `activate` to auto-resolve.
+    pub fn from_deploy(resp: DeployResult, app_source_id: i64) -> Self {
         let mut deployment = resp.deployment;
+        deployment.source.app_source_id = Some(app_source_id);
         for app in &mut deployment.platform.apps {
             app.activated = Some(false);
         }
@@ -309,6 +386,17 @@ impl LocalDeployment {
             .iter()
             .map(|a| a.name.clone())
             .collect()
+    }
+
+    /// The connected source id recorded by the last deploy, if any.
+    pub fn app_source_id(&self) -> Option<i64> {
+        self.deployment.source.app_source_id
+    }
+
+    /// Record the connected source id (used by `source sync` / `scaffold` to
+    /// patch an existing deployment record so the next deploy auto-resolves it).
+    pub fn set_app_source_id(&mut self, app_source_id: i64) {
+        self.deployment.source.app_source_id = Some(app_source_id);
     }
 
     /// The recorded release tag for an app from the last deploy.
