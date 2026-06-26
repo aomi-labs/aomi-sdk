@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use clap::{Args, Subcommand};
 
-use super::shared::{APP_SOURCE_ID_ENV, resolve_activation};
+use super::shared::{APP_SOURCE_ID_ENV, git_context, resolve_activation};
 use crate::deploy::backend::BackendClient;
 use crate::deploy::platform::{Platform, normalize_github_repo};
 use crate::deploy::types::{LocalDeployment, SourceResult, SyncSourceInput};
@@ -105,7 +105,10 @@ fn report_source(result: &SourceResult, path: &Path, json: bool, verb: &str) -> 
 /// (if one exists) so the next deploy auto-resolves it. Returns the written
 /// path, or `None` when there's no deployment record yet.
 fn persist_app_source_id(path: &Path, app_source_id: i64) -> Option<PathBuf> {
-    let mut state = LocalDeployment::read(path).ok().flatten()?;
+    let repo_root = git_context(path)
+        .map(|(root, _)| root)
+        .unwrap_or_else(|_| path.to_path_buf());
+    let mut state = LocalDeployment::read(&repo_root).ok().flatten()?;
     state.set_app_source_id(app_source_id);
-    state.write(path).ok()
+    state.write(&repo_root).ok()
 }

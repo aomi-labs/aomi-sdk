@@ -13,7 +13,7 @@
 //! deploy                     # deploy tracked aomi.toml apps from a source ref
 //!   --platform <NAME>        # aomi.toml [app].platform (default community)
 //!   --app-source-id <ID>     # connected GitHub App install (AOMI_APP_SOURCE_ID)
-//!   --branch <NAME>          # deploy this source branch (backend resolves it)
+//!   --branch <NAME>          # deprecated; checkout the branch locally instead
 //!   --commit <SHA>           # deploy this source commit (default: HEAD)
 //!   --aomi-toml <PATH>       # repeatable; default: all tracked aomi.toml
 //!   --backend <URL>          # AOMI_BACKEND_URL

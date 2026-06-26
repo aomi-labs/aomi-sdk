@@ -20,29 +20,6 @@ use serde::{Deserialize, Serialize, Serializer};
 const DEPLOYMENT_DIR: &str = ".aomi";
 const DEPLOYMENT_FILE: &str = "deployment.json";
 
-// ── Source ref ─────────────────────────────────────────────────────────────
-
-/// `{ "kind": "branch", "value": "main" }` or `{ "kind": "commit", "value": "<sha>" }`.
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum SourceRef {
-    Branch { value: String },
-    Commit { value: String },
-}
-
-impl SourceRef {
-    pub fn branch(value: impl Into<String>) -> Self {
-        SourceRef::Branch {
-            value: value.into(),
-        }
-    }
-    pub fn commit(value: impl Into<String>) -> Self {
-        SourceRef::Commit {
-            value: value.into(),
-        }
-    }
-}
-
 // ── Deploy ─────────────────────────────────────────────────────────────────
 
 /// Mirrors TypeScript `DeployStatus`; the backend may add more status strings.
@@ -56,7 +33,8 @@ pub type CiStatus = String;
 pub struct DeployInput {
     /// The connected GitHub App install (`app_source`) to deploy from.
     pub app_source_id: i64,
-    pub source_ref: SourceRef,
+    /// Resolved immutable source commit SHA. Branches are resolved before this request.
+    pub source_ref: String,
     pub aomi_toml_paths: Vec<String>,
     /// Preview the deployment plan; may materialize backend source metadata but opens no PR.
     #[serde(default, skip_serializing_if = "is_false")]
@@ -87,7 +65,7 @@ pub struct Source {
     #[serde(default)]
     pub owner_repo_name: String,
     #[serde(rename = "ref")]
-    pub source_ref: SourceRef,
+    pub source_ref: String,
     pub commit_hash: String,
     pub aomi_toml_paths: Vec<String>,
     /// The connected GitHub App install (`app_source`) this deploy ran from.

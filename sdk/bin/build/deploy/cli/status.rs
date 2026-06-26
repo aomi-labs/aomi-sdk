@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use anyhow::{Result, anyhow};
 use clap::Args;
 
-use super::shared::{bin_name, resolve_activation_token, resolve_backend};
+use super::shared::{bin_name, git_context, resolve_activation_token, resolve_backend};
 use crate::deploy::status::StatusResult;
 use crate::deploy::types::LocalDeployment;
 
@@ -35,10 +35,11 @@ pub struct StatusArgs {
 
 impl StatusArgs {
     pub async fn run(self) -> Result<()> {
-        let state = LocalDeployment::read(&self.path)?.ok_or_else(|| {
+        let (git_root, _) = git_context(&self.path)?;
+        let state = LocalDeployment::read(&git_root)?.ok_or_else(|| {
             anyhow!(
                 "no .aomi/deployment.json at {} — run `{} deploy` first",
-                self.path.display(),
+                git_root.display(),
                 bin_name()
             )
         })?;

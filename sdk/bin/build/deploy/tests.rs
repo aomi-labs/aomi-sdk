@@ -9,11 +9,10 @@ use clap::Parser;
 use serde_json::json;
 use tempfile::TempDir;
 
-use super::cli::{ActivateArgs, DeployArgs};
+use super::cli::{ActivateArgs, DeployArgs, StatusArgs};
 use super::platform::Platform;
 use super::types::{
     ActivateInput, ActivateResult, DeployInput, DeployResult, LocalDeployment, ReleaseTags,
-    SourceRef,
 };
 
 // ── deploy: arg parsing ─────────────────────────────────────────────────────
@@ -102,38 +101,33 @@ fn source_ref_defaults_to_head_commit() {
     let head = repo.head();
 
     let args = deploy_args(repo.root());
-    assert_eq!(
-        args.source_ref(repo.root()).unwrap(),
-        SourceRef::commit(head)
-    );
+    assert_eq!(args.source_ref(repo.root()).unwrap(), head);
 }
 
 #[test]
-fn source_ref_honors_branch_and_commit_flags() {
+fn source_ref_rejects_branch_and_honors_commit_flag() {
     let repo = TestRepo::new();
     repo.write_aomi_toml("", "root");
     repo.commit("init");
 
     let mut args = deploy_args(repo.root());
     args.branch = Some("release".into());
-    assert_eq!(
-        args.source_ref(repo.root()).unwrap(),
-        SourceRef::branch("release")
-    );
+    assert!(args.source_ref(repo.root()).is_err());
 
     let mut args = deploy_args(repo.root());
     args.commit = Some("0badc0de".into());
-    assert_eq!(
-        args.source_ref(repo.root()).unwrap(),
-        SourceRef::commit("0badc0de")
-    );
+    assert_eq!(args.source_ref(repo.root()).unwrap(), "0badc0de");
+
+    let mut args = deploy_args(repo.root());
+    args.commit = Some("main".into());
+    assert!(args.source_ref(repo.root()).is_err());
 }
 
 #[test]
 fn deploy_input_serializes_widget_contract_body() {
     let input = DeployInput {
         app_source_id: 42,
-        source_ref: SourceRef::branch("release"),
+        source_ref: "0badc0de".to_string(),
         aomi_toml_paths: vec!["aomi.toml".into(), "apps/bot/aomi.toml".into()],
         preflight: true,
     };
@@ -142,7 +136,7 @@ fn deploy_input_serializes_widget_contract_body() {
         serde_json::to_value(&input).unwrap(),
         json!({
             "app_source_id": 42,
-            "source_ref": { "kind": "branch", "value": "release" },
+            "source_ref": "0badc0de",
             "aomi_toml_paths": ["aomi.toml", "apps/bot/aomi.toml"],
             "preflight": true
         })
@@ -212,7 +206,7 @@ fn sample_state() -> LocalDeployment {
         "source": {
             "installation_id": 1, "repository_id": 2,
             "repository_link": "https://github.com/a/b.git",
-            "ref": { "kind": "branch", "value": "main" },
+            "ref": "abc1234",
             "commit_hash": "abc1234", "aomi_toml_paths": ["aomi.toml", "apps/b2/aomi.toml"]
         },
         "platform": {
@@ -524,7 +518,7 @@ fn deploy_records_app_source_id_and_round_trips() {
             "source": {
                 "installation_id": 1, "repository_id": 2,
                 "repository_link": "https://github.com/a/b.git",
-                "ref": { "kind": "branch", "value": "main" },
+                "ref": "abc1234",
                 "commit_hash": "abc1234", "aomi_toml_paths": ["aomi.toml"]
             },
             "platform": {
@@ -563,6 +557,61 @@ fn deploy_records_app_source_id_and_round_trips() {
             .app_source_id(),
         Some(321)
     );
+}
+
+#[test]
+fn deploy_reads_recorded_source_id_from_repo_root_state() {
+    let repo = TestRepo::new();
+    repo.write_aomi_toml("apps/bot", "bot");
+    repo.commit("init");
+
+    let mut state = sample_state();
+    state.set_app_source_id(777);
+    state.write(repo.root()).unwrap();
+
+    let app_dir = repo.path("apps/bot");
+    assert!(
+        LocalDeployment::read(&app_dir).unwrap().is_none(),
+        "deployment state is intentionally rooted at the source repo"
+    );
+
+    let args = deploy_args(&app_dir);
+    assert_eq!(args.recorded_app_source_id(repo.root()), Some(777));
+}
+
+#[tokio::test]
+async fn status_reads_deployment_from_repo_root_when_path_is_app_dir() {
+    let repo = TestRepo::new();
+    repo.write_aomi_toml("apps/bot", "bot");
+    repo.commit("init");
+    sample_state().write(repo.root()).unwrap();
+
+    StatusArgs {
+        backend: Some(String::new()),
+        path: repo.path("apps/bot"),
+        activation_token: None,
+        json: true,
+    }
+    .run()
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn activate_dry_run_reads_deployment_from_repo_root_when_path_is_app_dir() {
+    let repo = TestRepo::new();
+    repo.write_aomi_toml("apps/bot", "bot");
+    repo.commit("init");
+    sample_state().write(repo.root()).unwrap();
+
+    ActivateArgs {
+        path: repo.path("apps/bot"),
+        dry_run: true,
+        ..activate_args()
+    }
+    .run()
+    .await
+    .unwrap();
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────

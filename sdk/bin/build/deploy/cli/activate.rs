@@ -6,7 +6,8 @@ use anyhow::{Result, anyhow, bail};
 use clap::Args;
 
 use super::shared::{
-    ACTIVATION_TOKEN_ENV, BACKEND_URL_ENV, bin_name, resolve_activation_token, resolve_backend,
+    ACTIVATION_TOKEN_ENV, BACKEND_URL_ENV, bin_name, git_context, resolve_activation_token,
+    resolve_backend,
 };
 use crate::deploy::backend::BackendClient;
 use crate::deploy::platform::Platform;
@@ -59,10 +60,11 @@ pub struct ActivateArgs {
 
 impl ActivateArgs {
     pub async fn run(self) -> Result<()> {
-        let mut state = LocalDeployment::read(&self.path)?.ok_or_else(|| {
+        let (git_root, _) = git_context(&self.path)?;
+        let mut state = LocalDeployment::read(&git_root)?.ok_or_else(|| {
             anyhow!(
                 "no .aomi/deployment.json at {} — run `{} deploy` first",
-                self.path.display(),
+                git_root.display(),
                 bin_name()
             )
         })?;
@@ -97,7 +99,7 @@ impl ActivateArgs {
         // results with a partial-failure shape.
         let response = client.activate(&platform, &request).await?;
         state.apply_target_activation(&response);
-        state.write(&self.path)?;
+        state.write(&git_root)?;
 
         if self.json {
             println!("{}", serde_json::to_string_pretty(&response)?);

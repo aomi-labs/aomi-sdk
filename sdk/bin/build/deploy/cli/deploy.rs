@@ -14,7 +14,7 @@ use super::shared::{
 use crate::deploy::app::AomiAppFiles;
 use crate::deploy::backend::BackendClient;
 use crate::deploy::platform::Platform;
-use crate::deploy::types::{DeployInput, LocalDeployment, SourceRef};
+use crate::deploy::types::{DeployInput, LocalDeployment};
 
 pub async fn run(args: DeployArgs) -> eyre::Result<()> {
     args.run().await.map_err(crate::git_error)
@@ -33,7 +33,7 @@ pub struct DeployArgs {
     #[arg(long = "app-source-id", value_name = "ID")]
     pub app_source_id: Option<i64>,
 
-    /// Deploy this source branch; the backend resolves it to a commit.
+    /// Deprecated. Backend deploy accepts immutable commits only; checkout the branch locally.
     #[arg(long, value_name = "NAME", conflicts_with = "commit")]
     pub branch: Option<String>,
 
@@ -69,7 +69,7 @@ impl DeployArgs {
         let platform = self.platform(&git_root, &start_dir);
         let source_ref = self.source_ref(&git_root)?;
         let aomi_toml_paths = self.aomi_toml_paths(&git_root)?;
-        let app_source_id = self.resolve_app_source_id()?;
+        let app_source_id = self.resolve_app_source_id(&git_root)?;
 
         let request = DeployInput {
             app_source_id,
@@ -132,7 +132,7 @@ impl DeployArgs {
         err: anyhow::Error,
         platform: &Platform,
         app_source_id: i64,
-        source_ref: &SourceRef,
+        source_ref: &str,
         token_source: CredentialSource,
     ) -> anyhow::Error {
         let msg = err.to_string();
@@ -157,8 +157,9 @@ impl DeployArgs {
     }
 
     /// Preflight: POST with `preflight: true` when a backend + token are
-    /// available (the backend resolves the branch and validates scope);
-    /// otherwise print the request we would send, fully offline.
+    /// available (the backend validates source commit scope and renders the
+    /// deployment record); otherwise print the request we would send, fully
+    /// offline.
     async fn run_preflight(&self, platform: &Platform, request: &DeployInput) -> Result<()> {
         match (self.backend_url().ok(), activation_token().ok()) {
             (Some(url), Some(token)) => {
@@ -188,14 +189,17 @@ impl DeployArgs {
             .unwrap_or_else(Platform::community)
     }
 
-    pub(crate) fn source_ref(&self, git_root: &Path) -> Result<SourceRef> {
-        if let Some(branch) = self
+    pub(crate) fn source_ref(&self, git_root: &Path) -> Result<String> {
+        if self
             .branch
             .as_deref()
             .map(str::trim)
             .filter(|b| !b.is_empty())
+            .is_some()
         {
-            return Ok(SourceRef::branch(branch));
+            bail!(
+                "--branch is not supported by the current backend deploy contract; checkout the branch locally or pass --commit with a resolved SHA"
+            );
         }
         if let Some(commit) = self
             .commit
@@ -203,9 +207,9 @@ impl DeployArgs {
             .map(str::trim)
             .filter(|c| !c.is_empty())
         {
-            return Ok(SourceRef::commit(commit));
+            return validate_source_commit(commit);
         }
-        Ok(SourceRef::commit(head_commit(git_root)?))
+        validate_source_commit(&head_commit(git_root)?)
     }
 
     pub(crate) fn aomi_toml_paths(&self, git_root: &Path) -> Result<Vec<String>> {
@@ -235,7 +239,7 @@ impl DeployArgs {
         })
     }
 
-    fn resolve_app_source_id(&self) -> Result<i64> {
+    pub(crate) fn resolve_app_source_id(&self, git_root: &Path) -> Result<i64> {
         // Resolution order: flag → env → the id recorded by a prior deploy /
         // `source sync` in `.aomi/deployment.json`. The last step is what lets a
         // re-deploy run with no `--app-source-id` once the source is known.
@@ -248,12 +252,7 @@ impl DeployArgs {
         {
             return Ok(id);
         }
-        if let Some(id) = LocalDeployment::read(&self.path)
-            .ok()
-            .flatten()
-            .and_then(|state| state.app_source_id())
-            .filter(|id| *id > 0)
-        {
+        if let Some(id) = self.recorded_app_source_id(git_root) {
             return Ok(id);
         }
         Err(anyhow!(
@@ -262,6 +261,14 @@ impl DeployArgs {
              then run `aomi-build source sync --repo <owner/repo>` (or use the app_source id \
              ops/the portal issued you)."
         ))
+    }
+
+    pub(crate) fn recorded_app_source_id(&self, git_root: &Path) -> Option<i64> {
+        LocalDeployment::read(git_root)
+            .ok()
+            .flatten()
+            .and_then(|state| state.app_source_id())
+            .filter(|id| *id > 0)
     }
 }
 
@@ -278,10 +285,16 @@ fn activation_token_with_source() -> Result<(String, CredentialSource)> {
     })
 }
 
-fn source_ref_label(source_ref: &SourceRef) -> String {
-    match source_ref {
-        SourceRef::Branch { value } => format!("branch `{value}`"),
-        SourceRef::Commit { value } => format!("commit `{value}`"),
+fn source_ref_label(source_ref: &str) -> String {
+    format!("commit `{source_ref}`")
+}
+
+fn validate_source_commit(value: &str) -> Result<String> {
+    let commit = value.trim().to_ascii_lowercase();
+    if (7..=40).contains(&commit.len()) && commit.chars().all(|c| c.is_ascii_hexdigit()) {
+        Ok(commit)
+    } else {
+        bail!("source commit must be a git commit SHA (7-40 hex chars), got `{value}`")
     }
 }
 
