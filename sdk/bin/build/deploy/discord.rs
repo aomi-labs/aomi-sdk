@@ -103,7 +103,7 @@ impl ActivationRequest {
     pub async fn post(&self) -> Result<()> {
         if DISCORD_WEBHOOK.contains("REPLACE_ME") || DISCORD_ADMIN.contains("REPLACE_ME") {
             bail!(
-                "Discord request target is not configured in sdk/bin/build/hosted/discord.rs; \
+                "Discord request target is not configured in sdk/bin/build/deploy/discord.rs; \
                  run `aomi-build request --dry-run` and post the message manually"
             );
         }

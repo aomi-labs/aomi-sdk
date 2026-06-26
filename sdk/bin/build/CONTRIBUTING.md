@@ -117,18 +117,18 @@ Resolution order for each input: CLI flag (`--backend`, `--app-source-id`,
 POST /api/platforms/community/deploy
 {
   "app_source_id": 123,
-  "source_ref": { "kind": "branch", "value": "main" },
+  "source_ref": "<commit-sha>",
   "aomi_toml_paths": ["aomi.toml"],
-  "dry_run": false
+  "preflight": false
 }
 ```
 
-Run `--dry-run` first: with credentials it validates source resolution, archive
-fetch, `aomi.toml` parsing, and backend manifest generation without writing the
-platform repo; without credentials it just prints the request.
+Run `--preflight` first: with credentials it validates source commit access,
+archive fetch, `aomi.toml` parsing, and backend manifest generation without
+opening a platform PR; without credentials it just prints the request.
 
-The backend then: resolves the source ref to a commit, fetches the archive,
-stages each app under `apps/<installation-id>/<repo-key>/<app>/`, writes
+The backend then: fetches the exact source commit archive, stages each app under
+`apps/<installation-id>/<repo-key>/<app>/`, writes
 `.aomi/deployment.json`, pushes a candidate branch
 (`<owner>/<repo>/<installation-id>/<short-commit>`), and opens/updates a platform
 PR against `publish`. Platform CI validates the manifest and publishes a release

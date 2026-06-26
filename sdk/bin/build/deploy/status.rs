@@ -1,13 +1,11 @@
-//! `aomi-build status` — local deploy state plus the backend's registry/runtime
+//! `aomi-build status` — local deploy state plus the backend's app/runtime
 //! view, per app. GitHub credentials and CI/release verification live on the
 //! backend; the CLI never calls the GitHub API here.
 
 use std::time::Duration;
 
-use serde::Serialize;
-use serde_json::Value;
-
 use super::types::LocalDeployment;
+use serde::Serialize;
 
 const UA: &str = concat!("aomi-build/", env!("CARGO_PKG_VERSION"));
 const PROBE_TIMEOUT: Duration = Duration::from_secs(12);
@@ -46,34 +44,39 @@ pub enum BackendAppStatus {
 
 impl StatusResult {
     /// Collect a report from local state, optionally enriched with the backend's
-    /// live view (a single `GET /api/control/apps/status`).
-    pub async fn collect(state: &LocalDeployment, backend_url: Option<String>) -> Self {
-        let rows = match &backend_url {
-            Some(url) => fetch_apps(url).await,
-            None => None,
+    /// live view for each deployed release.
+    pub async fn collect(
+        state: &LocalDeployment,
+        backend_url: Option<String>,
+        activation_token: Option<String>,
+    ) -> Self {
+        let platform = state.deployment.platform.platform.clone();
+        let client = match (&backend_url, &activation_token) {
+            (Some(url), Some(token)) => probe_client(url, token).ok(),
+            _ => None,
         };
 
-        let apps = state
-            .deployment
-            .platform
-            .apps
-            .iter()
-            .map(|app| AppStatus {
+        let mut apps = Vec::with_capacity(state.deployment.platform.apps.len());
+        for app in &state.deployment.platform.apps {
+            let backend = match &client {
+                None => BackendAppStatus::NotChecked,
+                Some(client) => {
+                    match fetch_app(client, &platform, &app.name, &app.release_tag).await {
+                        Ok(status) => status,
+                        Err(detail) => BackendAppStatus::Unknown { detail },
+                    }
+                }
+            };
+            apps.push(AppStatus {
                 name: app.name.clone(),
                 release_tag: app.release_tag.clone(),
                 activated_locally: app.activated.unwrap_or(false),
-                backend: match &rows {
-                    None => BackendAppStatus::NotChecked,
-                    Some(Err(detail)) => BackendAppStatus::Unknown {
-                        detail: detail.clone(),
-                    },
-                    Some(Ok(rows)) => backend_row(rows, &app.name),
-                },
-            })
-            .collect();
+                backend,
+            });
+        }
 
         Self {
-            platform: state.deployment.platform.platform.clone(),
+            platform,
             pr_url: state.deployment.platform.pr_url.clone().unwrap_or_default(),
             deploy_branch: state.deployment.platform.deploy_branch.clone(),
             deployed: state.state.deployed,
@@ -124,52 +127,77 @@ impl StatusResult {
     }
 }
 
-fn backend_row(rows: &[Value], name: &str) -> BackendAppStatus {
-    let needle = name.trim().to_ascii_lowercase();
-    let Some(row) = rows.iter().find(|row| {
-        row.get("name")
-            .and_then(|n| n.as_str())
-            .map(|n| n.eq_ignore_ascii_case(&needle))
-            .unwrap_or(false)
-    }) else {
-        return BackendAppStatus::NotRegistered;
-    };
-    BackendAppStatus::Found {
-        is_active: row
-            .get("is_active")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        loaded: row.get("loaded").and_then(Value::as_bool).unwrap_or(false),
-    }
+struct ProbeClient {
+    base_url: String,
+    bearer: String,
+    http: reqwest::Client,
 }
 
-/// `Some(Ok(rows))` on success, `Some(Err(detail))` on failure. Returns the
-/// `apps` array from `GET /api/control/apps/status`.
-async fn fetch_apps(backend_url: &str) -> Option<Result<Vec<Value>, String>> {
-    let base = backend_url.trim().trim_end_matches('/');
+fn probe_client(backend_url: &str, bearer: &str) -> Result<ProbeClient, String> {
+    let base_url = backend_url.trim().trim_end_matches('/').to_string();
+    if base_url.is_empty() || bearer.trim().is_empty() {
+        return Err("missing backend URL or activation token".to_string());
+    }
     let client = reqwest::Client::builder()
         .timeout(PROBE_TIMEOUT)
         .connect_timeout(CONNECT_TIMEOUT)
         .user_agent(UA)
         .build()
         .unwrap_or_else(|_| reqwest::Client::new());
+    Ok(ProbeClient {
+        base_url,
+        bearer: bearer.to_string(),
+        http: client,
+    })
+}
 
-    let result = async {
-        let resp = client
-            .get(format!("{base}/api/control/apps/status"))
-            .send()
-            .await
-            .map_err(|e| e.to_string())?;
-        if !resp.status().is_success() {
-            return Err(format!("backend returned {}", resp.status()));
-        }
-        let value: Value = resp.json().await.map_err(|e| e.to_string())?;
-        Ok(value
-            .get("apps")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default())
+async fn fetch_app(
+    client: &ProbeClient,
+    platform: &str,
+    name: &str,
+    release_tag: &str,
+) -> Result<BackendAppStatus, String> {
+    let mut url = reqwest::Url::parse(&format!("{}/", client.base_url))
+        .map_err(|e| format!("invalid backend URL: {e}"))?;
+    {
+        let mut segments = url
+            .path_segments_mut()
+            .map_err(|_| "backend URL cannot be a base URL".to_string())?;
+        segments
+            .push("api")
+            .push("platforms")
+            .push(platform)
+            .push("apps")
+            .push(name);
     }
-    .await;
-    Some(result)
+    url.query_pairs_mut()
+        .append_pair("release_tag", release_tag);
+
+    let resp = client
+        .http
+        .get(url)
+        .bearer_auth(&client.bearer)
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+    if resp.status().as_u16() == 404 {
+        return Ok(BackendAppStatus::NotRegistered);
+    }
+    if !resp.status().is_success() {
+        return Err(format!("backend returned {}", resp.status()));
+    }
+    let value: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let Some(app) = value.get("app") else {
+        return Ok(BackendAppStatus::NotRegistered);
+    };
+    Ok(BackendAppStatus::Found {
+        is_active: app
+            .get("is_active")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+        loaded: app
+            .get("loaded")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false),
+    })
 }
