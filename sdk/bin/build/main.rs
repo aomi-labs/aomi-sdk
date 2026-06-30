@@ -8,6 +8,7 @@ mod compile;
 mod deploy;
 mod init;
 mod new_app;
+mod sdk_guard;
 mod spec_load;
 mod specs;
 mod test_schema;
@@ -60,6 +61,8 @@ enum Cmd {
     Source(cli::SourceArgs),
     /// List a platform's apps.
     Apps(cli::AppsArgs),
+    /// Check or fix the app repo's aomi-sdk pin against the backend.
+    Sdk(sdk_guard::SdkArgs),
     /// Ask platform ops for legacy onboarding details.
     Request(cli::RequestArgs),
 }
@@ -86,6 +89,7 @@ async fn main() -> Result<()> {
         Cmd::Token(args) => cli::token::run(args).await,
         Cmd::Source(args) => cli::source::run(args).await,
         Cmd::Apps(args) => cli::apps::run(args).await,
+        Cmd::Sdk(args) => sdk_guard::run(args).await,
         Cmd::Request(args) => cli::request::run(args).await,
     }
 }

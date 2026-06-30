@@ -367,6 +367,7 @@ async fn deploy_then_activate(
             path: dir.to_path_buf(),
             preflight: false,
             json: false,
+            fix_sdk: true,
         }
         .run()
         .await;
@@ -438,6 +439,7 @@ async fn deploy_then_activate(
             path: dir.to_path_buf(),
             dry_run: false,
             json: false,
+            fix_sdk: true,
         }
         .run()
         .await;

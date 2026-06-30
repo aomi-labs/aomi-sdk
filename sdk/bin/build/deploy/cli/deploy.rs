@@ -61,6 +61,11 @@ pub struct DeployArgs {
     /// Print machine-readable JSON.
     #[arg(long)]
     pub json: bool,
+
+    /// Rewrite Cargo.toml/Cargo.lock to the backend-required aomi-sdk version
+    /// before deploying when a mismatch is detected.
+    #[arg(long)]
+    pub fix_sdk: bool,
 }
 
 impl DeployArgs {
@@ -83,6 +88,7 @@ impl DeployArgs {
         }
 
         let backend_url = self.backend_url()?;
+        crate::sdk_guard::ensure_project_sdk(&git_root, Some(&backend_url), self.fix_sdk).await?;
         let (token, token_source) = activation_token_with_source()?;
         let response = BackendClient::new(backend_url, token)?
             .deploy(&platform, &request)
