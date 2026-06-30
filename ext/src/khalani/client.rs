@@ -713,7 +713,6 @@ pub mod types {
     ///              "amountOut",
     ///              "expectedDurationSeconds",
     ///              "quoteExpiresAt",
-    ///              "supportedDepositMethods",
     ///              "tags",
     ///              "validBefore"
     ///            ],
@@ -801,7 +800,6 @@ pub mod types {
     ///        "amountOut",
     ///        "expectedDurationSeconds",
     ///        "quoteExpiresAt",
-    ///        "supportedDepositMethods",
     ///        "tags",
     ///        "validBefore"
     ///      ],
@@ -870,7 +868,6 @@ pub mod types {
     ///    "amountOut",
     ///    "expectedDurationSeconds",
     ///    "quoteExpiresAt",
-    ///    "supportedDepositMethods",
     ///    "tags",
     ///    "validBefore"
     ///  ],
@@ -916,7 +913,11 @@ pub mod types {
         pub expected_duration_seconds: i64,
         #[serde(rename = "quoteExpiresAt")]
         pub quote_expires_at: i64,
-        #[serde(rename = "supportedDepositMethods")]
+        #[serde(
+            rename = "supportedDepositMethods",
+            default,
+            skip_serializing_if = "::std::vec::Vec::is_empty"
+        )]
         pub supported_deposit_methods: ::std::vec::Vec<::std::string::String>,
         pub tags: ::std::vec::Vec<::std::string::String>,
         #[serde(rename = "validBefore")]

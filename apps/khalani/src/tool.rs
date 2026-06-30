@@ -4,7 +4,7 @@
 //!
 //!   * `khalani_quote`            — POST /v1/quotes
 //!   * `khalani_build_deposit`    — POST /v1/deposit/build, emits the routed
-//!     `stage_tx → enforce(simulate_batch + commit_txs) →
+//!     `evm_stage_tx → simulate_batch → evm_commit_txs →
 //!     submit_khalani_order` chain.
 //!   * `submit_khalani_order`     — PUT /v1/deposit/submit, fired by the
 //!     `OnBoundEvent` continuation.
@@ -71,6 +71,7 @@ fn resolve_evm_wallet(arg: Option<String>, ctx: &DynToolCallCtx) -> Result<Strin
 /// `eth_sendTransaction` is always the deposit (`deposit: true`), preceded
 /// by zero or more ERC-20 approval txs (`waitForReceipt: true`).
 struct StagedTx {
+    chain_id: u64,
     to: String,
     value: String,
     data: String,
@@ -82,11 +83,22 @@ fn extract_staged_txs(
     quote_id: &str,
 ) -> Result<Vec<StagedTx>, String> {
     let mut staged = Vec::new();
+    let mut current_chain_id = None;
     for entry in &build_response.approvals {
+        if entry.request.method == "wallet_switchEthereumChain" {
+            current_chain_id = entry
+                .request
+                .params
+                .first()
+                .and_then(|param| param.chain_id.as_deref())
+                .map(parse_chain_id)
+                .transpose()?;
+            continue;
+        }
         if entry.request.method != "eth_sendTransaction" {
             continue;
         }
-        staged.push(stage_tx_from_entry(entry, quote_id)?);
+        staged.push(stage_tx_from_entry(entry, quote_id, current_chain_id)?);
     }
     if staged.is_empty() {
         return Err(
@@ -99,18 +111,26 @@ fn extract_staged_txs(
 fn stage_tx_from_entry(
     entry: &BuildDepositResponseApprovalsItem,
     quote_id: &str,
+    current_chain_id: Option<u64>,
 ) -> Result<StagedTx, String> {
     let params = entry
         .request
         .params
         .first()
         .ok_or_else(|| "[khalani] eth_sendTransaction missing params[0]".to_string())?;
+    let chain_id = params
+        .chain_id
+        .as_deref()
+        .map(parse_chain_id)
+        .transpose()?
+        .or(current_chain_id)
+        .ok_or_else(|| "[khalani] eth_sendTransaction missing chainId".to_string())?;
     let to = params
         .to
         .clone()
         .ok_or_else(|| "[khalani] tx missing `to`".to_string())?;
     let data = params.data.clone().unwrap_or_else(|| "0x".to_string());
-    let value = params.value.clone().unwrap_or_else(|| "0".to_string());
+    let value = normalize_tx_value(params.value.as_deref())?;
     let is_deposit = entry.deposit.unwrap_or(false);
     let description = if is_deposit {
         format!("Khalani deposit for quote {quote_id}")
@@ -118,11 +138,45 @@ fn stage_tx_from_entry(
         format!("Khalani approval for quote {quote_id}")
     };
     Ok(StagedTx {
+        chain_id,
         to,
         value,
         data,
         description,
     })
+}
+
+fn parse_chain_id(value: &str) -> Result<u64, String> {
+    let value = value.trim();
+    if let Some(hex) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
+        return u64::from_str_radix(hex, 16)
+            .map_err(|err| format!("[khalani] invalid hex chainId `{value}`: {err}"));
+    }
+    value
+        .parse()
+        .map_err(|err| format!("[khalani] invalid chainId `{value}`: {err}"))
+}
+
+fn normalize_tx_value(value: Option<&str>) -> Result<String, String> {
+    let Some(value) = value else {
+        return Ok("0".to_string());
+    };
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok("0".to_string());
+    }
+    if let Some(hex) = value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
+        return u128::from_str_radix(hex, 16)
+            .map(|value| value.to_string())
+            .map_err(|err| format!("[khalani] invalid hex tx value `{value}`: {err}"));
+    }
+    Ok(value.to_string())
 }
 
 // ============================================================================
@@ -198,7 +252,7 @@ pub(crate) struct BuildDepositArgs {
     /// Sender EVM wallet. Defaults to the host-connected EVM wallet.
     #[serde(default)]
     pub wallet: Option<String>,
-    /// Slippage tolerance in basis points. Defaults to 50.
+    /// Slippage tolerance in basis points. Use 50 unless the user requested a different tolerance.
     #[serde(default)]
     pub slippage_bps: Option<i64>,
 }
@@ -207,7 +261,7 @@ impl DynAomiTool for BuildDeposit {
     type App = KhalaniApp;
     type Args = BuildDepositArgs;
     const NAME: &'static str = "khalani_build_deposit";
-    const DESCRIPTION: &'static str = "Use after `khalani_quote` once the user has confirmed a route. Builds the on-chain deposit transaction for the chosen quote and emits a routed plan: stage_tx is fired with the deposit calldata; enforcement automatically runs simulate_batch then commit_txs; once the wallet broadcasts, submit_khalani_order is fired as a continuation. Do not call stage_tx / simulate_batch / commit_txs / submit_khalani_order yourself — the route handles them.";
+    const DESCRIPTION: &'static str = "Use after `khalani_quote` once the user has selected a route. Pass `quote_id`, the chosen route's `route_id`, and `slippage_bps` (usually 50). Builds approval/deposit calldata and emits a routed plan: call the returned `evm_stage_tx` steps in order, then `simulate_batch`, then `evm_commit_txs`; once commit returns a tx hash, call the deferred `submit_khalani_order` route.";
 
     fn run_with_routes(
         _app: &KhalaniApp,
@@ -222,7 +276,7 @@ impl DynAomiTool for BuildDeposit {
             from_address: Some(wallet.clone()),
             quote_id: Some(args.quote_id.clone()),
             route_id: args.route_id.clone(),
-            slippage_in_bps: args.slippage_bps,
+            slippage_in_bps: Some(args.slippage_bps.unwrap_or(50)),
             user: Some(wallet.clone()),
             user_address: Some(wallet.clone()),
         };
@@ -241,11 +295,17 @@ impl DynAomiTool for BuildDeposit {
         });
 
         let preview = json!({
-            "status": "awaiting_wallet",
+            "status": "ready_to_stage",
             "quote_id": args.quote_id,
             "route_id": args.route_id,
             "tx_count": staged.len(),
             "tx_targets": staged.iter().map(|t| t.to.clone()).collect::<Vec<_>>(),
+            "execution_order": [
+                "stage every evm_stage_tx route step in order",
+                "simulate_batch with the returned pending_tx_id list",
+                "evm_commit_txs with the same ordered pending_tx_id list",
+                "submit_khalani_order with the tx_hash returned by evm_commit_txs"
+            ],
         });
 
         let last_index = staged.len() - 1;
@@ -254,6 +314,7 @@ impl DynAomiTool for BuildDeposit {
             .enumerate()
             .map(|(i, tx)| {
                 json!({
+                    "chain_id": tx.chain_id,
                     "to": tx.to,
                     "description": tx.description,
                     "data": { "raw": tx.data },
@@ -266,21 +327,13 @@ impl DynAomiTool for BuildDeposit {
         ToolReturn::route(ok(preview)?)
             .next(|next| {
                 for (i, args) in stage_args.iter().enumerate() {
-                    let step = next.add::<host::StageTx>(args.clone());
+                    let step = next.add_named("evm_stage_tx", args.clone());
                     if i == last_index {
                         step.note(
                             "Stage the Khalani deposit. CRITICAL: copy the `data.raw` and `to` \
                              fields BYTE-FOR-BYTE from the args below — do not abbreviate, \
-                             reformat, or truncate the calldata. After this step returns, the \
-                             host automatically simulates and commits the staged txs and waits \
-                             for the wallet.",
-                        )
-                        .enforce(EnforcementPolicy::Continue, |enforce| {
-                            enforce.add::<host::SimulateBatch>(json!({}));
-                            enforce
-                                .add::<host::CommitTxs>(json!({ "aa_preference": "auto" }))
-                                .bind_as("transaction_hash");
-                        });
+                             reformat, or truncate the calldata.",
+                        );
                     } else {
                         step.note(
                             "Stage the ERC-20 approval. CRITICAL: copy `data.raw` and `to` \
@@ -288,10 +341,27 @@ impl DynAomiTool for BuildDeposit {
                         );
                     }
                 }
+                next.add_named("simulate_batch", json!({ "transactions": [] }))
+                    .note(
+                        "After every evm_stage_tx step returns, replace `transactions` with the \
+                         ordered staged ids, e.g. [{\"id\": 1}, {\"id\": 2}]. Do not simulate \
+                         the deposit by itself; approvals must be first in the same batch.",
+                    );
+                next.add_named("evm_commit_txs", json!({ "tx_ids": [] }))
+                    .bind_as("transaction_hash")
+                    .note(
+                        "Only after simulation succeeds, replace `tx_ids` with the same ordered \
+                         pending_tx_id list and submit the batch. This route binds \
+                         `transaction_hash`; use the returned `tx_hash` for the deferred \
+                         submit_khalani_order step.",
+                    );
             })
             .after::<SubmitOrder>(submit_template)
             .awaits("transaction_hash")
-            .note("Deposit landed on-chain — register the order with Khalani.")
+            .note(
+                "Commit returned a transaction hash — register the order with Khalani using \
+                 transaction_hash set to that tx hash.",
+            )
             .try_build()
             .map_err(|e| format!("[khalani] route build: {e}"))
     }
@@ -326,7 +396,7 @@ impl DynAomiTool for SubmitOrder {
     type App = KhalaniApp;
     type Args = SubmitOrderArgs;
     const NAME: &'static str = "submit_khalani_order";
-    const DESCRIPTION: &'static str = "Register a confirmed Khalani deposit so the solver network can pick it up. Triggered automatically by the routed continuation after the wallet broadcasts the deposit tx — `transaction_hash` is filled in by the runtime. Do not invoke directly; respond to the route's prompt.";
+    const DESCRIPTION: &'static str = "Register a confirmed Khalani deposit so the solver network can pick it up. Call after the routed `evm_commit_txs` step returns a tx hash; pass that hash as `transaction_hash`.";
 
     fn run(_app: &KhalaniApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let tx_hash = args.transaction_hash.clone();
@@ -464,5 +534,38 @@ impl DynAomiTool for SearchTokens {
             .map_err(|e| format!("[khalani] search_tokens: {e}"))?
             .into_inner();
         ok(response)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::extract_staged_txs;
+    use aomi_ext::khalani::types::GetQuoteResponse;
+
+    #[test]
+    fn quote_response_allows_routes_without_supported_deposit_methods() {
+        let sample = include_str!("../../../ext/specs/khalani.samples/getQuote.200.json");
+        let quote: GetQuoteResponse =
+            serde_json::from_str(sample).expect("quote sample should deserialize");
+
+        let across = quote
+            .routes
+            .iter()
+            .find(|route| route.route_id == "Across")
+            .expect("sample should include Across route");
+
+        assert!(across.quote.supported_deposit_methods.is_empty());
+    }
+
+    #[test]
+    fn build_deposit_routes_preserve_chain_id_and_normalize_value() {
+        let sample = include_str!("../../../ext/specs/khalani.samples/buildDeposit.200.json");
+        let response = serde_json::from_str(sample).expect("build sample should deserialize");
+
+        let staged = extract_staged_txs(&response, "quote-1").expect("sample should stage txs");
+
+        assert!(!staged.is_empty());
+        assert!(staged.iter().all(|tx| tx.chain_id == 1));
+        assert!(staged.iter().all(|tx| tx.value == "0"));
     }
 }
