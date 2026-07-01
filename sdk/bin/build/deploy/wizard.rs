@@ -262,17 +262,28 @@ async fn openapi_app_flow() -> Result<()> {
         .context("wizard cancelled")?;
 
     if source.starts_with("Use existing") {
-        run_existing_spec_app_flow(&platform, shared, all, force, build)?;
+        let platform_for_codegen = platform.clone();
+        tokio::task::spawn_blocking(move || {
+            run_existing_spec_app_flow(&platform_for_codegen, shared, all, force, build)
+        })
+        .await
+        .context("OpenAPI generation task failed")??;
     } else {
-        let result = crate::new_app::run(NewAppArgs {
-            platform: platform.clone(),
-            from_url,
-            all,
-            force,
-            no_tool: false,
-            no_build: !build,
-            shared,
-        });
+        let platform_for_codegen = platform.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            crate::new_app::run(NewAppArgs {
+                platform: platform_for_codegen,
+                from_url,
+                all,
+                force,
+                no_tool: false,
+                no_build: !build,
+                shared,
+            })
+            .map_err(|e| anyhow!("{e:#}"))
+        })
+        .await
+        .context("OpenAPI generation task failed")?;
 
         if let Err(e) = result {
             print_step_error(&anyhow!("{e:#}"));
