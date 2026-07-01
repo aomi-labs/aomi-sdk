@@ -11,6 +11,9 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use inquire::{Confirm, Select, Text};
 
+use crate::new_app::NewAppArgs;
+use crate::specs::workspace_root;
+
 use super::cli::{ActivateArgs, DeployArgs};
 use super::config::AomiConfig;
 use super::flow;
@@ -24,28 +27,6 @@ pub async fn run() -> Result<()> {
     println!("aomi-build — let's get your app deployed.\n");
     let mut config = AomiConfig::load();
 
-    let backend_url = pick_backend(&config)?;
-    config.backend_url = Some(backend_url.clone());
-
-    // The deploy *destination* platform (a `DbPlatform`, e.g. `community`) —
-    // not the source/template repo it's copied from.
-    let platform = Text::new("Deploy to which platform?")
-        .with_default(config.platform.as_deref().unwrap_or("community"))
-        .prompt()
-        .context("wizard cancelled")?
-        .trim()
-        .to_string();
-    config.platform = Some(platform.clone());
-
-    let token = ensure_token(&mut config, &backend_url, &platform).await?;
-    // Persist what we have so a re-run resumes with backend/token/platform set.
-    // This must succeed: deploy/activate re-read the token from this file (the
-    // `*Args` structs take no token), so a silent failure here would resurface
-    // later as a confusing "no activation token" error.
-    config
-        .save()
-        .context("couldn't save your Aomi config — deploy needs the token on disk")?;
-
     // Main loop: a failed step prints its error and returns here instead of
     // tearing down the wizard. Only an explicit Quit (or Ctrl-C at a prompt)
     // exits.
@@ -54,6 +35,7 @@ pub async fn run() -> Result<()> {
             "What do you want to do?",
             vec![
                 "Deploy the app in a local directory",
+                "Create an OpenAPI-driven app locally",
                 "Scaffold a new app from the example template",
                 "Quit",
             ],
@@ -63,9 +45,14 @@ pub async fn run() -> Result<()> {
 
         let outcome = match choice {
             c if c.starts_with("Deploy") => {
+                let (backend_url, platform, token) = deployment_context(&mut config).await?;
                 existing_dir_flow(&backend_url, &platform, &token).await
             }
-            c if c.starts_with("Scaffold") => scaffold_flow(&backend_url, &platform, &token).await,
+            c if c.starts_with("Create") => openapi_app_flow().await,
+            c if c.starts_with("Scaffold") => {
+                let (backend_url, platform, token) = deployment_context(&mut config).await?;
+                scaffold_flow(&backend_url, &platform, &token).await
+            }
             _ => return Ok(()),
         };
 
@@ -80,6 +67,32 @@ pub async fn run() -> Result<()> {
             return Ok(());
         }
     }
+}
+
+async fn deployment_context(config: &mut AomiConfig) -> Result<(String, String, String)> {
+    let backend_url = pick_backend(config)?;
+    config.backend_url = Some(backend_url.clone());
+
+    // The deploy *destination* platform (a `DbPlatform`, e.g. `community`) —
+    // not the source/template repo it's copied from.
+    let platform = Text::new("Deploy to which platform?")
+        .with_default(config.platform.as_deref().unwrap_or("community"))
+        .prompt()
+        .context("wizard cancelled")?
+        .trim()
+        .to_string();
+    config.platform = Some(platform.clone());
+
+    let token = ensure_token(config, &backend_url, &platform).await?;
+    // Persist what we have so a re-run resumes with backend/token/platform set.
+    // This must succeed: deploy/activate re-read the token from this file (the
+    // `*Args` structs take no token), so a silent failure here would resurface
+    // later as a confusing "no activation token" error.
+    config
+        .save()
+        .context("couldn't save your Aomi config — deploy needs the token on disk")?;
+
+    Ok((backend_url, platform, token))
 }
 
 /// Print a step error exactly (the full anyhow chain) without leaving the
@@ -193,6 +206,226 @@ async fn existing_dir_flow(backend_url: &str, platform: &str, token: &str) -> Re
     let repo = normalize_github_repo(repo.trim())?;
 
     resolve_and_deploy(backend_url, platform, token, &dir, &repo).await
+}
+
+/// Create an app inside the current Aomi workspace using the OpenAPI-driven
+/// codegen pipeline, then optionally hand off the generated stubs to Codex or
+/// Claude for skill-guided curation.
+async fn openapi_app_flow() -> Result<()> {
+    let platform = Text::new("New app/platform name:")
+        .prompt()
+        .context("wizard cancelled")?
+        .trim()
+        .to_string();
+    if platform.is_empty() {
+        bail!("app/platform name is required");
+    }
+
+    let source = Select::new(
+        "OpenAPI source:",
+        vec![
+            "Discover automatically",
+            "Fetch from a known OpenAPI URL",
+            "Use existing apps/<name>/openapi.yaml",
+        ],
+    )
+    .prompt()
+    .context("wizard cancelled")?;
+
+    let from_url = if source.starts_with("Fetch") {
+        Some(
+            Text::new("OpenAPI URL:")
+                .prompt()
+                .context("wizard cancelled")?
+                .trim()
+                .to_string(),
+        )
+    } else {
+        None
+    };
+
+    let shared = Confirm::new("Generate as a shared provider under ext/?")
+        .with_default(false)
+        .prompt()
+        .context("wizard cancelled")?;
+    let all = Confirm::new("Expose every OpenAPI operation as a stub tool?")
+        .with_default(false)
+        .prompt()
+        .context("wizard cancelled")?;
+    let force = Confirm::new("Overwrite existing generated files if present?")
+        .with_default(false)
+        .prompt()
+        .context("wizard cancelled")?;
+    let build = Confirm::new("Run cargo build after generation?")
+        .with_default(true)
+        .prompt()
+        .context("wizard cancelled")?;
+
+    if source.starts_with("Use existing") {
+        run_existing_spec_app_flow(&platform, shared, all, force, build)?;
+    } else {
+        let result = crate::new_app::run(NewAppArgs {
+            platform: platform.clone(),
+            from_url,
+            all,
+            force,
+            no_tool: false,
+            no_build: !build,
+            shared,
+        });
+
+        if let Err(e) = result {
+            print_step_error(&anyhow!("{e:#}"));
+            let handoff = Confirm::new("Open Codex/Claude to draft or repair the OpenAPI spec?")
+                .with_default(true)
+                .prompt()
+                .context("wizard cancelled")?;
+            if handoff {
+                offer_agent_handoff(&platform, shared, AgentTask::DraftSpec)?;
+                return Ok(());
+            }
+            return Err(anyhow!("{e:#}"));
+        }
+    }
+
+    offer_agent_handoff(&platform, shared, AgentTask::CurateTools)?;
+    println!();
+    println!(
+        "Next: commit and push the generated app, then choose \"Deploy the app in a local directory\" from this wizard."
+    );
+    Ok(())
+}
+
+fn run_existing_spec_app_flow(
+    platform: &str,
+    shared: bool,
+    all: bool,
+    force: bool,
+    build: bool,
+) -> Result<()> {
+    println!("=== [1/2] gen-client {platform} ===");
+    crate::client::run(crate::client::GenClientArgs {
+        platform: platform.to_string(),
+        spec: None,
+        out: None,
+        force,
+        shared,
+    })
+    .map_err(|e| anyhow!("{e:#}"))
+    .with_context(|| "gen-client failed")?;
+
+    println!();
+    println!("=== [2/2] gen-tool {platform} ===");
+    crate::tool::run(crate::tool::GenToolArgs {
+        platform: platform.to_string(),
+        spec: None,
+        out: None,
+        all,
+        force,
+        shared,
+    })
+    .map_err(|e| anyhow!("{e:#}"))
+    .with_context(|| "gen-tool failed")?;
+
+    if build {
+        println!();
+        println!("=== [verify] cargo build -p {platform} ===");
+        let root = workspace_root().map_err(|e| anyhow!("{e:#}"))?;
+        let status = Command::new("cargo")
+            .args(["build", "-p", platform])
+            .current_dir(&root)
+            .status()
+            .with_context(|| "failed to spawn cargo")?;
+        if !status.success() {
+            bail!("cargo build -p {platform} failed");
+        }
+    }
+
+    println!();
+    println!("✓ OpenAPI app generation complete");
+    Ok(())
+}
+
+#[derive(Debug, Clone, Copy)]
+enum AgentTask {
+    DraftSpec,
+    CurateTools,
+}
+
+fn offer_agent_handoff(platform: &str, shared: bool, task: AgentTask) -> Result<()> {
+    let mut choices = Vec::new();
+    if command_exists("codex") {
+        choices.push("Open Codex");
+    }
+    if command_exists("claude") {
+        choices.push("Open Claude");
+    }
+    choices.push("Print prompt only");
+    choices.push("Skip");
+
+    let choice = Select::new("Use an agent for the next codegen step?", choices)
+        .prompt()
+        .context("wizard cancelled")?;
+
+    let prompt = agent_prompt(platform, shared, task);
+    match choice {
+        "Open Codex" => run_agent_command("codex", &[prompt.as_str()]),
+        "Open Claude" => run_agent_command("claude", &[prompt.as_str()]),
+        "Print prompt only" => {
+            println!();
+            println!("{prompt}");
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn command_exists(bin: &str) -> bool {
+    Command::new("which")
+        .arg(bin)
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false)
+}
+
+fn run_agent_command(bin: &str, args: &[&str]) -> Result<()> {
+    let root = workspace_root().map_err(|e| anyhow!("{e:#}"))?;
+    let status = Command::new(bin)
+        .args(args)
+        .current_dir(&root)
+        .status()
+        .with_context(|| format!("failed to run {bin}"))?;
+    if !status.success() {
+        bail!("{bin} exited with status {status}");
+    }
+    Ok(())
+}
+
+fn agent_prompt(platform: &str, shared: bool, task: AgentTask) -> String {
+    let spec_path = if shared {
+        format!("ext/specs/{platform}.yaml")
+    } else {
+        format!("apps/{platform}/openapi.yaml")
+    };
+    let app_path = format!("apps/{platform}");
+    match task {
+        AgentTask::DraftSpec => format!(
+            "We are in an Aomi SDK workspace. Draft or repair the OpenAPI spec for `{platform}` at `{spec_path}`. Read `.agents/skills/aomi-app-client-api-gen/SKILL.md` completely and follow it. Ask me for the official docs URL if needed. Keep the spec scoped to the useful user-facing endpoints, write the matching openapi.meta.json sidecar, then run `cargo run --features cli --bin aomi-build -- gen-client {platform}{shared_flag}` and `cargo run --features cli --bin aomi-build -- gen-tool {platform}{shared_flag}`. Keep changes scoped to `{app_path}`{shared_scope}.",
+            shared_flag = if shared {
+                " --shared --force"
+            } else {
+                " --force"
+            },
+            shared_scope = if shared {
+                " and the matching `ext/` generated client/spec files"
+            } else {
+                ""
+            },
+        ),
+        AgentTask::CurateTools => format!(
+            "We are in an Aomi SDK workspace. Curate the generated Aomi app `{app_path}` from mechanical OpenAPI stubs into user-centric tools. Read `.agents/skills/aomi-app-ux-tool-maker/SKILL.md` completely and follow it. Update `{app_path}/src/tool.rs` and `{app_path}/src/lib.rs`, keep the generated client intact unless a small compile fix is required, write or update `{app_path}/test.json` with a seed user_story, then run `cargo fmt --manifest-path {app_path}/Cargo.toml` and `cargo build -p {platform}`. Keep changes scoped to `{app_path}`.",
+        ),
+    }
 }
 
 /// Resolve the connected source for `repo` at `dir` — installing the aomi-build
