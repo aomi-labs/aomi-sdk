@@ -2,6 +2,11 @@
 
 CLI for scaffolding, building, deploying, activating, and testing Aomi apps.
 
+`aomi-build` is the deterministic Rust CLI and lightweight wizard for codegen,
+compile, deploy, status, and activate. For app-from-scratch work that needs
+Codex/Claude, approvals, resumable workflow state, validation loops, and local
+smoke orchestration, use `aomi-workbench` from `../aomi-widget`.
+
 ```
 gen-specs ──▶ gen-client ──▶ gen-tool ──▶ curate ──▶ cargo build ──▶ test.json + e2e runner
    (1)          (2)            (3)         (4)          (5)              (6)

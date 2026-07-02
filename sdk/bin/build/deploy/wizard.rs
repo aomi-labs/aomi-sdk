@@ -287,19 +287,12 @@ async fn openapi_app_flow() -> Result<()> {
 
         if let Err(e) = result {
             print_step_error(&anyhow!("{e:#}"));
-            let handoff = Confirm::new("Open Codex/Claude to draft or repair the OpenAPI spec?")
-                .with_default(true)
-                .prompt()
-                .context("wizard cancelled")?;
-            if handoff {
-                offer_agent_handoff(&platform, shared, AgentTask::DraftSpec)?;
-                return Ok(());
-            }
+            print_workbench_guidance(&platform, "draft or repair the OpenAPI spec");
             return Err(anyhow!("{e:#}"));
         }
     }
 
-    offer_agent_handoff(&platform, shared, AgentTask::CurateTools)?;
+    print_workbench_guidance(&platform, "curate the generated app tools");
     println!();
     println!(
         "Next: commit and push the generated app, then choose \"Deploy the app in a local directory\" from this wizard."
@@ -357,86 +350,13 @@ fn run_existing_spec_app_flow(
     Ok(())
 }
 
-#[derive(Debug, Clone, Copy)]
-enum AgentTask {
-    DraftSpec,
-    CurateTools,
-}
-
-fn offer_agent_handoff(platform: &str, shared: bool, task: AgentTask) -> Result<()> {
-    let mut choices = Vec::new();
-    if command_exists("codex") {
-        choices.push("Open Codex");
-    }
-    if command_exists("claude") {
-        choices.push("Open Claude");
-    }
-    choices.push("Print prompt only");
-    choices.push("Skip");
-
-    let choice = Select::new("Use an agent for the next codegen step?", choices)
-        .prompt()
-        .context("wizard cancelled")?;
-
-    let prompt = agent_prompt(platform, shared, task);
-    match choice {
-        "Open Codex" => run_agent_command("codex", &[prompt.as_str()]),
-        "Open Claude" => run_agent_command("claude", &[prompt.as_str()]),
-        "Print prompt only" => {
-            println!();
-            println!("{prompt}");
-            Ok(())
-        }
-        _ => Ok(()),
-    }
-}
-
-fn command_exists(bin: &str) -> bool {
-    Command::new("which")
-        .arg(bin)
-        .output()
-        .map(|out| out.status.success())
-        .unwrap_or(false)
-}
-
-fn run_agent_command(bin: &str, args: &[&str]) -> Result<()> {
-    let root = workspace_root().map_err(|e| anyhow!("{e:#}"))?;
-    let status = Command::new(bin)
-        .args(args)
-        .current_dir(&root)
-        .status()
-        .with_context(|| format!("failed to run {bin}"))?;
-    if !status.success() {
-        bail!("{bin} exited with status {status}");
-    }
-    Ok(())
-}
-
-fn agent_prompt(platform: &str, shared: bool, task: AgentTask) -> String {
-    let spec_path = if shared {
-        format!("ext/specs/{platform}.yaml")
-    } else {
-        format!("apps/{platform}/openapi.yaml")
-    };
-    let app_path = format!("apps/{platform}");
-    match task {
-        AgentTask::DraftSpec => format!(
-            "We are in an Aomi SDK workspace. Draft or repair the OpenAPI spec for `{platform}` at `{spec_path}`. Read `.agents/skills/aomi-app-client-api-gen/SKILL.md` completely and follow it. Ask me for the official docs URL if needed. Keep the spec scoped to the useful user-facing endpoints, write the matching openapi.meta.json sidecar, then run `cargo run --features cli --bin aomi-build -- gen-client {platform}{shared_flag}` and `cargo run --features cli --bin aomi-build -- gen-tool {platform}{shared_flag}`. Keep changes scoped to `{app_path}`{shared_scope}.",
-            shared_flag = if shared {
-                " --shared --force"
-            } else {
-                " --force"
-            },
-            shared_scope = if shared {
-                " and the matching `ext/` generated client/spec files"
-            } else {
-                ""
-            },
-        ),
-        AgentTask::CurateTools => format!(
-            "We are in an Aomi SDK workspace. Curate the generated Aomi app `{app_path}` from mechanical OpenAPI stubs into user-centric tools. Read `.agents/skills/aomi-app-ux-tool-maker/SKILL.md` completely and follow it. Update `{app_path}/src/tool.rs` and `{app_path}/src/lib.rs`, keep the generated client intact unless a small compile fix is required, write or update `{app_path}/test.json` with a seed user_story, then run `cargo fmt --manifest-path {app_path}/Cargo.toml` and `cargo build -p {platform}`. Keep changes scoped to `{app_path}`.",
-        ),
-    }
+fn print_workbench_guidance(platform: &str, task: &str) {
+    println!();
+    println!("For agent-assisted app creation, run the Smithers workbench:");
+    println!("  aomi-workbench --sdk-root . --app {platform}");
+    println!(
+        "Use it to {task} with Codex or Claude while preserving this CLI's deterministic build path."
+    );
 }
 
 /// Resolve the connected source for `repo` at `dir` — installing the aomi-build
