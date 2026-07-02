@@ -56,6 +56,11 @@ pub struct ActivateArgs {
     /// Print the backend response as JSON.
     #[arg(long)]
     pub json: bool,
+
+    /// Rewrite Cargo.toml/Cargo.lock to the backend-required aomi-sdk version
+    /// before activating when a mismatch is detected.
+    #[arg(long)]
+    pub fix_sdk: bool,
 }
 
 impl ActivateArgs {
@@ -87,6 +92,7 @@ impl ActivateArgs {
         let backend_url = resolve_backend(&self.backend).ok_or_else(|| {
             anyhow!("activate needs a backend URL — set --backend or {BACKEND_URL_ENV}")
         })?;
+        crate::sdk_guard::ensure_project_sdk(&git_root, Some(&backend_url), self.fix_sdk).await?;
         let token = resolve_activation_token(&self.activation_token).ok_or_else(|| {
             anyhow!(
                 "activate requires a token via --activation-token or {ACTIVATION_TOKEN_ENV} \

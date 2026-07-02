@@ -52,6 +52,8 @@ pub struct DeployPayload {
     pub id: String,
     /// `preflight` | `pr_created` | `pr_updated` | `unchanged`.
     pub status: DeployStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sdk_version: Option<String>,
     pub source: Source,
     pub platform: Platform,
 }
@@ -101,6 +103,8 @@ pub struct AppRecord {
     pub path: String,
     pub aomi_toml_path: String,
     pub release_tag: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sdk_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
     /// Local `.aomi/deployment.json` overlay; absent from backend deploy result.

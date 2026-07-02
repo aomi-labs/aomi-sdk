@@ -440,6 +440,7 @@ fn activate_args() -> ActivateArgs {
         path: ".".into(),
         dry_run: false,
         json: false,
+        fix_sdk: false,
     }
 }
 
@@ -627,6 +628,7 @@ fn deploy_args(path: &Path) -> DeployArgs {
         path: path.to_path_buf(),
         preflight: false,
         json: false,
+        fix_sdk: false,
     }
 }
 
