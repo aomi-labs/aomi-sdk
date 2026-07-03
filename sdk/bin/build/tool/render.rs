@@ -323,6 +323,9 @@ fn emit_tool(out: &mut String, platform: &str, app_struct: &str, op: &Op) {
     // file makes the named type immediately accessible. Trim noisy fields by
     // editing the spec — never by adding a *Summary projection here.
     match &op.response_summary {
+        ResponseSummary::Unit => {
+            let _ = writeln!(out, "        // Response: empty success body.");
+        }
         ResponseSummary::Typed { rust_type } => {
             let _ = writeln!(
                 out,
@@ -362,7 +365,15 @@ fn emit_tool(out: &mut String, platform: &str, app_struct: &str, op: &Op) {
             );
         }
     }
-    let _ = writeln!(out, "        ok(result.into_inner())");
+    match &op.response_summary {
+        ResponseSummary::Unit => {
+            let _ = writeln!(out, "        let _: () = result.into_inner();");
+            let _ = writeln!(out, "        ok(())");
+        }
+        ResponseSummary::Typed { .. } | ResponseSummary::Loose | ResponseSummary::Bytes => {
+            let _ = writeln!(out, "        ok(result.into_inner())");
+        }
+    }
     let _ = writeln!(out, "    }}");
     let _ = writeln!(out, "}}");
     let _ = writeln!(out);

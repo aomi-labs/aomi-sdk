@@ -1,0 +1,7 @@
+{
+  "platform": "e2e-demo",
+  "source": "well-known",
+  "source_url": "https://petstore3.swagger.io/api/v3/openapi.json",
+  "fetched_at": "2026-07-03T16:36:26.704277Z",
+  "upstream_version": null
+}

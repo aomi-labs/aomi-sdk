@@ -248,6 +248,8 @@ pub(crate) struct Op {
 
 #[derive(Debug, Clone)]
 pub(crate) enum ResponseSummary {
+    /// Response has no body (`ResponseValue<()>`).
+    Unit,
     /// Response is a typed Rust struct/enum (e.g. `SearchTokensResponse`,
     /// `Vec<Chain>`). Project before forwarding to the LLM.
     Typed { rust_type: String },
@@ -462,6 +464,9 @@ fn derive_response_summary(op: &openapiv3::Operation, operation_id: &str) -> Res
         let ReferenceOr::Item(resp) = resp_ref else {
             continue;
         };
+        if resp.content.is_empty() {
+            return ResponseSummary::Unit;
+        }
         let Some(media) = resp
             .content
             .iter()
