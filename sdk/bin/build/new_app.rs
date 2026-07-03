@@ -84,24 +84,38 @@ pub fn run(args: NewAppArgs) -> Result<()> {
 
     if !args.no_build {
         println!();
-        println!("=== [verify] cargo build apps/{platform} ===");
+        println!("=== [verify] cargo build {platform} ===");
         let root = workspace_root()?;
-        // Apps are `exclude`d from the root workspace (app-local mode), so
-        // `-p <app>` never resolves there; build against the app's manifest.
-        let manifest = root.join("apps").join(&platform).join("Cargo.toml");
-        let status = Command::new("cargo")
-            .arg("build")
-            .arg("--manifest-path")
-            .arg(&manifest)
-            .current_dir(&root)
-            .status()
-            .with_context(|| "failed to spawn cargo")?;
-        if !status.success() {
-            eyre::bail!("cargo build for apps/{platform} failed");
+        if !verify_app_build(&root, &platform, args.shared)
+            .with_context(|| "failed to spawn cargo")?
+        {
+            eyre::bail!("cargo build for `{platform}` failed");
         }
     }
 
     println!();
     println!("✓ new-app {platform} complete");
     Ok(())
+}
+
+/// Run the post-generation `cargo build` verification for a generated app.
+///
+/// App-local apps are `exclude`d from the root workspace, so `-p <app>` never
+/// resolves there — build the app's own manifest. Shared apps live in the
+/// `aomi-ext` workspace member, which `-p` does resolve. Returns whether the
+/// build succeeded; spawn failures are surfaced as the `io::Error`.
+pub(crate) fn verify_app_build(
+    root: &std::path::Path,
+    platform: &str,
+    shared: bool,
+) -> std::io::Result<bool> {
+    let mut cmd = Command::new("cargo");
+    cmd.arg("build").current_dir(root);
+    if shared {
+        cmd.args(["-p", "aomi-ext"]);
+    } else {
+        cmd.arg("--manifest-path")
+            .arg(root.join("apps").join(platform).join("Cargo.toml"));
+    }
+    Ok(cmd.status()?.success())
 }

@@ -333,15 +333,15 @@ fn run_existing_spec_app_flow(
 
     if build {
         println!();
-        println!("=== [verify] cargo build -p {platform} ===");
+        println!("=== [verify] cargo build {platform} ===");
         let root = workspace_root().map_err(|e| anyhow!("{e:#}"))?;
-        let status = Command::new("cargo")
-            .args(["build", "-p", platform])
-            .current_dir(&root)
-            .status()
-            .with_context(|| "failed to spawn cargo")?;
-        if !status.success() {
-            bail!("cargo build -p {platform} failed");
+        // Apps are `exclude`d from the root workspace, so `-p <app>` never
+        // resolves for app-local apps; the shared helper builds the app
+        // manifest (or the aomi-ext member for shared apps).
+        if !crate::new_app::verify_app_build(&root, platform, shared)
+            .with_context(|| "failed to spawn cargo")?
+        {
+            bail!("cargo build for `{platform}` failed");
         }
     }
 
