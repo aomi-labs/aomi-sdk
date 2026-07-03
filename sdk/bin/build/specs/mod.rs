@@ -129,8 +129,22 @@ fn cascade(platform: &str, source: Source, from_url: Option<&str>) -> Result<Spe
     if try_well_known {
         match well_known::find(platform, from_url) {
             Ok(Some(hit)) => return Ok(hit),
-            Ok(None) => println!("  well-known: no match"),
-            Err(e) => println!("  well-known: error: {e:#}"),
+            Ok(None) => {
+                // An explicit --from-url that yields nothing is a hard error:
+                // falling through to discovery (and to advice suggesting
+                // --from-url) hides the real failure.
+                if let Some(url) = from_url {
+                    bail!("--from-url {url} did not yield a usable OpenAPI spec");
+                }
+                println!("  well-known: no match")
+            }
+            Err(e) => {
+                if let Some(url) = from_url {
+                    return Err(e)
+                        .with_context(|| format!("failed to fetch OpenAPI spec from {url}"));
+                }
+                println!("  well-known: error: {e:#}")
+            }
         }
     }
     if try_apis_guru {

@@ -84,15 +84,20 @@ pub fn run(args: NewAppArgs) -> Result<()> {
 
     if !args.no_build {
         println!();
-        println!("=== [verify] cargo build -p {platform} ===");
+        println!("=== [verify] cargo build apps/{platform} ===");
         let root = workspace_root()?;
+        // Apps are `exclude`d from the root workspace (app-local mode), so
+        // `-p <app>` never resolves there; build against the app's manifest.
+        let manifest = root.join("apps").join(&platform).join("Cargo.toml");
         let status = Command::new("cargo")
-            .args(["build", "-p", &platform])
+            .arg("build")
+            .arg("--manifest-path")
+            .arg(&manifest)
             .current_dir(&root)
             .status()
             .with_context(|| "failed to spawn cargo")?;
         if !status.success() {
-            eyre::bail!("cargo build -p {platform} failed");
+            eyre::bail!("cargo build for apps/{platform} failed");
         }
     }
 

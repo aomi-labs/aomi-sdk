@@ -234,13 +234,21 @@ fn emit_tool(out: &mut String, platform: &str, app_struct: &str, op: &Op) {
         "    const DESCRIPTION: &'static str = \"{description}\";"
     );
     let _ = writeln!(out);
+    // Bind `ctx`/`args` without an underscore only when the body references
+    // them, so the generated stub compiles warning-free under -Dwarnings.
+    let auth = op.params.iter().find(|p| p.is_auth);
+    let ctx_binding = if auth.is_some() { "ctx" } else { "_ctx" };
+    let args_binding = if op.params.is_empty() {
+        "_args"
+    } else {
+        "args"
+    };
     let _ = writeln!(
         out,
-        "    fn run(_app: &{app_struct}, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {{"
+        "    fn run(_app: &{app_struct}, {args_binding}: Self::Args, {ctx_binding}: DynToolCallCtx) -> Result<Value, String> {{"
     );
 
     // Auth resolution (first auth param only — multi-auth needs hand-editing)
-    let auth = op.params.iter().find(|p| p.is_auth);
     if let Some(a) = auth {
         let _ = writeln!(
             out,
