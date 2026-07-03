@@ -33,7 +33,7 @@ you start authoring.
 
 | If you're… | Publish to | Read first |
 |---|---|---|
-| A **community contributor** building a public app | [`aomi-labs/community-apps`](https://github.com/aomi-labs/community-apps) | [community-apps/CONTRIBUTING.md](https://github.com/aomi-labs/community-apps/blob/publish/CONTRIBUTING.md) |
+| A **community contributor** building a public app | [`aomi-labs/community-apps`](https://github.com/aomi-labs/community-apps) | [`docs/community-deployment.md`](./docs/community-deployment.md) |
 | A **Krexa platform partner** | [`aomi-labs/krexa-hosted-apps`](https://github.com/aomi-labs/krexa-hosted-apps) (invite-only) | [krexa-hosted-apps/CONTRIBUTING.md](https://github.com/aomi-labs/krexa-hosted-apps/blob/publish/CONTRIBUTING.md) |
 | **Maintaining an official Aomi app** | this repo's `apps/` | [`docs/repo-structure.md`](./docs/repo-structure.md) + "Publication Pipeline" below |
 
@@ -151,7 +151,9 @@ available as `aomi-build deploy preflight`, `aomi-build deploy run`,
 
 The CLI is only the relay. It does not push platform branches or hold a GitHub
 token; the backend writes platform repo changes through the connected GitHub App
-install. See [`docs/aomi-build.md`](./docs/aomi-build.md#hosted-deployment).
+install. See the step-by-step
+[`community deployment guide`](./docs/community-deployment.md) or the lower-level
+[`aomi-build` reference](./docs/aomi-build.md#hosted-deployment).
 
 ## Publication Pipeline (official apps)
 

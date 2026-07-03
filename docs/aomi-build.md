@@ -103,6 +103,10 @@ GitHub token, clone a platform repo, push branches, mint release tags, or write
 manifests. The backend owns those operations through the connected GitHub App
 install identified by `app_source_id`.
 
+Community contributors should start with the step-by-step
+[community deployment guide](./community-deployment.md). This section is the
+lower-level command reference.
+
 Environment defaults:
 
 | Env var | Used by | Description |
