@@ -47,11 +47,11 @@ enum Cmd {
     /// Build every app's cdylib, copy validated plugins into `plugins/`,
     /// codesign on macOS.
     Compile(compile::CompileArgs),
-    /// Deploy tracked `aomi.toml` apps from a source ref through the backend.
-    Deploy(cli::DeployArgs),
-    /// Show local + backend deployment status.
+    /// Deploy lifecycle: preflight, run, activate, and status.
+    Deploy(Box<cli::DeployArgs>),
+    /// Alias for `deploy status` for one release cycle.
     Status(cli::StatusArgs),
-    /// Activate platform releases by release tag.
+    /// Alias for `deploy activate` for one release cycle.
     Activate(cli::ActivateArgs),
     /// Connect: install the Aomi GitHub App and save your activation token.
     Connect(cli::ConnectArgs),
@@ -82,9 +82,11 @@ async fn main() -> Result<()> {
         Cmd::TightenSpec(args) => tighten::run(args),
         Cmd::Init(args) => init::run(args),
         Cmd::Compile(args) => compile::run(args),
-        Cmd::Deploy(args) => cli::deploy::run(args).await,
-        Cmd::Status(args) => cli::status::run(args).await,
-        Cmd::Activate(args) => cli::activate::run(args).await,
+        Cmd::Deploy(args) => args.run().await.map_err(git_error),
+        Cmd::Status(args) => args.run().await.map_err(git_error),
+        Cmd::Activate(args) => cli::deploy::run_activate_step(args)
+            .await
+            .map_err(git_error),
         Cmd::Connect(args) => cli::connect::run(args).await,
         Cmd::Token(args) => cli::token::run(args).await,
         Cmd::Source(args) => cli::source::run(args).await,

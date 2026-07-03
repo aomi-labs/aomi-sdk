@@ -74,11 +74,19 @@ aomi-build new-app      <p>   # orchestrator: all three above + cargo build
 aomi-build tighten-spec <p>   # sharpen additionalProperties:true from real samples
 aomi-build test-schema  <p>   # schemathesis validation against live API
 aomi-build compile            # build local cdylib plugins into plugins/
-aomi-build deploy             # deploy tracked aomi.toml apps through the backend
-aomi-build status             # local deployment.json + backend load status
-aomi-build activate [APP]...  # activate release tags
+aomi-build deploy             # full hosted deploy lifecycle
+aomi-build deploy preflight   # validate source/backend/platform inputs only
+aomi-build deploy run         # create/update backend deployment
+aomi-build deploy activate    # activate release tags from deployment.json
+aomi-build deploy status      # local deployment.json + backend load status
+aomi-build sdk check          # verify the app pins the platform SDK version
+aomi-build sdk fix            # update the app's SDK pin when possible
 aomi-build request            # legacy ops onboarding request
 ```
+
+For one release cycle, `aomi-build status` aliases `aomi-build deploy status`,
+`aomi-build activate` aliases `aomi-build deploy activate`, and
+`aomi-build deploy --preflight` aliases `aomi-build deploy preflight`.
 
 All stage-1/2/3 commands accept `--shared` (default off → app-local). `gen-tool` auto-detects the shared/app-local mode by checking for `apps/<p>/src/client/`; `--shared` forces it.
 
@@ -86,10 +94,11 @@ All stage-1/2/3 commands accept `--shared` (default off → app-local). `gen-too
 
 ## Hosted deployment
 
-`aomi-build deploy/status/activate` is the hosted-app command surface. These
-commands are thin backend relays: they discover local git facts, send the
-source-bound request to the platform backend, and read/write
-`.aomi/deployment.json` in the source repository. The CLI does not hold a
+`aomi-build deploy` is the hosted-app command surface. It is a backend relay:
+the CLI discovers local git facts, checks the SDK pin, sends a source-bound
+request to the platform backend, waits for the backend-owned platform PR/CI
+deployment, activates the release tag, verifies the runtime loaded the app, and
+writes `.aomi/deployment.json` in the source repository. The CLI does not hold a
 GitHub token, clone a platform repo, push branches, mint release tags, or write
 manifests. The backend owns those operations through the connected GitHub App
 install identified by `app_source_id`.
@@ -98,44 +107,83 @@ Environment defaults:
 
 | Env var | Used by | Description |
 |---|---|---|
-| `AOMI_BACKEND_URL` | `deploy`, `status`, `activate` | Backend base URL when `--backend` is omitted |
-| `AOMI_APP_SOURCE_ID` | `deploy` | Connected GitHub App install / `app_source` id when `--app-source-id` is omitted |
-| `AOMI_APP_ACTIVATION_TOKEN` | `deploy`, `activate` | Platform/app activation token; `activate` can also take `--activation-token` |
+| `AOMI_BACKEND_URL` | deploy group | Backend base URL when `--backend` is omitted |
+| `AOMI_APP_SOURCE_ID` | deploy group | Connected GitHub App install / `app_source` id when `--app-source-id` is omitted |
+| `AOMI_APP_ACTIVATION_TOKEN` | `deploy`, `deploy activate` | Platform/app activation token; commands can also take `--activation-token` |
 
 ```sh
-aomi-build deploy \
-  --platform community \
-  --app-source-id 123 \
-  --aomi-toml apps/foo/aomi.toml \
-  --backend https://staging-api.aomi.dev
-
-aomi-build status --backend https://staging-api.aomi.dev
-
-aomi-build activate foo \
-  --target-tag staging \
-  --backend https://staging-api.aomi.dev
+AOMI_BACKEND_URL=https://api.aomi.dev \
+AOMI_APP_ACTIVATION_TOKEN=<platform-or-app-token> \
+aomi-build deploy --platform community --repo owner/repo
 ```
 
-### `deploy`
+That is enough for the happy path when the repo is committed, the Aomi GitHub
+App is installed, the source is bound or syncable, and the app pins the platform
+SDK version. A developer receiving only the `aomi-build` binary still needs:
 
-`deploy` sends `POST /api/platforms/:platform/deploy` with:
+- a committed and pushed source repo containing `aomi.toml`
+- the Aomi GitHub App installed on that repo
+- backend URL and a valid platform/app activation token
+- either `--app-source-id`/`AOMI_APP_SOURCE_ID` or `--repo owner/repo` so the
+  backend can resolve or sync the source
+
+They do not need a GitHub PAT, platform repo write access, database access, or
+an admin private key.
+
+### Lifecycle
+
+```
+aomi-build deploy
+  ├─ sdk check
+  ├─ deploy preflight
+  ├─ deploy run
+  ├─ wait until deployment status is ready
+  ├─ deploy activate
+  └─ verify is_active=true, artifact_ready=true, loaded=true
+```
+
+Use `aomi-build deploy --fix-sdk` when the CLI should run `sdk fix` before the
+backend deploy/activate work.
+
+Resolution order:
+
+| Input | Resolution |
+|---|---|
+| backend | `--backend` → `AOMI_BACKEND_URL` → saved config |
+| platform | `--platform` → `aomi.toml` → saved config → `community` |
+| token | `--activation-token` → `AOMI_APP_ACTIVATION_TOKEN` → saved config |
+| source | `--app-source-id` → `AOMI_APP_SOURCE_ID` → `.aomi/deployment.json` → `--repo owner/repo` source sync |
+| commit | `--commit` → local `HEAD`; branches are rejected |
+
+### `deploy preflight`
+
+`deploy preflight` validates backend/source/app inputs without platform repo
+writes:
+
+```sh
+aomi-build deploy preflight --platform community --repo owner/repo
+```
+
+It sends `preflight: true` to `POST /api/platforms/:platform/deploy`. If a
+required input is missing, the CLI stops with the next command to run instead of
+falling into documentation.
+
+### `deploy run`
+
+`deploy run` creates or updates the platform deployment and writes
+`.aomi/deployment.json`:
 
 ```json
 {
   "app_source_id": 123,
-  "source_ref": { "kind": "commit", "value": "<sha>" },
-  "aomi_toml_paths": ["apps/foo/aomi.toml"]
+  "source_ref": "<commit-sha>",
+  "aomi_toml_paths": ["apps/foo/aomi.toml"],
+  "preflight": false
 }
 ```
 
-By default it deploys the local `HEAD` commit and every tracked `aomi.toml` in
-the repo. Use `--branch <NAME>` when the backend should resolve a source branch,
-`--commit <SHA>` for an explicit commit, and repeat `--aomi-toml <PATH>` to
-deploy a subset. `--dry-run` posts `dry_run: true` when backend credentials are
-available; without backend credentials it prints the request it would send.
-
-Successful deploys write `.aomi/deployment.json` with the backend deployment
-payload plus local state:
+Successful deploys record the backend deployment id, platform PR/CI state,
+release tags, source commit, and local state:
 
 ```json
 {
@@ -172,38 +220,35 @@ payload plus local state:
 }
 ```
 
-### `status`
+### `deploy status`
 
-`status` reads `.aomi/deployment.json` and, when a backend URL is configured,
-probes backend load state for each recorded app. Pass `--backend ''` to render
-only the local file. Pass `--json` for machine-readable output.
+`deploy status` is read-only. It reads `.aomi/deployment.json`, queries the
+backend deployment status when available, and checks the platform app endpoint
+for the recorded apps. Pass `--json` for machine-readable output.
 
-### `activate`
+### `deploy activate`
 
-`activate` sends one release-tags target request to
-`POST /api/platforms/:platform/apps/activate`. By default it reads the release
-tags recorded in `.aomi/deployment.json`; it can activate every app from that
-file or a positional subset:
+`deploy activate` waits for readiness if needed, then sends release tags from
+`.aomi/deployment.json` to `POST /api/platforms/:platform/apps/activate`:
 
 ```sh
-aomi-build activate                 # all apps from deployment.json
-aomi-build activate foo bar         # named subset
-aomi-build activate --release-tag apps-foo-abc1234
+aomi-build deploy activate                 # all apps from deployment.json
+aomi-build deploy activate foo bar         # named subset
+aomi-build deploy activate --release-tag apps-foo-abc1234
 ```
 
-The only activation target sent by the CLI is:
-
-| Flag | Backend target |
-|---|---|
-| omitted | `release_tags` using tags from `.aomi/deployment.json` |
-| `--release-tag <TAG>` | `release_tags`; repeat for multi-app activation |
+```json
+{
+  "target": { "kind": "release_tags", "value": ["apps-..."] },
+  "apps": ["foo"],
+  "target_tags": ["prod"]
+}
+```
 
 When app names are provided with `--release-tag`, their count must match the tag
-count and the backend verifies each app name matches its release tag. Local
-activation state is recorded only when the backend reports the app row is active
-and the runtime load succeeded. Use repeatable `--target-tag <TAG>` when the
-backend should load the activated apps only on specific server tags such as
-`staging`.
+count and the backend verifies each app name matches its release tag. Activation
+is considered successful only after final verification shows every selected app
+has `is_active=true`, `artifact_ready=true`, and `loaded=true`.
 
 ### `request`
 

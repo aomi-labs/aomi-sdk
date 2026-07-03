@@ -1,31 +1,133 @@
-//! `deploy` — deploy tracked `aomi.toml` apps from a source ref through the
-//! backend.
+//! `deploy` — full hosted app deploy lifecycle plus explicit deploy steps.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use anyhow::{Result, anyhow, bail};
-use clap::Args;
+use clap::{Args, Subcommand};
 
 use super::shared::{
     ACTIVATION_TOKEN_ENV, APP_SOURCE_ID_ENV, BACKEND_URL_ENV, CredentialSource, bin_name,
-    env_value, git_context, head_commit, resolve_activation_token_with_source, resolve_backend,
-    tracked_aomi_tomls,
+    clean_list, env_value, git_context, head_commit, resolve_activation_token,
+    resolve_activation_token_with_source, resolve_backend, tracked_aomi_tomls,
 };
+use super::{ActivateArgs, StatusArgs};
 use crate::deploy::app::AomiAppFiles;
 use crate::deploy::backend::BackendClient;
+use crate::deploy::config::AomiConfig;
+use crate::deploy::flow;
 use crate::deploy::platform::Platform;
 use crate::deploy::types::{DeployInput, LocalDeployment};
 
-pub async fn run(args: DeployArgs) -> eyre::Result<()> {
-    args.run().await.map_err(crate::git_error)
-}
-
 #[derive(Debug, Args, Clone)]
 pub struct DeployArgs {
+    #[command(subcommand)]
+    pub cmd: Option<DeployCmd>,
+
+    #[command(flatten)]
+    pub step: DeployStepArgs,
+}
+
+#[derive(Debug, Subcommand, Clone)]
+pub enum DeployCmd {
+    /// Validate backend/source/app inputs without writing the platform repo.
+    Preflight(DeployStepArgs),
+    /// Create or update the platform deployment and write `.aomi/deployment.json`.
+    Run(DeployStepArgs),
+    /// Wait for release readiness, activate release tags, and verify loaded state.
+    Activate(ActivateArgs),
+    /// Show local + backend deployment status.
+    Status(StatusArgs),
+}
+
+impl DeployArgs {
+    pub async fn run(self) -> Result<()> {
+        match self.cmd {
+            Some(DeployCmd::Preflight(args)) => args.run_preflight_command().await,
+            Some(DeployCmd::Run(args)) => args.run_deploy_command().await,
+            Some(DeployCmd::Activate(args)) => run_activate_step(args).await,
+            Some(DeployCmd::Status(args)) => args.run().await,
+            None if self.step.preflight => self.step.run_preflight_command().await,
+            None => self.step.run_full_lifecycle().await,
+        }
+    }
+}
+
+pub(crate) async fn run_activate_step(args: ActivateArgs) -> Result<()> {
+    if args.dry_run {
+        return args.run().await;
+    }
+    let (git_root, _) = git_context(&args.path)?;
+    let state = LocalDeployment::read(&git_root)?.ok_or_else(|| {
+        anyhow!(
+            "no .aomi/deployment.json at {} — run `{} deploy run` first",
+            git_root.display(),
+            bin_name()
+        )
+    })?;
+    let platform = args
+        .platform
+        .clone()
+        .unwrap_or_else(|| Platform::new(&state.deployment.platform.platform));
+    let backend_url = resolve_backend(&args.backend).ok_or_else(|| {
+        anyhow!("activate needs a backend URL — set --backend or {BACKEND_URL_ENV}")
+    })?;
+    let token = resolve_activation_token(&args.activation_token).ok_or_else(|| {
+        anyhow!(
+            "activate requires a token via --activation-token or {ACTIVATION_TOKEN_ENV} \
+             (or run `aomi-build connect`)"
+        )
+    })?;
+    wait_for_release(
+        &backend_url,
+        &token,
+        &platform,
+        &state.deployment.id,
+        format!(
+            "deployment did not become ready within 30 minutes; rerun `{} deploy activate --path {}` later",
+            bin_name(),
+            args.path.display()
+        ),
+    )
+    .await?;
+    args.run().await
+}
+
+async fn wait_for_release(
+    backend_url: &str,
+    token: &str,
+    platform: &Platform,
+    deployment_id: &str,
+    timeout_message: String,
+) -> Result<()> {
+    println!("Waiting for release readiness...");
+    match flow::poll_deployment_ready(
+        backend_url,
+        token,
+        platform.as_str(),
+        deployment_id,
+        Duration::from_secs(30 * 60),
+        |status| println!("  build         : {status}"),
+    )
+    .await?
+    {
+        flow::DeployReady::Ready => println!("Release is ready."),
+        flow::DeployReady::Failed(msg) => bail!("deployment failed before activation: {msg}"),
+        flow::DeployReady::TimedOut => bail!("{timeout_message}"),
+    }
+    Ok(())
+}
+
+#[derive(Debug, Args, Clone, Default)]
+pub struct DeployStepArgs {
     /// Platform tag (`aomi.toml [app].platform`). Defaults to aomi.toml, then
-    /// `community`.
+    /// saved config, then `community`.
     #[arg(long, value_name = "NAME")]
     pub platform: Option<Platform>,
+
+    /// Source repository to sync when no app_source_id is known, as `owner/repo`.
+    #[arg(long, value_name = "OWNER/REPO")]
+    pub repo: Option<String>,
 
     /// The connected GitHub App install (`app_source`) to deploy from. The
     /// backend resolves the source repo from it. Falls back to
@@ -50,6 +152,14 @@ pub struct DeployArgs {
     #[arg(long, value_name = "URL")]
     pub backend: Option<String>,
 
+    /// Activation token (default: `AOMI_APP_ACTIVATION_TOKEN`).
+    #[arg(long, value_name = "TOKEN")]
+    pub activation_token: Option<String>,
+
+    /// Backend server tag to activate onto. Defaults to `/api/platforms/server-tags`.
+    #[arg(long = "target-tag", value_name = "TAG")]
+    pub target_tags: Vec<String>,
+
     /// App source directory. Defaults to the current directory.
     #[arg(long, default_value = ".")]
     pub path: PathBuf,
@@ -68,28 +178,127 @@ pub struct DeployArgs {
     pub fix_sdk: bool,
 }
 
-impl DeployArgs {
-    pub async fn run(self) -> Result<()> {
+impl DeployStepArgs {
+    pub async fn run_full_lifecycle(self) -> Result<()> {
+        let (git_root, start_dir) = git_context(&self.path)?;
+        let platform = self.platform(&git_root, &start_dir);
+        let backend_url = self.backend_url()?;
+        crate::sdk_guard::ensure_project_sdk(&git_root, Some(&backend_url), self.fix_sdk).await?;
+
+        let source_ref = self.source_ref(&git_root)?;
+        let aomi_toml_paths = self.aomi_toml_paths(&git_root)?;
+        let app_source_id = self.resolve_app_source_id(&git_root, &platform).await?;
+        let request = DeployInput {
+            app_source_id,
+            source_ref: source_ref.clone(),
+            aomi_toml_paths,
+            preflight: true,
+        };
+
+        let (token, token_source) = self.activation_token_with_source()?;
+        let client = BackendClient::new(backend_url.clone(), token.clone())?;
+
+        let preflight = client.deploy(&platform, &request).await.map_err(|e| {
+            self.explain_deploy_error(e, &platform, app_source_id, &source_ref, token_source)
+        })?;
+        println!("Preflight passed for platform `{platform}`.");
+        println!(
+            "  source_commit : {}",
+            preflight.deployment.source.commit_hash
+        );
+        for app in &preflight.deployment.platform.apps {
+            println!("  - {} -> {}", app.name, app.release_tag);
+        }
+
+        let mut deploy_request = request;
+        deploy_request.preflight = false;
+        let deploy = client
+            .deploy(&platform, &deploy_request)
+            .await
+            .map_err(|e| {
+                self.explain_deploy_error(e, &platform, app_source_id, &source_ref, token_source)
+            })?;
+        let mut state = LocalDeployment::from_deploy(deploy, app_source_id);
+        let path = state.write(&git_root)?;
+        println!("Deployment started.");
+        println!("  id            : {}", state.deployment.id);
+        println!(
+            "  pr            : {}",
+            state
+                .deployment
+                .platform
+                .pr_url
+                .as_deref()
+                .unwrap_or("(pending CI)")
+        );
+        println!("  deployment    : {}", path.display());
+
+        wait_for_release(
+            &backend_url,
+            &token,
+            &platform,
+            &state.deployment.id,
+            format!(
+                "deployment did not become ready within 30 minutes; resume with `{} deploy activate --path {}`",
+                bin_name(),
+                self.path.display()
+            ),
+        )
+        .await?;
+
+        let target_tags = self.activation_target_tags(&backend_url).await?;
+        let activate_args = ActivateArgs {
+            platform: Some(platform),
+            backend: Some(backend_url),
+            activation_token: Some(token),
+            target_tags,
+            path: self.path.clone(),
+            json: self.json,
+            fix_sdk: self.fix_sdk,
+            ..Default::default()
+        };
+        let response = activate_args
+            .activate_with_state(&git_root, &mut state)
+            .await?;
+        state.write(&git_root)?;
+        ActivateArgs::print_activation(&response, self.json)?;
+        if !self.json {
+            println!(
+                "Deployment verified: all activated apps are active, artifact-ready, and loaded."
+            );
+        }
+        Ok(())
+    }
+
+    pub async fn run_preflight_command(self) -> Result<()> {
+        self.run_step(true).await
+    }
+
+    pub async fn run_deploy_command(self) -> Result<()> {
+        self.run_step(false).await
+    }
+
+    async fn run_step(self, preflight: bool) -> Result<()> {
         let (git_root, start_dir) = git_context(&self.path)?;
         let platform = self.platform(&git_root, &start_dir);
         let source_ref = self.source_ref(&git_root)?;
         let aomi_toml_paths = self.aomi_toml_paths(&git_root)?;
-        let app_source_id = self.resolve_app_source_id(&git_root)?;
+        let app_source_id = self.resolve_app_source_id(&git_root, &platform).await?;
 
         let request = DeployInput {
             app_source_id,
             source_ref: source_ref.clone(),
             aomi_toml_paths,
-            preflight: self.preflight,
+            preflight,
         };
 
-        if self.preflight {
+        if preflight {
             return self.run_preflight(&platform, &request).await;
         }
 
         let backend_url = self.backend_url()?;
         crate::sdk_guard::ensure_project_sdk(&git_root, Some(&backend_url), self.fix_sdk).await?;
-        let (token, token_source) = activation_token_with_source()?;
+        let (token, token_source) = self.activation_token_with_source()?;
         let response = BackendClient::new(backend_url, token)?
             .deploy(&platform, &request)
             .await
@@ -150,35 +359,28 @@ impl DeployArgs {
              Deploy authorization needs:\n\
                - a valid activation token for platform `{platform}` (using {})\n\
                - a connected GitHub App source id for this repo (`app_source_id: {app_source_id}`)\n\
-               - the source ref pushed to GitHub ({})\n\
+               - the source ref pushed to GitHub (commit `{source_ref}`)\n\
              {}\n\
              To refresh the source id, run:\n\
                aomi-build source sync --repo <owner/repo>\n\
              To refresh credentials, run:\n\
                aomi-build connect --platform {platform}",
             token_source.label(),
-            source_ref_label(source_ref),
             token_source.stale_hint()
         )
     }
 
-    /// Preflight: POST with `preflight: true` when a backend + token are
-    /// available (the backend validates source commit scope and renders the
-    /// deployment record); otherwise print the request we would send, fully
-    /// offline.
+    /// Preflight: POST with `preflight: true`; the backend validates source
+    /// commit scope and renders the deployment record without platform writes.
     async fn run_preflight(&self, platform: &Platform, request: &DeployInput) -> Result<()> {
-        match (self.backend_url().ok(), activation_token().ok()) {
-            (Some(url), Some(token)) => {
-                let response = BackendClient::new(url, token)?
-                    .deploy(platform, request)
-                    .await?;
-                println!("{}", serde_json::to_string_pretty(&response)?);
-            }
-            _ => {
-                println!("{}", serde_json::to_string_pretty(request)?);
-                println!("\n(preflight: no backend/token; printed the request only)");
-            }
-        }
+        let url = self.backend_url()?;
+        let (token, _) = self.activation_token_with_source()?;
+        crate::sdk_guard::ensure_project_sdk(&git_context(&self.path)?.0, Some(&url), self.fix_sdk)
+            .await?;
+        let response = BackendClient::new(url, token)?
+            .deploy(platform, request)
+            .await?;
+        println!("{}", serde_json::to_string_pretty(&response)?);
         Ok(())
     }
 
@@ -192,6 +394,7 @@ impl DeployArgs {
             .map(|name| name.trim().to_string())
             .filter(|name| !name.is_empty())
             .map(Platform::new)
+            .or_else(|| AomiConfig::load().platform.map(Platform::new))
             .unwrap_or_else(Platform::community)
     }
 
@@ -245,7 +448,19 @@ impl DeployArgs {
         })
     }
 
-    pub(crate) fn resolve_app_source_id(&self, git_root: &Path) -> Result<i64> {
+    async fn activation_target_tags(&self, backend_url: &str) -> Result<Vec<String>> {
+        let explicit = clean_list(&self.target_tags);
+        if !explicit.is_empty() {
+            return Ok(explicit);
+        }
+        fetch_server_tags(backend_url).await
+    }
+
+    pub(crate) async fn resolve_app_source_id(
+        &self,
+        git_root: &Path,
+        platform: &Platform,
+    ) -> Result<i64> {
         // Resolution order: flag → env → the id recorded by a prior deploy /
         // `source sync` in `.aomi/deployment.json`. The last step is what lets a
         // re-deploy run with no `--app-source-id` once the source is known.
@@ -261,11 +476,32 @@ impl DeployArgs {
         if let Some(id) = self.recorded_app_source_id(git_root) {
             return Ok(id);
         }
+        if let Some(repo) = self
+            .repo
+            .as_deref()
+            .map(str::trim)
+            .filter(|r| !r.is_empty())
+        {
+            let repo = crate::deploy::platform::normalize_github_repo(repo)?;
+            let url = self.backend_url()?;
+            let (token, _) = self.activation_token_with_source()?;
+            let result = BackendClient::new(url, token)?
+                .sync_installed(
+                    platform,
+                    &crate::deploy::types::SyncSourceInput { repo: repo.clone() },
+                )
+                .await?;
+            println!(
+                "Resolved source `{}` to app_source_id {}.",
+                result.source.repository_link, result.source.id
+            );
+            return Ok(result.source.id);
+        }
         Err(anyhow!(
             "deploy needs --app-source-id (or {APP_SOURCE_ID_ENV}): the connected GitHub \
              App install to deploy from. Install the Aomi GitHub App on your source repo, \
-             then run `aomi-build source sync --repo <owner/repo>` (or use the app_source id \
-             ops/the portal issued you)."
+             then run `aomi-build source sync --repo <owner/repo> --platform {platform}` \
+             or pass --repo <owner/repo> to let deploy sync it."
         ))
     }
 
@@ -276,23 +512,39 @@ impl DeployArgs {
             .and_then(|state| state.app_source_id())
             .filter(|id| *id > 0)
     }
+    fn activation_token_with_source(&self) -> Result<(String, CredentialSource)> {
+        resolve_activation_token_with_source(&self.activation_token).ok_or_else(|| {
+            anyhow!(
+                "deploy requires an activation token via --activation-token or {ACTIVATION_TOKEN_ENV} \
+                 (or run `aomi-build connect`)"
+            )
+        })
+    }
 }
 
-fn activation_token() -> Result<String> {
-    activation_token_with_source().map(|(token, _)| token)
-}
-
-fn activation_token_with_source() -> Result<(String, CredentialSource)> {
-    resolve_activation_token_with_source(&None).ok_or_else(|| {
-        anyhow!(
-            "deploy requires an activation token via {ACTIVATION_TOKEN_ENV} \
-             (or run `aomi-build connect`)"
-        )
-    })
-}
-
-fn source_ref_label(source_ref: &str) -> String {
-    format!("commit `{source_ref}`")
+async fn fetch_server_tags(backend_url: &str) -> Result<Vec<String>> {
+    let endpoint = format!(
+        "{}/api/platforms/server-tags",
+        backend_url.trim_end_matches('/')
+    );
+    let value: serde_json::Value = reqwest::Client::new()
+        .get(&endpoint)
+        .send()
+        .await
+        .map_err(|e| anyhow!("failed to call server-tags endpoint {endpoint}: {e}"))?
+        .json()
+        .await
+        .map_err(|e| anyhow!("server-tags endpoint {endpoint} returned invalid JSON: {e}"))?;
+    Ok(value
+        .get("server_tags")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|tag| !tag.is_empty())
+        .map(str::to_string)
+        .collect())
 }
 
 fn validate_source_commit(value: &str) -> Result<String> {

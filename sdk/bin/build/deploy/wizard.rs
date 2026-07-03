@@ -14,7 +14,7 @@ use inquire::{Confirm, Select, Text};
 use crate::new_app::NewAppArgs;
 use crate::specs::workspace_root;
 
-use super::cli::{ActivateArgs, DeployArgs};
+use super::cli::{ActivateArgs, DeployStepArgs};
 use super::config::AomiConfig;
 use super::flow;
 use super::platform::{Platform, normalize_github_repo};
@@ -521,19 +521,16 @@ async fn deploy_then_activate(
     // Deploy with inline retry — a transient backend failure prints and offers
     // a retry instead of unwinding the whole wizard.
     loop {
-        let result = DeployArgs {
+        let result = DeployStepArgs {
             platform: Some(Platform::new(platform)),
             app_source_id,
-            branch: None,
-            commit: None,
-            aomi_toml: vec![],
             backend: Some(backend_url.to_string()),
+            activation_token: Some(token.to_string()),
             path: dir.to_path_buf(),
-            preflight: false,
-            json: false,
             fix_sdk: true,
+            ..Default::default()
         }
-        .run()
+        .run_deploy_command()
         .await;
         match result {
             Ok(()) => break,
@@ -592,18 +589,12 @@ async fn deploy_then_activate(
 
     loop {
         let result = ActivateArgs {
-            apps: vec![],
             platform: Some(Platform::new(platform)),
-            release_tags: vec![],
             backend: Some(backend_url.to_string()),
             activation_token: Some(token.to_string()),
-            // Empty: let the backend use the deployment's server_tags, as the
-            // portal does (it sends no target_tags).
-            target_tags: vec![],
             path: dir.to_path_buf(),
-            dry_run: false,
-            json: false,
             fix_sdk: true,
+            ..Default::default()
         }
         .run()
         .await;

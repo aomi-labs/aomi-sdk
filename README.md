@@ -38,11 +38,11 @@ you start authoring.
 | **Maintaining an official Aomi app** | this repo's `apps/` | [`docs/repo-structure.md`](./docs/repo-structure.md) + "Publication Pipeline" below |
 
 The first two paths use **`aomi-build deploy`** from your source repo. The CLI
-sends the connected `app_source_id`, source ref, and `aomi.toml` paths to the
-platform backend; the backend uses the GitHub App install to open or update the
-platform PR and returns `.aomi/deployment.json` for follow-up `status` and
-`activate` commands. You do not open a PR against this SDK repo for hosted
-community or partner apps.
+checks the local SDK pin, syncs the connected GitHub App source, sends the
+commit SHA and `aomi.toml` paths to the platform backend, waits for the platform
+release, activates it, and verifies the app is active, artifact-ready, and
+loaded. You do not open a PR against this SDK repo for hosted community or
+partner apps.
 
 The third path is for Aomi-team-maintained official apps that ship from this
 repo as part of the `apps-v0.x.y` SDK releases.
@@ -131,22 +131,23 @@ aomi-build compile --target aarch64-apple-darwin
 Community and partner source repos deploy through the same `aomi-build` binary:
 
 ```bash
-aomi-build deploy \
-  --platform community \
-  --app-source-id 123 \
-  --aomi-toml apps/foo/aomi.toml \
-  --backend https://staging-api.aomi.dev
-
-aomi-build status --backend https://staging-api.aomi.dev
-
-aomi-build activate foo \
-  --target-tag staging \
-  --backend https://staging-api.aomi.dev
+AOMI_BACKEND_URL=https://api.aomi.dev \
+AOMI_APP_ACTIVATION_TOKEN=<platform-or-app-token> \
+aomi-build deploy --platform community --repo owner/repo
 ```
 
-`deploy` writes `.aomi/deployment.json` in the source repo. `status` reads that
-file and checks backend load state. `activate` sends a `release_tags` target,
-using the recorded release tags unless you pass `--release-tag`.
+The binary alone is not enough: the source commit must be pushed to GitHub, the
+Aomi GitHub App must be installed on the source repo, and the user needs a
+platform/app activation token for the target platform. The user does **not**
+need a GitHub PAT, platform repo write access, database access, or an admin
+private key.
+
+`deploy` writes `.aomi/deployment.json` in the source repo, waits for candidate
+CI/release readiness, activates the recorded release tags, and fails unless the
+final platform app endpoint reports `is_active=true`, `artifact_ready=true`, and
+`loaded=true`. For manual recovery or CI scripting, the lifecycle is also
+available as `aomi-build deploy preflight`, `aomi-build deploy run`,
+`aomi-build deploy activate`, and `aomi-build deploy status`.
 
 The CLI is only the relay. It does not push platform branches or hold a GitHub
 token; the backend writes platform repo changes through the connected GitHub App
@@ -325,7 +326,7 @@ Run `aomi-build init <name>` (bare skeleton) or `aomi-build new-app <platform>` 
 This repo publishes GitHub Releases with pre-built plugin tarballs per target (Linux x86_64, macOS ARM64). The backend polls for new releases every 5 minutes, downloads and verifies the tarball, then atomically swaps new plugin binaries in via `dlopen`. Active sessions keep their old plugin `Arc`; new sessions get the new one. No restart required.
 
 **Do I need to deploy infrastructure to get my plugin running?**
-No for official apps in this SDK repo: once your PR merges to `publish`, CI builds and publishes the plugin tarball, and the runtime picks it up on the next poll. Hosted community and partner apps use `aomi-build deploy`, then `aomi-build activate` after release tags are recorded in `.aomi/deployment.json`.
+No for official apps in this SDK repo: once your PR merges to `publish`, CI builds and publishes the plugin tarball, and the runtime picks it up on the next poll. Hosted community and partner apps use `aomi-build deploy`; the command runs deploy, readiness wait, activation, and loaded-state verification end to end when the backend URL and activation token are present.
 
 **Can I test a plugin locally before opening a PR?**
 Yes. Build with `aomi-build compile --app <name>`, run unit tests using the `aomi_sdk::testing` helpers (`TestCtxBuilder`, `run_tool`, `run_async_tool`), and point a local product-mono instance at your working copy with `LOCAL_AOMI_SDK=/path/to/aomi-sdk`.
