@@ -9,10 +9,6 @@ use super::shared::{bin_name, git_context, resolve_activation_token, resolve_bac
 use crate::deploy::status::StatusResult;
 use crate::deploy::types::LocalDeployment;
 
-pub async fn run(args: StatusArgs) -> eyre::Result<()> {
-    args.run().await.map_err(crate::git_error)
-}
-
 #[derive(Debug, Args, Clone)]
 pub struct StatusArgs {
     /// Backend base URL (default: `AOMI_BACKEND_URL`). Pass `--backend ''` to

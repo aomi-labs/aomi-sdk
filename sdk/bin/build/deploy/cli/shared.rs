@@ -21,6 +21,15 @@ pub(crate) fn env_value(key: &str) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
+pub(crate) fn clean_list(values: &[String]) -> Vec<String> {
+    values
+        .iter()
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
 pub(crate) fn bin_name() -> String {
     std::env::args()
         .next()

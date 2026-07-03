@@ -9,7 +9,7 @@ use clap::Parser;
 use serde_json::json;
 use tempfile::TempDir;
 
-use super::cli::{ActivateArgs, DeployArgs, StatusArgs};
+use super::cli::{ActivateArgs, DeployStepArgs, StatusArgs};
 use super::platform::Platform;
 use super::types::{
     ActivateInput, ActivateResult, DeployInput, DeployResult, LocalDeployment, ReleaseTags,
@@ -43,8 +43,42 @@ fn deploy_parses_repeated_aomi_toml() {
     .expect("parse");
     match cli.cmd {
         Some(crate::Cmd::Deploy(args)) => {
-            assert_eq!(args.aomi_toml.len(), 2);
+            assert_eq!(args.step.aomi_toml.len(), 2);
         }
+        _ => panic!("expected deploy"),
+    }
+}
+
+#[test]
+fn deploy_subcommands_parse_lifecycle_steps() {
+    let cli = crate::Cli::try_parse_from([
+        "aomi-build",
+        "deploy",
+        "preflight",
+        "--platform",
+        "community",
+        "--repo",
+        "aomi-labs/playground-example",
+    ])
+    .expect("parse preflight");
+    match cli.cmd {
+        Some(crate::Cmd::Deploy(args)) => match args.cmd {
+            Some(super::cli::deploy::DeployCmd::Preflight(step)) => {
+                assert_eq!(step.platform.unwrap().as_str(), "community");
+                assert_eq!(step.repo.as_deref(), Some("aomi-labs/playground-example"));
+            }
+            _ => panic!("expected deploy preflight"),
+        },
+        _ => panic!("expected deploy"),
+    }
+
+    let cli = crate::Cli::try_parse_from(["aomi-build", "deploy", "status", "--json"])
+        .expect("parse status");
+    match cli.cmd {
+        Some(crate::Cmd::Deploy(args)) => match args.cmd {
+            Some(super::cli::deploy::DeployCmd::Status(status)) => assert!(status.json),
+            _ => panic!("expected deploy status"),
+        },
         _ => panic!("expected deploy"),
     }
 }
@@ -191,9 +225,13 @@ fn platform_defaults_from_aomi_toml_then_community() {
     let bare = TestRepo::new();
     bare.write("README.md", "no aomi.toml\n");
     bare.commit("init");
+    let expected = super::config::AomiConfig::load()
+        .platform
+        .map(Platform::new)
+        .unwrap_or_else(Platform::community);
     assert_eq!(
         deploy_args(bare.root()).platform(bare.root(), bare.root()),
-        Platform::community()
+        expected
     );
 }
 
@@ -277,6 +315,7 @@ fn release_tag_activation(apps: &[(&str, bool, bool)]) -> ActivateResult {
                 "path": format!("apps/1/r00a1b2c3d4/{name}"),
                 "release_tag": format!("apps-1-r00a1b2c3d4-{name}-abc1234"),
                 "is_active": is_active,
+                "artifact_ready": loaded,
                 "loaded": loaded,
                 "error": if *loaded { serde_json::Value::Null } else { json!("post-activation hot-reload failed") }
             })
@@ -387,6 +426,7 @@ fn activation_response_accepts_live_promoted_shape() {
                 "path": "apps/141779906/r2bf7fd9ccb/playground-example",
                 "release_tag": "apps-141779906-r2bf7fd9ccb-playground-example-6fe687c7d6e4",
                 "is_active": true,
+                "artifact_ready": true,
                 "loaded": true,
                 "error": null
             }]
@@ -431,16 +471,8 @@ fn apply_target_activation_keeps_unloaded_active_row_inactive() {
 
 fn activate_args() -> ActivateArgs {
     ActivateArgs {
-        apps: Vec::new(),
-        platform: None,
-        release_tags: Vec::new(),
-        backend: None,
-        activation_token: None,
-        target_tags: Vec::new(),
         path: ".".into(),
-        dry_run: false,
-        json: false,
-        fix_sdk: false,
+        ..Default::default()
     }
 }
 
@@ -617,18 +649,10 @@ async fn activate_dry_run_reads_deployment_from_repo_root_when_path_is_app_dir()
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
-fn deploy_args(path: &Path) -> DeployArgs {
-    DeployArgs {
-        platform: None,
-        app_source_id: None,
-        branch: None,
-        commit: None,
-        aomi_toml: vec![],
-        backend: None,
+fn deploy_args(path: &Path) -> DeployStepArgs {
+    DeployStepArgs {
         path: path.to_path_buf(),
-        preflight: false,
-        json: false,
-        fix_sdk: false,
+        ..Default::default()
     }
 }
 

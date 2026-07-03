@@ -212,12 +212,16 @@ pub struct ActivationPromotion {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ActivatedApp {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub application_id: Option<i64>,
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub release_tag: Option<String>,
     pub is_active: bool,
+    #[serde(default)]
+    pub artifact_ready: bool,
     pub loaded: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -304,6 +308,23 @@ pub struct SourceResult {
     #[allow(dead_code)]
     pub ok: bool,
     pub source: AppSource,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlatformAppResult {
+    pub app: PlatformAppStatus,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PlatformAppStatus {
+    #[serde(default)]
+    pub is_active: bool,
+    #[serde(default)]
+    pub artifact_ready: bool,
+    #[serde(default)]
+    pub loaded: bool,
+    #[serde(default)]
+    pub app_release_tag: Option<String>,
 }
 
 // ── Local state (.aomi/deployment.json) ─────────────────────────────────────
@@ -420,8 +441,12 @@ impl LocalDeployment {
         for activated in &response.activation.apps {
             for app in self.deployment.platform.apps.iter_mut() {
                 if app.name == activated.name {
-                    app.activated =
-                        Some(activated.is_active && activated.loaded && activated.error.is_none());
+                    app.activated = Some(
+                        activated.is_active
+                            && activated.artifact_ready
+                            && activated.loaded
+                            && activated.error.is_none(),
+                    );
                 }
             }
         }

@@ -5,13 +5,13 @@
 //! never handle a GitHub token, never clone or push a platform repo, and never
 //! generate release tags or manifests — the backend owns all of that.
 //!
-//! Each command lives in its own file with a `run(args)` entry point, dispatched
-//! from `main.rs` like the codegen commands (`cli::deploy::run(args)`). Cross-
-//! command helpers (env/credential resolution, git facts) live in `shared`.
+//! Each command lives in its own file; cross-command helpers (env/credential
+//! resolution, git facts) live in `shared`.
 //!
 //! ```text
-//! deploy                     # deploy tracked aomi.toml apps from a source ref
+//! deploy                     # lifecycle: preflight → run → activate → status
 //!   --platform <NAME>        # aomi.toml [app].platform (default community)
+//!   --repo <OWNER/REPO>      # sync source when app_source_id is not known
 //!   --app-source-id <ID>     # connected GitHub App install (AOMI_APP_SOURCE_ID)
 //!   --branch <NAME>          # deprecated; checkout the branch locally instead
 //!   --commit <SHA>           # deploy this source commit (default: HEAD)
@@ -50,7 +50,7 @@ mod shared;
 pub use activate::ActivateArgs;
 pub use apps::AppsArgs;
 pub use connect::ConnectArgs;
-pub use deploy::DeployArgs;
+pub use deploy::{DeployArgs, DeployStepArgs};
 pub use request::RequestArgs;
 pub use source::SourceArgs;
 pub use status::StatusArgs;

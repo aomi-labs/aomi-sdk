@@ -7,7 +7,7 @@ use serde::de::DeserializeOwned;
 use super::platform::Platform;
 use super::types::{
     ActivateInput, ActivateResult, DeployInput, DeployResult, DeploymentStatusResult,
-    MintTokenInput, MintTokenResult, OAuthStart, SourceResult, SyncSourceInput,
+    MintTokenInput, MintTokenResult, OAuthStart, PlatformAppResult, SourceResult, SyncSourceInput,
 };
 
 /// GET the aomi-build GitHub App install URL for `platform`. Query params mirror
@@ -195,6 +195,20 @@ impl BackendClient {
         .await
     }
 
+    pub async fn get_app(
+        &self,
+        platform: &Platform,
+        app: &str,
+        release_tag: &str,
+    ) -> Result<PlatformAppResult> {
+        self.get_query(
+            &format!("/api/platforms/{}/apps/{}", platform.as_str(), app),
+            &[("release_tag", release_tag)],
+            "app status",
+        )
+        .await
+    }
+
     /// Build status of a deployment:
     /// `GET /api/platforms/:platform/deployments/:id/status`. Matches the
     /// portal's poll source — used to gate activation on the release build.
@@ -255,24 +269,29 @@ impl BackendClient {
             .send()
             .await
             .with_context(|| format!("failed to call {operation} endpoint {endpoint}"))?;
-
-        let status = response.status();
-        let text = response
-            .text()
-            .await
-            .with_context(|| format!("failed to read {operation} response body"))?;
-        if !matches!(status.as_u16(), 200 | 201) {
-            bail!(
-                "{operation} endpoint {endpoint} returned {status}: {}",
-                text.trim()
-            );
-        }
-        serde_json::from_str(&text)
-            .with_context(|| format!("{operation} endpoint {endpoint} returned invalid JSON"))
+        decode_response(response, operation, &endpoint).await
     }
 
     async fn get<Resp: DeserializeOwned>(&self, path: &str, operation: &str) -> Result<Resp> {
         self.send(reqwest::Method::GET, path, operation).await
+    }
+
+    async fn get_query<Resp: DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+        operation: &str,
+    ) -> Result<Resp> {
+        let endpoint = self.endpoint(path);
+        let response = self
+            .http
+            .get(&endpoint)
+            .bearer_auth(&self.bearer)
+            .query(query)
+            .send()
+            .await
+            .with_context(|| format!("failed to call {operation} endpoint {endpoint}"))?;
+        decode_response(response, operation, &endpoint).await
     }
 
     async fn delete<Resp: DeserializeOwned>(&self, path: &str, operation: &str) -> Result<Resp> {
@@ -294,19 +313,26 @@ impl BackendClient {
             .send()
             .await
             .with_context(|| format!("failed to call {operation} endpoint {endpoint}"))?;
-
-        let status = response.status();
-        let text = response
-            .text()
-            .await
-            .with_context(|| format!("failed to read {operation} response body"))?;
-        if !matches!(status.as_u16(), 200 | 201) {
-            bail!(
-                "{operation} endpoint {endpoint} returned {status}: {}",
-                text.trim()
-            );
-        }
-        serde_json::from_str(&text)
-            .with_context(|| format!("{operation} endpoint {endpoint} returned invalid JSON"))
+        decode_response(response, operation, &endpoint).await
     }
+}
+
+async fn decode_response<Resp: DeserializeOwned>(
+    response: reqwest::Response,
+    operation: &str,
+    endpoint: &str,
+) -> Result<Resp> {
+    let status = response.status();
+    let text = response
+        .text()
+        .await
+        .with_context(|| format!("failed to read {operation} response body"))?;
+    if !status.is_success() {
+        bail!(
+            "{operation} endpoint {endpoint} returned {status}: {}",
+            text.trim()
+        );
+    }
+    serde_json::from_str(&text)
+        .with_context(|| format!("{operation} endpoint {endpoint} returned invalid JSON"))
 }
