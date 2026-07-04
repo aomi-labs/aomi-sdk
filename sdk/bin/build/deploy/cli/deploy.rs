@@ -375,13 +375,17 @@ impl DeployStepArgs {
     async fn run_preflight(&self, platform: &Platform, request: &DeployInput) -> Result<()> {
         let url = self.backend_url()?;
         let (token, _) = self.activation_token_with_source()?;
-        crate::sdk_guard::ensure_project_sdk(&git_context(&self.path)?.1, Some(&url), self.fix_sdk)
+        crate::sdk_guard::ensure_project_sdk(&self.sdk_project_path()?, Some(&url), self.fix_sdk)
             .await?;
         let response = BackendClient::new(url, token)?
             .deploy(platform, request)
             .await?;
         println!("{}", serde_json::to_string_pretty(&response)?);
         Ok(())
+    }
+
+    pub(crate) fn sdk_project_path(&self) -> Result<PathBuf> {
+        Ok(git_context(&self.path)?.1)
     }
 
     pub(crate) fn platform(&self, git_root: &Path, start_dir: &Path) -> Platform {

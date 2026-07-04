@@ -612,6 +612,35 @@ fn deploy_reads_recorded_source_id_from_repo_root_state() {
     assert_eq!(args.recorded_app_source_id(repo.root()), Some(777));
 }
 
+#[test]
+fn sdk_guard_uses_app_dir_when_path_is_nested() {
+    let repo = TestRepo::new();
+    repo.write_aomi_toml("apps/bot", "bot");
+    repo.write(
+        "apps/bot/Cargo.toml",
+        "[package]\nname = \"bot\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    );
+    repo.commit("init");
+
+    let app_dir = repo.path("apps/bot").canonicalize().unwrap();
+
+    assert_eq!(
+        deploy_args(&app_dir).sdk_project_path().unwrap(),
+        app_dir,
+        "deploy must SDK-check the app directory, not the repo root"
+    );
+    assert_eq!(
+        ActivateArgs {
+            path: app_dir.clone(),
+            ..activate_args()
+        }
+        .sdk_project_path()
+        .unwrap(),
+        app_dir,
+        "activate must SDK-check the app directory while reading state from the repo root"
+    );
+}
+
 #[tokio::test]
 async fn status_reads_deployment_from_repo_root_when_path_is_app_dir() {
     let repo = TestRepo::new();

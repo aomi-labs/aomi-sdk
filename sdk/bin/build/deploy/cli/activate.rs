@@ -62,7 +62,8 @@ pub struct ActivateArgs {
 
 impl ActivateArgs {
     pub async fn run(self) -> Result<()> {
-        let (git_root, start_dir) = git_context(&self.path)?;
+        let (git_root, _) = git_context(&self.path)?;
+        let sdk_project_path = self.sdk_project_path()?;
         let mut state = LocalDeployment::read(&git_root)?.ok_or_else(|| {
             anyhow!(
                 "no .aomi/deployment.json at {} — run `{} deploy` first",
@@ -83,7 +84,9 @@ impl ActivateArgs {
             return Ok(());
         }
 
-        let response = self.activate_with_state(&start_dir, &mut state).await?;
+        let response = self
+            .activate_with_state(&sdk_project_path, &mut state)
+            .await?;
         state.write(&git_root)?;
         Self::print_activation(&response, self.json)?;
         Ok(())
@@ -91,7 +94,7 @@ impl ActivateArgs {
 
     pub(crate) async fn activate_with_state(
         &self,
-        git_root: &std::path::Path,
+        sdk_project_path: &std::path::Path,
         state: &mut LocalDeployment,
     ) -> Result<crate::deploy::types::ActivateResult> {
         let platform = self
@@ -104,7 +107,8 @@ impl ActivateArgs {
         let backend_url = resolve_backend(&self.backend).ok_or_else(|| {
             anyhow!("activate needs a backend URL — set --backend or {BACKEND_URL_ENV}")
         })?;
-        crate::sdk_guard::ensure_project_sdk(git_root, Some(&backend_url), self.fix_sdk).await?;
+        crate::sdk_guard::ensure_project_sdk(sdk_project_path, Some(&backend_url), self.fix_sdk)
+            .await?;
         let token = resolve_activation_token(&self.activation_token).ok_or_else(|| {
             anyhow!(
                 "activate requires a token via --activation-token or {ACTIVATION_TOKEN_ENV} \
@@ -119,6 +123,10 @@ impl ActivateArgs {
         verify_activation(&client, &platform, &mut response).await?;
         state.apply_target_activation(&response);
         Ok(response)
+    }
+
+    pub(crate) fn sdk_project_path(&self) -> Result<PathBuf> {
+        Ok(git_context(&self.path)?.1)
     }
 
     pub(crate) fn print_activation(
