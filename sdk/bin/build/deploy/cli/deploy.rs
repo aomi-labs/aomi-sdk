@@ -183,7 +183,7 @@ impl DeployStepArgs {
         let (git_root, start_dir) = git_context(&self.path)?;
         let platform = self.platform(&git_root, &start_dir);
         let backend_url = self.backend_url()?;
-        crate::sdk_guard::ensure_project_sdk(&git_root, Some(&backend_url), self.fix_sdk).await?;
+        crate::sdk_guard::ensure_project_sdk(&start_dir, Some(&backend_url), self.fix_sdk).await?;
 
         let source_ref = self.source_ref(&git_root)?;
         let aomi_toml_paths = self.aomi_toml_paths(&git_root)?;
@@ -258,7 +258,7 @@ impl DeployStepArgs {
             ..Default::default()
         };
         let response = activate_args
-            .activate_with_state(&git_root, &mut state)
+            .activate_with_state(&start_dir, &mut state)
             .await?;
         state.write(&git_root)?;
         ActivateArgs::print_activation(&response, self.json)?;
@@ -297,7 +297,7 @@ impl DeployStepArgs {
         }
 
         let backend_url = self.backend_url()?;
-        crate::sdk_guard::ensure_project_sdk(&git_root, Some(&backend_url), self.fix_sdk).await?;
+        crate::sdk_guard::ensure_project_sdk(&start_dir, Some(&backend_url), self.fix_sdk).await?;
         let (token, token_source) = self.activation_token_with_source()?;
         let response = BackendClient::new(backend_url, token)?
             .deploy(&platform, &request)
@@ -375,7 +375,7 @@ impl DeployStepArgs {
     async fn run_preflight(&self, platform: &Platform, request: &DeployInput) -> Result<()> {
         let url = self.backend_url()?;
         let (token, _) = self.activation_token_with_source()?;
-        crate::sdk_guard::ensure_project_sdk(&git_context(&self.path)?.0, Some(&url), self.fix_sdk)
+        crate::sdk_guard::ensure_project_sdk(&git_context(&self.path)?.1, Some(&url), self.fix_sdk)
             .await?;
         let response = BackendClient::new(url, token)?
             .deploy(platform, request)

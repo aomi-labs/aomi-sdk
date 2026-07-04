@@ -182,3 +182,5 @@ dyn_aomi_app!(
     // canonical names only.
     namespaces = ["evm-core", "svm-reads", "svm-tx-sign"]
 );
+
+// search -> Catalog -> Tools 

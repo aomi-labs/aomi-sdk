@@ -62,7 +62,7 @@ pub struct ActivateArgs {
 
 impl ActivateArgs {
     pub async fn run(self) -> Result<()> {
-        let (git_root, _) = git_context(&self.path)?;
+        let (git_root, start_dir) = git_context(&self.path)?;
         let mut state = LocalDeployment::read(&git_root)?.ok_or_else(|| {
             anyhow!(
                 "no .aomi/deployment.json at {} — run `{} deploy` first",
@@ -83,7 +83,7 @@ impl ActivateArgs {
             return Ok(());
         }
 
-        let response = self.activate_with_state(&git_root, &mut state).await?;
+        let response = self.activate_with_state(&start_dir, &mut state).await?;
         state.write(&git_root)?;
         Self::print_activation(&response, self.json)?;
         Ok(())
