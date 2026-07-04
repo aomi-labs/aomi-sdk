@@ -66,49 +66,43 @@ pub mod host {
 
     // ── SVM (Solana) primitives ──────────────────────────────────────────
     //
-    // Route-target markers for the SVM verbs in the `svm-core` namespace
-    // family (split into `svm-reads`, `svm-ix-broadcast`,
-    // `svm-ix-sign`, `svm-tx-broadcast`, `svm-tx-sign`,
-    // `svm-sign-data`, `svm-bundle` on the host side per ADR 0004
-    // § Decision B). App `build_*` tools emit route plans that drive
-    // these as continuations — mirroring how EVM apps use `EvmCommitMessage`
-    // for the typed-data signing step.
+    // Route-target markers for the SVM verbs (host namespaces after the
+    // 2026-07 lane recut: `svm-reads`, `svm-write-ix`, `svm-write-tx`,
+    // plus the `svm-core` meta/union). App `build_*` tools emit route
+    // plans that drive these as continuations — mirroring how EVM apps
+    // use `EvmCommitMessage` for the typed-data signing step.
     //
     // Three lanes from ADR 0003 § Decision A:
     //   - Lane 1 (ix list)        — `SvmStageIx`  → `svm_stage_ix`
-    //   - Lane 2 (received tx)    — `SvmStageTx`  → `svm_stage_tx`
-    //                               (host #38-pipeline-b2 landed iter
-    //                               39 follow-up; ADR 0005 storage
-    //                               primitive `SvmPending::Tx` ships
-    //                               with it). Apps that receive a
-    //                               base64 `VersionedTransaction` from
-    //                               a venue (e.g. byreal `build-swap-tx`,
-    //                               Jupiter `/swap`) stage it through
-    //                               this marker and downstream verbs
-    //                               consume the minted `tx_id`.
+    //   - Lane 2 (received tx)    — `SvmStageTx`  → `svm_stage_tx`.
+    //                               Apps that receive a base64
+    //                               `VersionedTransaction` from a venue
+    //                               (byreal `build-swap-tx`, Jupiter
+    //                               `/swap`, Raydium tx-API) stage it
+    //                               through this marker and downstream
+    //                               verbs consume the minted `tx_id`.
     //   - Lane 3 (off-chain msg)  — `SvmSignData` → `svm_sign_data`
     //
-    // Two consumers per ADR 0003 § Decision B + ADR 0004 § C.2:
-    //   - Stage / sim / commit (lane-symmetric per ADR 0003 § Decision A):
-    //       `SvmStageIx`     → `svm_stage_ix`     (Lane 1 producer)
-    //       `SvmStageTx`     → `svm_stage_tx`     (Lane 2 producer)
-    //       `SvmSimulateIx`  → `svm_simulate_ix`  (Lane 1 sim consumer)
-    //       `SvmSimulateTx`  → `svm_simulate_tx`  (Lane 2 sim consumer)
-    //       `SvmCommitIx`    → `svm_commit_ix`    (Lane 1 commit; takes
-    //                          `ix_ids` + assembly args + `mode`)
-    //       `SvmCommitTx`    → `svm_commit_tx`    (Lane 2 commit; takes
-    //                          `tx_id` + `mode`; blob authoritative)
-    //                          Both commit tools carry a `mode`; wallet
-    //                          is the currently shipped app-facing path.
-    //   - Sign-only (app-broadcast pattern, ADR 0004 § C.2):
-    //       `SvmSignTx`      → `svm_sign_tx`; byreal-style apps wrap
-    //                          signing here, then POST signed bytes to
-    //                          their own venue endpoint.
+    // Commit means one thing: "execute this staged transaction under
+    // kernel policy". There is NO mode arg and NO sign-only verb. Two
+    // orthogonal decisions route the call, neither made by the app's
+    // tools or the model:
     //
-    // Lane-symmetric note: stage / simulate split per tool name, NOT per
-    // XOR arg. The lane lives in the tool the LLM picks; arg shapes are
-    // non-discriminated. This mirrors how the host's `finalize_stage_tx`
-    // already dispatches by `attribute.name` (call_consumer/svm.rs).
+    //   - WHO SIGNS — kernel policy on the user's wallet
+    //     (`public_keys.signing_mode`): human-sync routes to the
+    //     connected wallet, autonomous signs server-side via the
+    //     delegated grant, denied rejects. Apps never see this axis.
+    //   - WHO SUBMITS — the `Broadcaster` config
+    //     (`"wallet" | "venue" | "aomi"`): the app manifest's
+    //     `broadcast = { default, allowed }` declares the operator
+    //     policy; a stage call may pin `broadcaster` explicitly for a
+    //     flow with a hard venue constraint (RFQ fills). `"venue"`
+    //     makes commit emit a sign-only request whose signed bytes
+    //     return to the app's own `submit_*` tool — the pattern that
+    //     used to be the separate `svm_sign_tx` verb.
+    //
+    // Lane-symmetric note: stage / simulate / commit split per tool
+    // name, NOT per XOR arg. The lane lives in the tool the LLM picks.
     //
     // Args contracts and bound-artifact shapes are documented at each
     // verb's host-side implementation in product-mono
@@ -129,22 +123,24 @@ pub mod host {
     // Jupiter `/swap`, Raydium tx-API). The host decodes, validates
     // payer = connected wallet, then stages the blob under a fresh
     // `pending_tx_id`. Downstream verbs (`SvmSimulateTx`,
-    // `SvmCommitTx`, `SvmSignTx`) consume that id. ADR 0003 §
-    // Decision A + ADR 0005 storage primitive; host
-    // #38-pipeline-b2 (iter 39 follow-up).
+    // `SvmCommitTx`) consume that id.
     //
     // Args contract:
     //   { "tx": "<base64 VersionedTransaction>",
-    //     "description": "...",          // optional, surfaces in UI
-    //     "kind": "..." }                // optional, free-form tag
+    //     "description": "...",           // optional, surfaces in UI
+    //     "kind": "...",                   // optional, free-form tag
+    //     "preserve_blockhash": <bool>,   // optional, default true
+    //     "broadcaster": "wallet" | "venue" | "aomi" }  // optional
     //
-    // The direct inline form for `SvmSignTx`
-    // (`{ "unsigned_tx": "<base64>", ... }`) remains supported, but
-    // Lane 2 staging is the preferred path when the app also needs
-    // simulate or route a single `tx_id` through multiple consumers.
+    // `broadcaster` stamps WHO SUBMITS on the staged artifact. Omitted →
+    // the app manifest's `broadcast.default` (falling back to the host
+    // default). Pin `"venue"` explicitly for flows with a hard venue
+    // constraint (RFQ fills); the host validates against the manifest's
+    // `broadcast.allowed`.
     //
     // `preserve_blockhash: bool` defaults true for byte-stable
-    // venue-validated flows like byreal preData/data byte-compare.
+    // venue-validated flows like byreal preData/data byte-compare;
+    // venue-broadcast blobs must keep it true.
     host_target!(SvmStageTx, "svm_stage_tx");
 
     // Lane 1 simulate consumer — assembles the staged ix list into a
@@ -179,51 +175,49 @@ pub mod host {
     host_target!(SvmSimulateTx, "svm_simulate_tx");
 
     // Lane 1 commit consumer — assemble the staged ix list into one
-    // VersionedTransaction and request wallet approval. Args contract:
+    // VersionedTransaction and execute it under kernel policy. Args
+    // contract:
     //   { "ix_ids": [<u32>, ...],
     //     "version": "legacy" | "v0",                 // optional
     //     "address_lookup_tables": ["<pubkey>", ...], // optional (v0 only)
     //     "compute_units": <u32>,                     // optional
     //     "priority_microlamports": <u64>,            // optional
-    //     "mode": "wallet" | "internal-rpc" }         // optional, see below
+    //     "broadcaster": "wallet" | "venue" | "aomi" } // optional
     //
-    // Mode (shared with `SvmCommitTx` Lane 2):
-    //   - `wallet` (default): host wallet SDK signs + broadcasts via
-    //     signAndSendTransaction. The only working path today.
-    //   - `internal-rpc`: runtime signs and submits via its own RPC +
-    //     confirm loop. Errors loud until host #38-pipeline-c lands
-    //     the broadcast loop + `WalletCallback::Tx*` variants.
-    //
-    // Rejects ids that resolve to `svm_stage_tx`-staged blobs with a
-    // "use svm_commit_tx" hint.
+    // No mode arg. Lane 1 assembles at commit time, so `broadcaster`
+    // rides the call instead of a staged blob — forward what the app's
+    // build tool returned; it is not a model choice. Rejects ids that
+    // resolve to `svm_stage_tx`-staged blobs with a "use svm_commit_tx"
+    // hint.
     host_target!(SvmCommitIx, "svm_commit_ix");
 
-    // Lane 2 commit consumer — request wallet approval for a
-    // `svm_stage_tx`-staged transaction blob. The blob's version / ALTs /
-    // blockhash / compute budget are preserved; there are no assembly
-    // args, because the blob's metadata is authoritative. Args contract:
-    //   { "tx_id": <u32>,
-    //     "mode": "wallet" | "internal-rpc" }         // optional
+    // Lane 2 commit consumer — execute a `svm_stage_tx`-staged
+    // transaction blob under kernel policy. The blob's version / ALTs /
+    // blockhash / compute budget / broadcaster are preserved; there are
+    // no assembly or mode args, because the staged metadata is
+    // authoritative. Args contract:
+    //   { "tx_id": <u32> }
     //
-    // Same `mode` semantics as `SvmCommitIx`. Rejects ids that resolve
-    // to `svm_stage_ix`-staged instructions with a "use svm_commit_ix"
-    // hint.
+    // Routing (host-side, see product-mono `svm/tx/commit.rs`):
+    //   - staged `broadcaster: "wallet"` → FE wallet signs AND submits
+    //     (`signAndSendTransaction`) — the classic attended flow.
+    //   - staged `broadcaster: "venue"` → sign-only request; the signed
+    //     bytes bind to the route alias and return to the app's
+    //     `submit_*` continuation; the venue broadcasts. On an
+    //     autonomous-armed wallet the kernel signs server-side and the
+    //     bytes bind without any FE round-trip — same route plan,
+    //     unattended-capable.
+    //   - staged `broadcaster: "aomi"` → runtime broadcast loop
+    //     (BroadcastEngine, host #38-pipeline-c).
+    //
+    // Bound artifact for the venue cell (string): base64 signed tx
+    // bytes — bind it with `.bind_as("signed_tx")` and await it in the
+    // app's submit continuation. Note: Solana wallets sign one tx per
+    // user prompt; apps needing multiple signed txs should issue
+    // separate stage + commit step pairs, each binding a distinct
+    // alias. Rejects ids that resolve to `svm_stage_ix`-staged
+    // instructions with a "use svm_commit_ix" hint.
     host_target!(SvmCommitTx, "svm_commit_tx");
-
-    // Sign-only verb for the **app-broadcast** pattern (ADR 0004 §
-    // C.2). byreal-style apps wrap signing here, then forward the
-    // signed bytes to their own venue endpoint (e.g. byreal
-    // `/dex/v2/send-swap-tx`, Jupiter `/execute`, Raydium tx-API).
-    // Args contract (transitional pre-#39-svm-apps-b):
-    //   { "unsigned_tx": "<base64>", "description": "..." }
-    // Args contract (Lane 2 staged, post-#39-svm-apps-b):
-    //   { "tx_id": <u32>, "description": "..." }
-    // Bound artifact (string): base64 signed tx bytes.
-    //
-    // Note: there is intentionally no `SvmSignTxs` (plural) — Solana
-    // wallets sign one tx per user prompt. Apps that need multiple
-    // signed txs should issue separate `SvmSignTx` route steps.
-    host_target!(SvmSignTx, "svm_sign_tx");
 
     // Lane 3 producer + consumer — off-chain message signing for
     // commit-reveal flows, Squads proposal payloads, wallet-attested
@@ -469,7 +463,7 @@ impl<'a> NextStepBuilder<'a> {
     ///
     /// Aliases must be unique within a route plan, but the *tool name* does not
     /// have to be — a single plan may have multiple `evm_commit_message` / `stage_tx`
-    /// / `svm_sign_tx` steps each binding to a distinct alias. The runtime
+    /// / `svm_commit_tx` steps each binding to a distinct alias. The runtime
     /// consumes aliases in FIFO order per tool name, so list the steps in the
     /// order you expect the LLM/user to drive them (use `.note(...)` to
     /// reinforce the order in the suggested-action prompt).

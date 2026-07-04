@@ -140,6 +140,42 @@ pub struct DynManifest {
     /// in the user's vault, and surfaces this list in the settings UI.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub secrets: Option<Vec<crate::SecretSlot>>,
+    /// Operator broadcast policy for this app's SVM transactions (see
+    /// [`BroadcastConfig`]). Absent → the host default (`wallet`-only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub broadcast: Option<BroadcastConfig>,
+}
+
+/// Operator-declared broadcast policy: who submits this app's signed SVM
+/// transactions. **Who signs is never the app's concern** — that is kernel
+/// policy resolved from the user's wallet authorization (`signing_mode` on
+/// the key row). This config only bounds the *submitter*:
+///
+/// - `"wallet"` — the user's wallet signs **and submits**
+///   (`signAndSendTransaction`); the classic attended chat-portal flow.
+/// - `"venue"`  — signed bytes return to the app's own `submit_*` tool and
+///   the venue broadcasts (byreal AMM/RFQ, Jupiter `/execute`, Raydium
+///   tx-API).
+/// - `"aomi"`   — the Aomi runtime broadcasts through its own RPC +
+///   confirm loop.
+///
+/// `default` is what the app's staged transactions use when a call doesn't
+/// pin one explicitly; `allowed` is the full set a user preference or a
+/// runtime retry may select from. A flow with a hard technical constraint
+/// (e.g. an RFQ fill that only settles through the venue) should pin
+/// `broadcaster` explicitly at stage time — that is an artifact constraint,
+/// not a preference, and it must still be inside `allowed`.
+///
+/// There is deliberately no attended/unattended axis here: execution mode
+/// is a user-space authorization question, not an app property.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BroadcastConfig {
+    /// Default submitter for this app's staged SVM transactions
+    /// (`"wallet"` | `"venue"` | `"aomi"`).
+    pub default: String,
+    /// Every submitter the operator permits for this app. User overrides
+    /// and runtime retries resolve within this set.
+    pub allowed: Vec<String>,
 }
 
 // ============================================================================
@@ -399,23 +435,38 @@ pub trait DynAomiApp: Clone + Default + Send + Sync + 'static {
     ///
     /// - EVM: `"evm-core"`
     /// - SVM meta: `"svm-core"` (expands to the full SVM catalogue)
-    /// - SVM subs: `"svm-reads"`, `"svm-ix-broadcast"`,
-    ///   `"svm-ix-sign"`, `"svm-tx-broadcast"`, `"svm-tx-sign"`,
-    ///   `"svm-sign-data"`, `"svm-bundle"`
+    /// - SVM lanes (2026-07 recut): `"svm-reads"`, `"svm-write-ix"`
+    ///   (compose from instructions: `svm_stage_ix` / `svm_simulate_ix` /
+    ///   `svm_commit_ix` + `svm_sign_data`), `"svm-write-tx"`
+    ///   (venue-built transactions: `svm_stage_tx` / `svm_simulate_tx` /
+    ///   `svm_commit_tx` + `svm_sign_data`)
     /// - Other: `"database"` (host-private)
     ///
-    /// Legacy aliases (`"solana-core"`, `"sol"`, `"solana"`, `"svm"`,
-    /// `"common"`) were removed in host iter-39 — the loader logs
+    /// The old endgame-split namespaces (`"svm-ix-broadcast"`,
+    /// `"svm-ix-sign"`, `"svm-tx-broadcast"`, `"svm-tx-sign"`,
+    /// `"svm-sign-data"`, `"svm-bundle"`) are gone — who signs is kernel
+    /// policy on the user's wallet, and who submits is [`BroadcastConfig`]
+    /// plus the artifact's staged `broadcaster`. Legacy aliases
+    /// (`"solana-core"`, `"sol"`, `"solana"`, `"svm"`, `"common"`) were
+    /// removed in host iter-39. The loader logs
     /// `"unknown namespace requested by plugin, skipping"` and registers
-    /// nothing for them. Update existing plugins to canonical names.
+    /// nothing for unknown names.
     ///
     /// Default is `["evm-core"]`, which most apps want. Override to:
     /// - Add SVM surfaces alongside (e.g. `["evm-core", "svm-reads",
-    ///   "svm-tx-sign"]` for byreal's cross-chain pattern).
+    ///   "svm-write-tx"]` for byreal's cross-chain pattern).
     /// - Replace entirely (e.g. `["database"]` for a namespace-only admin app).
     /// - Return `Some(vec![])` to opt out explicitly.
     fn namespaces(&self) -> Option<Vec<String>> {
         Some(vec!["evm-core".to_string()])
+    }
+
+    /// Operator broadcast policy for this app's SVM transactions (see
+    /// [`BroadcastConfig`]). Default: none — the host treats absent config
+    /// as wallet-only. Typically set via the `broadcast = { ... }` arm of
+    /// `dyn_aomi_app!`.
+    fn broadcast(&self) -> Option<BroadcastConfig> {
+        None
     }
 
     /// Per-app secret slots this plugin needs. Default: none. Apps that
@@ -435,6 +486,7 @@ pub trait DynAomiApp: Clone + Default + Send + Sync + 'static {
             tools: self.tools(),
             namespaces: self.namespaces(),
             secrets: self.secrets(),
+            broadcast: self.broadcast(),
         }
     }
 }

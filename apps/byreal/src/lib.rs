@@ -13,8 +13,8 @@ This app is self-contained. Every read and write across all of byreal lives here
 | Namespace | Venue | Signing | Use case |
 |---|---|---|---|
 | `byreal_perps_*` | Hyperliquid L1 (EVM-flavored) | `evm_commit_message` (master EVM wallet) | Perpetual futures |
-| `byreal_spot_*`  | byreal Solana (CLMM + RFQ)    | `svm_sign_tx` (SVM wallet)       | Spot swaps + pool discovery |
-| `byreal_lp_*`    | byreal Solana (Copy Farming)  | `svm_sign_tx` (SVM wallet)       | LP analytics + reward claims |
+| `byreal_spot_*`  | byreal Solana (CLMM + RFQ)    | `svm_stage_tx` → `svm_commit_tx` (SVM wallet) | Spot swaps + pool discovery |
+| `byreal_lp_*`    | byreal Solana (Copy Farming)  | `svm_stage_tx` → `svm_commit_tx` (SVM wallet) | LP analytics + reward claims |
 
 The two trust models are independent. A single user can have a connected EVM wallet (for perps) and a separate SVM wallet (for spot/LP) at the same time — addresses come from `domain.evm.address` and `domain.svm.address` in the host context respectively.
 
@@ -35,7 +35,7 @@ The two trust models are independent. A single user can have a connected EVM wal
 `byreal_spot_get_tokens`, `byreal_spot_get_token_prices`, `byreal_spot_get_global_overview`,
 `byreal_spot_get_swap_quote`.
 
-**Writes (signed via `svm_sign_tx`):**
+**Writes (staged + committed via `svm_stage_tx` → `svm_commit_tx`):**
 `byreal_spot_build_swap` / `byreal_spot_submit_swap` — handles AMM and RFQ routes transparently.
 
 ### LP / Copy Farming (byreal Solana)
@@ -43,7 +43,7 @@ The two trust models are independent. A single user can have a connected EVM wal
 `byreal_lp_get_provider_overview` (deep dive on one LP wallet),
 `byreal_lp_get_positions`, `byreal_lp_get_unclaimed_rewards`, `byreal_lp_get_epoch_bonus`.
 
-**Writes (signed via `svm_sign_tx`):**
+**Writes (staged + committed via `svm_stage_tx` → `svm_commit_tx`):**
 `byreal_lp_build_claim_rewards` / `byreal_lp_submit_claim_rewards` — claim accrued fees +
 incentives. v1 supports single-tx claims; for large batches, claim positions in smaller groups.
 
@@ -53,8 +53,11 @@ Each `build_*` tool returns a structured action preview AND a routed signing ste
 
 - **EVM (perps):** routes to `evm_commit_message` with EIP-712 typed-data; signature comes back as
   `master_signature` and feeds the matching `byreal_perps_submit_*` continuation.
-- **Solana (spot, lp):** routes to `svm_sign_tx` with a base64 versioned tx; signed bytes come
-  back as `signed_tx` and feed the matching `byreal_spot_submit_*` / `byreal_lp_submit_*` continuation.
+- **Solana (spot, lp):** routes `svm_stage_tx` (the base64 versioned tx, staged with
+  `broadcaster: "venue"`) then `svm_commit_tx` with the `pending_tx_id` the stage step returned.
+  The kernel routes who signs from the wallet's authorization; the signed bytes come back as
+  `signed_tx` and feed the matching `byreal_spot_submit_*` / `byreal_lp_submit_*` continuation —
+  byreal's venue endpoint broadcasts, never the wallet or the Aomi runtime.
 
 You NEVER hold a private key. Treat the `submit_args_template` returned by `build_*` as opaque
 runtime state — forward it verbatim; the runtime splices the signature/signed tx in.
@@ -134,7 +137,7 @@ Wait for the user to reply with "go" / "confirm" before calling `build_*`.
 dyn_aomi_app!(
     app = client::ByrealApp,
     name = "byreal",
-    version = "0.1.0",
+    version = "0.2.0",
     preamble = PREAMBLE,
     tools = [
         // perps (Hyperliquid via evm_commit_message)
@@ -152,7 +155,7 @@ dyn_aomi_app!(
         tool::perps::SubmitCancel,
         tool::perps::BuildUpdateLeverage,
         tool::perps::SubmitUpdateLeverage,
-        // spot (byreal AMM/RFQ on Solana via svm_sign_tx)
+        // spot (byreal AMM/RFQ on Solana via svm_stage_tx → svm_commit_tx)
         tool::spot::GetPools,
         tool::spot::GetPool,
         tool::spot::GetKlines,
@@ -173,12 +176,17 @@ dyn_aomi_app!(
     ],
     // byreal is cross-chain (Hyperliquid perps + Solana spot/LP), so it
     // stays string-typed via `namespaces` rather than declaring a single
-    // SVM `variant`. The SVM-side surface byreal touches is just the
-    // chain reads plus transaction signing. The actual signing flows
-    // through the host route target `host::SvmSignTx`, which the app's
-    // `submit_*` tools forward to byreal's own venue endpoints
-    // (`/dex/v2/send-swap-tx` for AMM, `/rfq/v1/swap` for RFQ).
-    // The legacy `solana-core` alias was removed in host iter 39;
-    // canonical names only.
-    namespaces = ["evm-core", "svm-reads", "svm-tx-sign"]
+    // SVM `variant`. The SVM-side surface is the chain reads plus the
+    // venue-tx write lane (`svm_stage_tx` / `svm_simulate_tx` /
+    // `svm_commit_tx` + `svm_sign_data`). Who SIGNS is kernel policy on
+    // the user's wallet — never this app's concern. Who SUBMITS is the
+    // `broadcast` block below: byreal is venue-broadcast by default (the
+    // app's `submit_*` tools forward signed bytes to byreal's own
+    // endpoints — `/dex/v2/send-swap-tx` for AMM, `/rfq/v1/swap` for
+    // RFQ); `wallet` stays allowed so a user preference can route
+    // attended AMM swaps through their own wallet instead. RFQ fills pin
+    // `broadcaster: "venue"` at stage time — they only settle through
+    // the venue.
+    namespaces = ["evm-core", "svm-reads", "svm-write-tx"],
+    broadcast = { default: "venue", allowed: ["venue", "wallet"] }
 );
