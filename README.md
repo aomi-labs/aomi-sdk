@@ -131,9 +131,11 @@ aomi-build compile --target aarch64-apple-darwin
 Community and partner source repos deploy through the same `aomi-build` binary:
 
 ```bash
-AOMI_BACKEND_URL=https://api.aomi.dev \
-AOMI_APP_ACTIVATION_TOKEN=<platform-or-app-token> \
-aomi-build deploy --platform community --repo owner/repo
+aomi-build deploy \
+  --platform community \
+  --repo owner/repo \
+  --backend https://api.aomi.dev \
+  --activation-token <platform-or-app-token>
 ```
 
 The binary alone is not enough: the source commit must be pushed to GitHub, the
@@ -141,6 +143,10 @@ Aomi GitHub App must be installed on the source repo, and the user needs a
 platform/app activation token for the target platform. The user does **not**
 need a GitHub PAT, platform repo write access, database access, or an admin
 private key.
+
+Every deploy prerequisite that can come from env also has a flag for one-off
+runs: `AOMI_BACKEND_URL` -> `--backend`, `AOMI_APP_ACTIVATION_TOKEN` ->
+`--activation-token`, and `AOMI_APP_SOURCE_ID` -> `--app-source-id`.
 
 `deploy` writes `.aomi/deployment.json` in the source repo, waits for candidate
 CI/release readiness, activates the recorded release tags, and fails unless the

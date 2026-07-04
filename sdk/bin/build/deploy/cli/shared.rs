@@ -104,18 +104,81 @@ pub(crate) fn resolve_activation_token_with_source(
 /// `--backend`/env + activation token resolution shared by the activation-token
 /// bootstrap commands (source/apps/token list+revoke).
 pub(crate) fn resolve_activation(
+    command: &str,
     backend: &Option<String>,
     token: &Option<String>,
 ) -> Result<(String, String)> {
-    let url = resolve_backend(backend)
-        .ok_or_else(|| anyhow!("needs a backend URL — set --backend or {BACKEND_URL_ENV}"))?;
-    let tok = resolve_activation_token(token).ok_or_else(|| {
-        anyhow!(
-            "needs an activation token via --activation-token or {ACTIVATION_TOKEN_ENV} \
-             (or run `aomi-build connect`)"
-        )
-    })?;
+    let url = resolve_backend(backend).ok_or_else(|| missing_backend(command))?;
+    let tok = resolve_activation_token(token).ok_or_else(|| missing_activation_token(command))?;
     Ok((url, tok))
+}
+
+pub(crate) fn missing_backend(command: &str) -> anyhow::Error {
+    missing_flag_or_env(
+        command,
+        "a backend URL",
+        "--backend <url>",
+        BACKEND_URL_ENV,
+        "<url>",
+        None,
+    )
+}
+
+pub(crate) fn missing_activation_token(command: &str) -> anyhow::Error {
+    missing_flag_or_env(
+        command,
+        "an activation token",
+        "--activation-token <token>",
+        ACTIVATION_TOKEN_ENV,
+        "<token>",
+        Some(&format!(
+            "Or save it once:\n  {} connect --activation-token <token>",
+            bin_name()
+        )),
+    )
+}
+
+pub(crate) fn missing_admin_key(command: &str) -> anyhow::Error {
+    missing_flag_or_env(
+        command,
+        "the privileged admin signing key",
+        "--admin-key <pkcs8-pem-or-path>",
+        ADMIN_KEY_ENV,
+        "<pkcs8-pem-or-path>",
+        Some("This is an out-of-band admin/service signing key, not an activation token."),
+    )
+}
+
+pub(crate) fn missing_admin_kid(command: &str) -> anyhow::Error {
+    missing_flag_or_env(
+        command,
+        "the admin issuer key id",
+        "--admin-kid <kid>",
+        ADMIN_KID_ENV,
+        "<kid>",
+        Some("Example kid: aomi-admin-staging-1"),
+    )
+}
+
+fn missing_flag_or_env(
+    command: &str,
+    need: &str,
+    flag_example: &str,
+    env_name: &str,
+    env_example: &str,
+    extra: Option<&str>,
+) -> anyhow::Error {
+    let bin = bin_name();
+    let mut message = format!(
+        "{command} needs {need}.\n\n\
+         Pass it for this run:\n  {bin} {command} {flag_example}\n\n\
+         Or export it:\n  export {env_name}={env_example}"
+    );
+    if let Some(extra) = extra {
+        message.push_str("\n\n");
+        message.push_str(extra);
+    }
+    anyhow!(message)
 }
 
 pub(crate) fn git_context(start: impl AsRef<Path>) -> Result<(PathBuf, PathBuf)> {

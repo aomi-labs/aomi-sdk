@@ -17,6 +17,7 @@
 //!   --commit <SHA>           # deploy this source commit (default: HEAD)
 //!   --aomi-toml <PATH>       # repeatable; default: all tracked aomi.toml
 //!   --backend <URL>          # AOMI_BACKEND_URL
+//!   --activation-token <T>   # AOMI_APP_ACTIVATION_TOKEN
 //!   --preflight              # resolve + print the plan without opening a PR
 //!   --json
 //!
@@ -31,7 +32,13 @@
 //!
 //! status                     # local deployment.json + backend per-app state
 //!   --backend <URL>
+//!   --activation-token <T>
 //!   --json
+//!
+//! token mint                 # admin-only activation-token issuance
+//!   --backend <URL>          # AOMI_BACKEND_URL
+//!   --admin-key <PEM|PATH>   # AOMI_ADMIN_KEY
+//!   --admin-kid <KID>        # AOMI_ADMIN_KID
 //!
 //! request                    # legacy ops onboarding request (Discord)
 //! ```
@@ -45,7 +52,7 @@ pub mod source;
 pub mod status;
 pub mod token;
 
-mod shared;
+pub(crate) mod shared;
 
 pub use activate::ActivateArgs;
 pub use apps::AppsArgs;

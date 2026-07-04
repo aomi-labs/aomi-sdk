@@ -86,12 +86,18 @@ subdirectory and deploy from the source repo root with an explicit manifest:
 
 ```bash
 aomi-build sdk check --path apps/my-app --backend https://api.aomi.dev
-aomi-build deploy --platform community --repo owner/repo --aomi-toml apps/my-app/aomi.toml
+aomi-build deploy \
+  --platform community \
+  --repo owner/repo \
+  --aomi-toml apps/my-app/aomi.toml \
+  --backend https://api.aomi.dev \
+  --activation-token <community-token>
 ```
 
 ## 3. Install The Aomi GitHub App
 
-Set the backend once for the shell:
+You can pass the backend URL as `--backend https://api.aomi.dev` on each
+command. For repeated commands, setting the env var is equivalent:
 
 ```bash
 export AOMI_BACKEND_URL=https://api.aomi.dev
@@ -134,7 +140,11 @@ aomi-build connect --platform community --repo owner/repo --authorize
 You can verify the backend can resolve your installed repo:
 
 ```bash
-aomi-build source sync --platform community --repo owner/repo
+aomi-build source sync \
+  --platform community \
+  --repo owner/repo \
+  --backend https://api.aomi.dev \
+  --activation-token <community-token>
 ```
 
 ## 4. First Deploy
@@ -142,14 +152,18 @@ aomi-build source sync --platform community --repo owner/repo
 From the root of your source repo:
 
 ```bash
-aomi-build deploy --platform community --repo owner/repo
+aomi-build deploy \
+  --platform community \
+  --repo owner/repo \
+  --backend https://api.aomi.dev \
+  --activation-token <community-token>
 ```
 
-If you prefer not to save credentials, pass them explicitly:
+If you prefer env vars for repeated local runs, export them once instead:
 
 ```bash
-AOMI_BACKEND_URL=https://api.aomi.dev \
-AOMI_APP_ACTIVATION_TOKEN=<community-token> \
+export AOMI_BACKEND_URL=https://api.aomi.dev
+export AOMI_APP_ACTIVATION_TOKEN=<community-token>
 aomi-build deploy --platform community --repo owner/repo
 ```
 
@@ -200,7 +214,11 @@ git push
 Deploy again from the repo root:
 
 ```bash
-aomi-build deploy --platform community --repo owner/repo
+aomi-build deploy \
+  --platform community \
+  --repo owner/repo \
+  --backend https://api.aomi.dev \
+  --activation-token <community-token>
 ```
 
 You usually do not need to pass `--app-source-id`. The CLI resolves source in
@@ -209,6 +227,14 @@ this order:
 ```text
 --app-source-id -> AOMI_APP_SOURCE_ID -> .aomi/deployment.json -> --repo owner/repo
 ```
+
+All prerequisite env vars have a flag form:
+
+| Need | Prefer this flag | Env fallback |
+|---|---|---|
+| Backend URL | `--backend <url>` | `AOMI_BACKEND_URL` |
+| Activation token | `--activation-token <token>` | `AOMI_APP_ACTIVATION_TOKEN` |
+| App source id | `--app-source-id <id>` | `AOMI_APP_SOURCE_ID` |
 
 The new deploy writes a new deployment record and activates the new release tag
 after the platform build is ready.
@@ -220,19 +246,29 @@ Use these when you want to stop at a specific lifecycle step.
 Validate inputs without opening a platform PR:
 
 ```bash
-aomi-build deploy preflight --platform community --repo owner/repo
+aomi-build deploy preflight \
+  --platform community \
+  --repo owner/repo \
+  --backend https://api.aomi.dev \
+  --activation-token <community-token>
 ```
 
 Create or update the platform deployment but do not activate:
 
 ```bash
-aomi-build deploy run --platform community --repo owner/repo
+aomi-build deploy run \
+  --platform community \
+  --repo owner/repo \
+  --backend https://api.aomi.dev \
+  --activation-token <community-token>
 ```
 
 Activate release tags recorded in `.aomi/deployment.json`:
 
 ```bash
-aomi-build deploy activate
+aomi-build deploy activate \
+  --backend https://api.aomi.dev \
+  --activation-token <community-token>
 ```
 
 Activate an explicit release tag:
@@ -240,15 +276,17 @@ Activate an explicit release tag:
 ```bash
 aomi-build deploy activate \
   --platform community \
-  --release-tag apps-<installation-id>-<repo-key>-<app>-<commit>
+  --release-tag apps-<installation-id>-<repo-key>-<app>-<commit> \
+  --backend https://api.aomi.dev \
+  --activation-token <community-token>
 ```
 
 ## Common Problems
 
 | Symptom | What it means | What to do |
 |---|---|---|
-| `deploy requires an activation token` | The CLI has no community token. | Run `aomi-build connect --platform community --repo owner/repo`, or export `AOMI_APP_ACTIVATION_TOKEN`. |
-| `deploy needs --app-source-id` | The backend cannot identify your installed repo. | Pass `--repo owner/repo` or run `aomi-build source sync --platform community --repo owner/repo`. |
+| `deploy needs an activation token` | The CLI has no community token. | Pass `--activation-token <community-token>`, run `aomi-build connect --platform community --repo owner/repo`, or export `AOMI_APP_ACTIVATION_TOKEN`. |
+| `deploy needs an app source id` | The backend cannot identify your installed repo. | Pass `--repo owner/repo`, pass `--app-source-id <id>`, or run `aomi-build source sync --platform community --repo owner/repo`. |
 | SDK mismatch | Your app pins a different `aomi-sdk` than the platform requires. | Run `aomi-build deploy --fix-sdk --platform community --repo owner/repo`, commit the SDK change, and deploy again. |
 | Branch rejected | Deploy accepts immutable commits. | Check out the branch locally, push it, and deploy local `HEAD`; or pass `--commit <sha>`. |
 | Final verification is not loaded | Activation completed but the runtime did not load the plugin. | Run `aomi-build deploy status --json`; if it stays false, share the deployment id and release tag with Aomi support. |

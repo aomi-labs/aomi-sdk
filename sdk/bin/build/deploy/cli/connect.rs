@@ -1,9 +1,9 @@
 //! `connect` — install the Aomi GitHub App and save your activation token.
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use clap::Args;
 
-use super::shared::{BACKEND_URL_ENV, resolve_activation_token, resolve_backend};
+use super::shared::{missing_backend, resolve_activation_token, resolve_backend};
 use crate::deploy::config::AomiConfig;
 use crate::deploy::flow::{TokenCheck, oauth_install_url, validate_activation_token};
 use crate::deploy::platform::{Platform, normalize_github_repo};
@@ -56,9 +56,8 @@ fn prompt_installation_id() -> Result<i64> {
 
 impl ConnectArgs {
     pub async fn run(self) -> Result<()> {
-        let backend_url = resolve_backend(&self.backend).ok_or_else(|| {
-            anyhow!("connect needs a backend URL — set --backend or {BACKEND_URL_ENV}")
-        })?;
+        let backend_url =
+            resolve_backend(&self.backend).ok_or_else(|| missing_backend("connect"))?;
         let repo = match &self.repo {
             Some(r) => Some(normalize_github_repo(r)?),
             None => None,
