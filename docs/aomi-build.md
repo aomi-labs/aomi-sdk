@@ -107,18 +107,23 @@ Community contributors should start with the step-by-step
 [community deployment guide](./community-deployment.md). This section is the
 lower-level command reference.
 
-Environment defaults:
+Prerequisite inputs can be passed as flags for a single run, or set as env vars
+for repeated runs:
 
-| Env var | Used by | Description |
-|---|---|---|
-| `AOMI_BACKEND_URL` | deploy group | Backend base URL when `--backend` is omitted |
-| `AOMI_APP_SOURCE_ID` | deploy group | Connected GitHub App install / `app_source` id when `--app-source-id` is omitted |
-| `AOMI_APP_ACTIVATION_TOKEN` | `deploy`, `deploy activate` | Platform/app activation token; commands can also take `--activation-token` |
+| Input | Flag | Env fallback | Used by |
+|---|---|---|---|
+| Backend URL | `--backend <url>` | `AOMI_BACKEND_URL` | deploy group, source sync, token commands, apps list, sdk check/fix |
+| Activation token | `--activation-token <token>` | `AOMI_APP_ACTIVATION_TOKEN` | deploy group, source sync, token list/revoke, apps list |
+| App source id | `--app-source-id <id>` | `AOMI_APP_SOURCE_ID` | deploy, deploy preflight, deploy run |
+| Admin signing key | `--admin-key <pkcs8-pem-or-path>` | `AOMI_ADMIN_KEY` | token mint |
+| Admin key id | `--admin-kid <kid>` | `AOMI_ADMIN_KID` | token mint |
 
 ```sh
-AOMI_BACKEND_URL=https://api.aomi.dev \
-AOMI_APP_ACTIVATION_TOKEN=<platform-or-app-token> \
-aomi-build deploy --platform community --repo owner/repo
+aomi-build deploy \
+  --platform community \
+  --repo owner/repo \
+  --backend https://api.aomi.dev \
+  --activation-token <platform-or-app-token>
 ```
 
 That is enough for the happy path when the repo is committed, the Aomi GitHub
@@ -128,8 +133,8 @@ SDK version. A developer receiving only the `aomi-build` binary still needs:
 - a committed and pushed source repo containing `aomi.toml`
 - the Aomi GitHub App installed on that repo
 - backend URL and a valid platform/app activation token
-- either `--app-source-id`/`AOMI_APP_SOURCE_ID` or `--repo owner/repo` so the
-  backend can resolve or sync the source
+- either `--app-source-id <id>` or `--repo owner/repo` so the backend can
+  resolve or sync the source
 
 They do not need a GitHub PAT, platform repo write access, database access, or
 an admin private key.

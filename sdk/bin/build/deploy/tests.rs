@@ -83,6 +83,139 @@ fn deploy_subcommands_parse_lifecycle_steps() {
     }
 }
 
+#[test]
+fn deploy_prerequisite_flags_parse_on_lifecycle_steps() {
+    let cli = crate::Cli::try_parse_from([
+        "aomi-build",
+        "deploy",
+        "--backend",
+        "https://api.aomi.dev",
+        "--activation-token",
+        "aat_live",
+        "--app-source-id",
+        "626",
+    ])
+    .expect("parse deploy flags");
+    match cli.cmd {
+        Some(crate::Cmd::Deploy(args)) => {
+            assert_eq!(args.step.backend.as_deref(), Some("https://api.aomi.dev"));
+            assert_eq!(args.step.activation_token.as_deref(), Some("aat_live"));
+            assert_eq!(args.step.app_source_id, Some(626));
+        }
+        _ => panic!("expected deploy"),
+    }
+
+    let cli = crate::Cli::try_parse_from([
+        "aomi-build",
+        "deploy",
+        "activate",
+        "--backend",
+        "https://api.aomi.dev",
+        "--activation-token",
+        "aat_live",
+    ])
+    .expect("parse deploy activate flags");
+    match cli.cmd {
+        Some(crate::Cmd::Deploy(args)) => match args.cmd {
+            Some(super::cli::deploy::DeployCmd::Activate(activate)) => {
+                assert_eq!(activate.backend.as_deref(), Some("https://api.aomi.dev"));
+                assert_eq!(activate.activation_token.as_deref(), Some("aat_live"));
+            }
+            _ => panic!("expected deploy activate"),
+        },
+        _ => panic!("expected deploy"),
+    }
+
+    let cli = crate::Cli::try_parse_from([
+        "aomi-build",
+        "deploy",
+        "status",
+        "--backend",
+        "https://api.aomi.dev",
+        "--activation-token",
+        "aat_live",
+    ])
+    .expect("parse deploy status flags");
+    match cli.cmd {
+        Some(crate::Cmd::Deploy(args)) => match args.cmd {
+            Some(super::cli::deploy::DeployCmd::Status(status)) => {
+                assert_eq!(status.backend.as_deref(), Some("https://api.aomi.dev"));
+                assert_eq!(status.activation_token.as_deref(), Some("aat_live"));
+            }
+            _ => panic!("expected deploy status"),
+        },
+        _ => panic!("expected deploy"),
+    }
+}
+
+#[test]
+fn support_commands_parse_prerequisite_flags() {
+    let cli = crate::Cli::try_parse_from([
+        "aomi-build",
+        "source",
+        "sync",
+        "--platform",
+        "community",
+        "--repo",
+        "aomi-labs/playground-example",
+        "--backend",
+        "https://api.aomi.dev",
+        "--activation-token",
+        "aat_live",
+    ])
+    .expect("parse source flags");
+    match cli.cmd {
+        Some(crate::Cmd::Source(args)) => match args.cmd {
+            super::cli::source::SourceCmd::Sync(sync) => {
+                assert_eq!(sync.backend.as_deref(), Some("https://api.aomi.dev"));
+                assert_eq!(sync.activation_token.as_deref(), Some("aat_live"));
+            }
+        },
+        _ => panic!("expected source sync"),
+    }
+
+    let cli = crate::Cli::try_parse_from([
+        "aomi-build",
+        "token",
+        "mint",
+        "--platform",
+        "community",
+        "--backend",
+        "https://api.aomi.dev",
+        "--admin-key",
+        "admin.pem",
+        "--admin-kid",
+        "aomi-admin-prod-1",
+    ])
+    .expect("parse token mint flags");
+    match cli.cmd {
+        Some(crate::Cmd::Token(args)) => match args.cmd {
+            super::cli::token::TokenCmd::Mint(mint) => {
+                assert_eq!(mint.backend.as_deref(), Some("https://api.aomi.dev"));
+                assert_eq!(mint.admin_key.as_deref(), Some("admin.pem"));
+                assert_eq!(mint.admin_kid.as_deref(), Some("aomi-admin-prod-1"));
+            }
+            _ => panic!("expected token mint"),
+        },
+        _ => panic!("expected token mint"),
+    }
+}
+
+#[test]
+fn missing_prerequisite_errors_print_flag_first_hints() {
+    let backend = super::cli::shared::missing_backend("deploy").to_string();
+    assert!(backend.contains("deploy --backend <url>"));
+    assert!(backend.contains("export AOMI_BACKEND_URL=<url>"));
+
+    let token = super::cli::shared::missing_activation_token("deploy activate").to_string();
+    assert!(token.contains("deploy activate --activation-token <token>"));
+    assert!(token.contains("export AOMI_APP_ACTIVATION_TOKEN=<token>"));
+
+    let admin_key = super::cli::shared::missing_admin_key("token mint").to_string();
+    assert!(admin_key.contains("token mint --admin-key <pkcs8-pem-or-path>"));
+    assert!(admin_key.contains("export AOMI_ADMIN_KEY=<pkcs8-pem-or-path>"));
+}
+
 // ── wizard + connect: arg parsing ───────────────────────────────────────────
 
 #[test]

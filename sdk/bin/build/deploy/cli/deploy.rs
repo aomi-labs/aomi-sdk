@@ -7,8 +7,8 @@ use anyhow::{Result, anyhow, bail};
 use clap::{Args, Subcommand};
 
 use super::shared::{
-    ACTIVATION_TOKEN_ENV, APP_SOURCE_ID_ENV, BACKEND_URL_ENV, CredentialSource, bin_name,
-    clean_list, env_value, git_context, head_commit, resolve_activation_token,
+    APP_SOURCE_ID_ENV, CredentialSource, bin_name, clean_list, env_value, git_context, head_commit,
+    missing_activation_token, missing_backend, resolve_activation_token,
     resolve_activation_token_with_source, resolve_backend, tracked_aomi_tomls,
 };
 use super::{ActivateArgs, StatusArgs};
@@ -69,20 +69,16 @@ pub(crate) async fn run_activate_step(args: ActivateArgs) -> Result<()> {
         .platform
         .clone()
         .unwrap_or_else(|| Platform::new(&state.deployment.platform.platform));
-    let backend_url = resolve_backend(&args.backend).ok_or_else(|| {
-        anyhow!("activate needs a backend URL — set --backend or {BACKEND_URL_ENV}")
-    })?;
-    let token = resolve_activation_token(&args.activation_token).ok_or_else(|| {
-        anyhow!(
-            "activate requires a token via --activation-token or {ACTIVATION_TOKEN_ENV} \
-             (or run `aomi-build connect`)"
-        )
-    })?;
+    let backend_url =
+        resolve_backend(&args.backend).ok_or_else(|| missing_backend("deploy activate"))?;
+    let token = resolve_activation_token(&args.activation_token)
+        .ok_or_else(|| missing_activation_token("deploy activate"))?;
     wait_for_release(
         &backend_url,
         &token,
         &platform,
         &state.deployment.id,
+        state.deployment.platform.pr_url.as_deref(),
         format!(
             "deployment did not become ready within 30 minutes; rerun `{} deploy activate --path {}` later",
             bin_name(),
@@ -98,14 +94,16 @@ async fn wait_for_release(
     token: &str,
     platform: &Platform,
     deployment_id: &str,
+    pr_url: Option<&str>,
     timeout_message: String,
 ) -> Result<()> {
     println!("Waiting for release readiness...");
-    match flow::poll_deployment_ready(
+    match flow::poll_deployment_ready_with_pr(
         backend_url,
         token,
         platform.as_str(),
         deployment_id,
+        pr_url,
         Duration::from_secs(30 * 60),
         |status| println!("  build         : {status}"),
     )
@@ -238,6 +236,7 @@ impl DeployStepArgs {
             &token,
             &platform,
             &state.deployment.id,
+            state.deployment.platform.pr_url.as_deref(),
             format!(
                 "deployment did not become ready within 30 minutes; resume with `{} deploy activate --path {}`",
                 bin_name(),
@@ -443,9 +442,7 @@ impl DeployStepArgs {
     }
 
     fn backend_url(&self) -> Result<String> {
-        resolve_backend(&self.backend).ok_or_else(|| {
-            anyhow!("deploy needs a backend URL — set --backend or {BACKEND_URL_ENV}")
-        })
+        resolve_backend(&self.backend).ok_or_else(|| missing_backend("deploy"))
     }
 
     async fn activation_target_tags(&self, backend_url: &str) -> Result<Vec<String>> {
@@ -498,10 +495,12 @@ impl DeployStepArgs {
             return Ok(result.source.id);
         }
         Err(anyhow!(
-            "deploy needs --app-source-id (or {APP_SOURCE_ID_ENV}): the connected GitHub \
-             App install to deploy from. Install the Aomi GitHub App on your source repo, \
-             then run `aomi-build source sync --repo <owner/repo> --platform {platform}` \
-             or pass --repo <owner/repo> to let deploy sync it."
+            "deploy needs an app source id for platform `{platform}`.\n\n\
+             Pass an existing source id:\n  {} deploy --app-source-id <id> --platform {platform}\n\n\
+             Or export it:\n  export {APP_SOURCE_ID_ENV}=<id>\n\n\
+             Or let deploy sync an installed GitHub App source:\n  {} deploy --repo <owner/repo> --platform {platform}",
+            bin_name(),
+            bin_name()
         ))
     }
 
@@ -513,12 +512,8 @@ impl DeployStepArgs {
             .filter(|id| *id > 0)
     }
     fn activation_token_with_source(&self) -> Result<(String, CredentialSource)> {
-        resolve_activation_token_with_source(&self.activation_token).ok_or_else(|| {
-            anyhow!(
-                "deploy requires an activation token via --activation-token or {ACTIVATION_TOKEN_ENV} \
-                 (or run `aomi-build connect`)"
-            )
-        })
+        resolve_activation_token_with_source(&self.activation_token)
+            .ok_or_else(|| missing_activation_token("deploy"))
     }
 }
 

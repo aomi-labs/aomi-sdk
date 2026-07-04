@@ -5,12 +5,12 @@
 
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use clap::{Args, Subcommand};
 
 use super::shared::{
-    ACTIVATION_TOKEN_ENV, ADMIN_KEY_ENV, ADMIN_KID_ENV, BACKEND_URL_ENV, env_value,
-    resolve_activation, resolve_backend,
+    ACTIVATION_TOKEN_ENV, ADMIN_KEY_ENV, ADMIN_KID_ENV, env_value, missing_admin_key,
+    missing_admin_kid, missing_backend, resolve_activation, resolve_backend,
 };
 use crate::deploy::auth::AdminBearer;
 use crate::deploy::backend::BackendClient;
@@ -66,8 +66,13 @@ pub struct TokenMintArgs {
     #[arg(long, value_name = "URL")]
     pub backend: Option<String>,
 
-    /// File holding the admin Ed25519 private key PEM. Falls back to
-    /// `AOMI_ADMIN_KEY` (the PEM text itself, or a path to it).
+    /// Admin Ed25519 private key PEM, or a path to it. Falls back to
+    /// `AOMI_ADMIN_KEY`.
+    #[arg(long = "admin-key", value_name = "PEM_OR_PATH")]
+    pub admin_key: Option<String>,
+
+    /// File holding the admin Ed25519 private key PEM. Alias for passing
+    /// `--admin-key <path>` when shell quoting PEM text is awkward.
     #[arg(long = "admin-key-file", value_name = "PATH")]
     pub admin_key_file: Option<PathBuf>,
 
@@ -102,26 +107,20 @@ impl TokenMintArgs {
         // Fail fast: minting needs the privileged signing key. Resolve it (and
         // the kid) before any network call so a missing credential is an
         // immediate, clear error rather than a 401 round-trip.
-        let key = resolve_admin_key(&self.admin_key_file)?;
+        let key = resolve_admin_key(&self.admin_key, &self.admin_key_file)?;
         let kid = self
             .admin_kid
             .clone()
             .or_else(|| env_value(ADMIN_KID_ENV))
-            .ok_or_else(|| {
-                anyhow!(
-                    "`token mint` requires the admin issuer key id — set --admin-kid or \
-                     {ADMIN_KID_ENV} (e.g. aomi-admin-staging-1)."
-                )
-            })?;
+            .ok_or_else(|| missing_admin_kid("token mint"))?;
 
         let scope = self.scope.trim().to_string();
         if scope != "app" && scope != "platform" {
             bail!("--scope must be `platform` or `app` (got `{scope}`)");
         }
 
-        let backend_url = resolve_backend(&self.backend).ok_or_else(|| {
-            anyhow!("token mint needs a backend URL — set --backend or {BACKEND_URL_ENV}")
-        })?;
+        let backend_url =
+            resolve_backend(&self.backend).ok_or_else(|| missing_backend("token mint"))?;
 
         let now = chrono::Utc::now().timestamp();
         let bearer = AdminBearer {
@@ -138,7 +137,7 @@ impl TokenMintArgs {
             scope: scope.clone(),
             app_id: self.app_id,
         };
-        let result = BackendClient::new(backend_url, bearer)?
+        let result = BackendClient::new(backend_url.clone(), bearer)?
             .mint_token(&self.platform, &request)
             .await?;
 
@@ -167,33 +166,41 @@ impl TokenMintArgs {
             }
             println!();
             println!("Use it for deploy/activate:");
-            println!("  export {ACTIVATION_TOKEN_ENV}={}", result.token);
+            println!(
+                "  aomi-build deploy --platform {} --repo <owner/repo> --backend {} --activation-token {}",
+                self.platform, backend_url, result.token
+            );
+            println!("  # or export {ACTIVATION_TOKEN_ENV}={}", result.token);
         }
         Ok(())
     }
 }
 
-/// Resolve the admin signing key: `--admin-key-file`, else `AOMI_ADMIN_KEY`
-/// (PEM text, or a path to a PEM file). This is the privileged, out-of-band
-/// signing key — not an activation token.
-fn resolve_admin_key(file: &Option<PathBuf>) -> Result<Vec<u8>> {
+/// Resolve the admin signing key: `--admin-key`, `--admin-key-file`, else
+/// `AOMI_ADMIN_KEY` (PEM text, or a path to a PEM file). This is the
+/// privileged, out-of-band signing key — not an activation token.
+fn resolve_admin_key(value: &Option<String>, file: &Option<PathBuf>) -> Result<Vec<u8>> {
+    if let Some(raw) = value
+        .as_deref()
+        .map(str::trim)
+        .filter(|raw| !raw.is_empty())
+    {
+        return read_admin_key_value(raw, "--admin-key");
+    }
     if let Some(path) = file {
         return std::fs::read(path)
             .with_context(|| format!("failed to read admin key file {}", path.display()));
     }
-    let raw = env_value(ADMIN_KEY_ENV).ok_or_else(|| {
-        anyhow!(
-            "`token mint` requires a privileged admin signing key. Set {ADMIN_KEY_ENV} \
-             (a PKCS#8 Ed25519 private key PEM) or pass --admin-key-file. This is an \
-             out-of-band admin/service signing key, not an activation token."
-        )
-    })?;
+    let raw = env_value(ADMIN_KEY_ENV).ok_or_else(|| missing_admin_key("token mint"))?;
+    read_admin_key_value(&raw, ADMIN_KEY_ENV)
+}
+
+fn read_admin_key_value(raw: &str, source: &str) -> Result<Vec<u8>> {
     if raw.contains("BEGIN") {
-        Ok(raw.into_bytes())
+        Ok(raw.as_bytes().to_vec())
     } else {
-        std::fs::read(&raw).with_context(|| {
-            format!("{ADMIN_KEY_ENV} is neither a PEM nor a readable file path: {raw}")
-        })
+        std::fs::read(raw)
+            .with_context(|| format!("{source} is neither a PEM nor a readable file path: {raw}"))
     }
 }
 
@@ -209,7 +216,7 @@ pub struct TokenListArgs {
 
 impl TokenListArgs {
     pub async fn run(self) -> Result<()> {
-        let (url, token) = resolve_activation(&self.backend, &self.activation_token)?;
+        let (url, token) = resolve_activation("token list", &self.backend, &self.activation_token)?;
         let value = BackendClient::new(url, token)?
             .list_tokens(&self.platform)
             .await?;
@@ -233,7 +240,8 @@ pub struct TokenRevokeArgs {
 
 impl TokenRevokeArgs {
     pub async fn run(self) -> Result<()> {
-        let (url, token) = resolve_activation(&self.backend, &self.activation_token)?;
+        let (url, token) =
+            resolve_activation("token revoke", &self.backend, &self.activation_token)?;
         BackendClient::new(url, token)?
             .revoke_token(&self.platform, self.id)
             .await?;
