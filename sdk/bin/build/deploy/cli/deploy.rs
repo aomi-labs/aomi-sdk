@@ -179,7 +179,7 @@ pub struct DeployStepArgs {
 impl DeployStepArgs {
     pub async fn run_full_lifecycle(self) -> Result<()> {
         let (git_root, start_dir) = git_context(&self.path)?;
-        let platform = self.platform(&git_root, &start_dir);
+        let platform = self.platform(&git_root, &start_dir)?;
         let backend_url = self.backend_url()?;
         crate::sdk_guard::ensure_project_sdk(&git_root, Some(&backend_url), self.fix_sdk).await?;
 
@@ -279,7 +279,7 @@ impl DeployStepArgs {
 
     async fn run_step(self, preflight: bool) -> Result<()> {
         let (git_root, start_dir) = git_context(&self.path)?;
-        let platform = self.platform(&git_root, &start_dir);
+        let platform = self.platform(&git_root, &start_dir)?;
         let source_ref = self.source_ref(&git_root)?;
         let aomi_toml_paths = self.aomi_toml_paths(&git_root)?;
         let app_source_id = self.resolve_app_source_id(&git_root, &platform).await?;
@@ -383,18 +383,71 @@ impl DeployStepArgs {
         Ok(())
     }
 
-    pub(crate) fn platform(&self, git_root: &Path, start_dir: &Path) -> Platform {
+    /// Documented precedence: `--platform` flag, then the platform declared by
+    /// the deployed `aomi.toml` manifests, then saved config, then `community`.
+    pub(crate) fn platform(&self, git_root: &Path, start_dir: &Path) -> Result<Platform> {
+        self.resolve_platform(git_root, start_dir, AomiConfig::load().platform)
+    }
+
+    /// `platform` with the saved-config value injected so tests don't depend
+    /// on the machine's `~/.config/aomi/config.toml`.
+    pub(crate) fn resolve_platform(
+        &self,
+        git_root: &Path,
+        start_dir: &Path,
+        saved_platform: Option<String>,
+    ) -> Result<Platform> {
         if let Some(p) = &self.platform {
-            return p.clone();
+            return Ok(p.clone());
         }
-        AomiAppFiles::discover(start_dir, git_root)
+        if let Some(platform) = self.manifest_platform(git_root)? {
+            return Ok(platform);
+        }
+        Ok(AomiAppFiles::discover(start_dir, git_root)
             .ok()
             .and_then(|a| a.platform)
             .map(|name| name.trim().to_string())
             .filter(|name| !name.is_empty())
             .map(Platform::new)
-            .or_else(|| AomiConfig::load().platform.map(Platform::new))
-            .unwrap_or_else(Platform::community)
+            .or_else(|| saved_platform.map(Platform::new))
+            .unwrap_or_else(Platform::community))
+    }
+
+    /// Platform declared by the manifests this deploy actually ships — the
+    /// `--aomi-toml` set, or every tracked `aomi.toml` when the flag is absent.
+    /// `None` when no manifest in the set declares one; an error when the set
+    /// disagrees, since one deploy targets exactly one platform.
+    fn manifest_platform(&self, git_root: &Path) -> Result<Option<Platform>> {
+        let Ok(paths) = self.aomi_toml_paths(git_root) else {
+            // No deployable manifest set (e.g. nothing tracked yet); the deploy
+            // steps surface that error where it matters.
+            return Ok(None);
+        };
+        let mut declared: Vec<(String, Platform)> = Vec::new();
+        for path in paths {
+            let Some(platform) = AomiAppFiles::from_aomi_toml(&git_root.join(&path), git_root)
+                .ok()
+                .and_then(|app| app.platform)
+                .map(Platform::new)
+            else {
+                continue;
+            };
+            if !declared.iter().any(|(_, seen)| *seen == platform) {
+                declared.push((path, platform));
+            }
+        }
+        if declared.len() > 1 {
+            let listing = declared
+                .iter()
+                .map(|(path, platform)| format!("  {path} -> {platform}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            bail!(
+                "the aomi.toml manifests in this deploy declare conflicting platforms:\n{listing}\n\
+                 A deploy targets one platform; align `[app].platform`, scope the deploy with --aomi-toml, or pass --platform."
+            );
+        }
+        Ok(declared.pop().map(|(_, platform)| platform))
     }
 
     pub(crate) fn source_ref(&self, git_root: &Path) -> Result<String> {

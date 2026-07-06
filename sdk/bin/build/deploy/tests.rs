@@ -351,6 +351,7 @@ fn platform_defaults_from_aomi_toml_then_community() {
     assert_eq!(
         deploy_args(repo.root())
             .platform(repo.root(), repo.root())
+            .unwrap()
             .as_str(),
         "krexa"
     );
@@ -363,9 +364,106 @@ fn platform_defaults_from_aomi_toml_then_community() {
         .map(Platform::new)
         .unwrap_or_else(Platform::community);
     assert_eq!(
-        deploy_args(bare.root()).platform(bare.root(), bare.root()),
+        deploy_args(bare.root())
+            .platform(bare.root(), bare.root())
+            .unwrap(),
         expected
     );
+}
+
+#[test]
+fn platform_prefers_scoped_manifest_over_saved_config() {
+    // Live repro: `deploy preflight --path . --aomi-toml apps/gecko/aomi.toml`
+    // used the saved-config platform even though the deployed manifest
+    // declared `krexa`, because resolution only walked up from --path.
+    let repo = TestRepo::new();
+    repo.write(
+        "apps/gecko/aomi.toml",
+        "[app]\nname = \"gecko\"\nplatform = \"krexa\"\n",
+    );
+    repo.commit("init");
+
+    let mut args = deploy_args(repo.root());
+    args.aomi_toml = vec!["apps/gecko/aomi.toml".into()];
+    let platform = args
+        .resolve_platform(repo.root(), repo.root(), Some("somm.finance".into()))
+        .unwrap();
+    assert_eq!(platform.as_str(), "krexa");
+
+    // Same precedence when the manifest set is auto-discovered from tracking.
+    let platform = deploy_args(repo.root())
+        .resolve_platform(repo.root(), repo.root(), Some("somm.finance".into()))
+        .unwrap();
+    assert_eq!(platform.as_str(), "krexa");
+}
+
+#[test]
+fn platform_flag_wins_over_manifest() {
+    let repo = TestRepo::new();
+    repo.write("aomi.toml", "[app]\nname = \"x\"\nplatform = \"krexa\"\n");
+    repo.commit("init");
+
+    let mut args = deploy_args(repo.root());
+    args.platform = Some(Platform::new("somm.finance"));
+    let platform = args
+        .resolve_platform(repo.root(), repo.root(), Some("other".into()))
+        .unwrap();
+    assert_eq!(platform.as_str(), "somm.finance");
+}
+
+#[test]
+fn platform_falls_back_to_saved_config_when_manifests_are_silent() {
+    let repo = TestRepo::new();
+    repo.write("aomi.toml", "[app]\nname = \"x\"\n");
+    repo.commit("init");
+
+    let platform = deploy_args(repo.root())
+        .resolve_platform(repo.root(), repo.root(), Some("somm.finance".into()))
+        .unwrap();
+    assert_eq!(platform.as_str(), "somm.finance");
+
+    let platform = deploy_args(repo.root())
+        .resolve_platform(repo.root(), repo.root(), None)
+        .unwrap();
+    assert_eq!(platform, Platform::community());
+}
+
+#[test]
+fn platform_conflicting_manifests_error_unless_scoped_or_flagged() {
+    let repo = TestRepo::new();
+    repo.write(
+        "apps/a/aomi.toml",
+        "[app]\nname = \"a\"\nplatform = \"krexa\"\n",
+    );
+    repo.write(
+        "apps/b/aomi.toml",
+        "[app]\nname = \"b\"\nplatform = \"somm.finance\"\n",
+    );
+    repo.commit("init");
+
+    let err = deploy_args(repo.root())
+        .resolve_platform(repo.root(), repo.root(), None)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("conflicting platforms"), "{err}");
+    assert!(err.contains("apps/a/aomi.toml -> krexa"), "{err}");
+    assert!(err.contains("apps/b/aomi.toml -> somm.finance"), "{err}");
+
+    // Scoping the deploy to one manifest resolves the conflict…
+    let mut scoped = deploy_args(repo.root());
+    scoped.aomi_toml = vec!["apps/b/aomi.toml".into()];
+    let platform = scoped
+        .resolve_platform(repo.root(), repo.root(), None)
+        .unwrap();
+    assert_eq!(platform.as_str(), "somm.finance");
+
+    // …and an explicit --platform overrides the manifests entirely.
+    let mut flagged = deploy_args(repo.root());
+    flagged.platform = Some(Platform::new("community"));
+    let platform = flagged
+        .resolve_platform(repo.root(), repo.root(), None)
+        .unwrap();
+    assert_eq!(platform, Platform::community());
 }
 
 // ── activate: request building ──────────────────────────────────────────────
