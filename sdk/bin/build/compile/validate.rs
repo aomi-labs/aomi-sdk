@@ -201,6 +201,7 @@ mod tests {
             }],
             namespaces: Some(vec!["database".to_string()]),
             secrets: None,
+            broadcast: None,
         };
 
         let errors = super::validate_manifest(&manifest);
