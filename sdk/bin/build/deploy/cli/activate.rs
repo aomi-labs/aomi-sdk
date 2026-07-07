@@ -7,7 +7,7 @@ use anyhow::{Result, anyhow, bail};
 use clap::Args;
 
 use super::shared::{
-    ACTIVATION_TOKEN_ENV, BACKEND_URL_ENV, bin_name, clean_list, git_context,
+    bin_name, clean_list, git_context, missing_activation_token, missing_backend,
     resolve_activation_token, resolve_backend,
 };
 use crate::deploy::backend::BackendClient;
@@ -101,16 +101,11 @@ impl ActivateArgs {
 
         let request = self.activation_request(state)?;
 
-        let backend_url = resolve_backend(&self.backend).ok_or_else(|| {
-            anyhow!("activate needs a backend URL — set --backend or {BACKEND_URL_ENV}")
-        })?;
+        let backend_url =
+            resolve_backend(&self.backend).ok_or_else(|| missing_backend("activate"))?;
         crate::sdk_guard::ensure_project_sdk(git_root, Some(&backend_url), self.fix_sdk).await?;
-        let token = resolve_activation_token(&self.activation_token).ok_or_else(|| {
-            anyhow!(
-                "activate requires a token via --activation-token or {ACTIVATION_TOKEN_ENV} \
-                 (or run `aomi-build connect`)"
-            )
-        })?;
+        let token = resolve_activation_token(&self.activation_token)
+            .ok_or_else(|| missing_activation_token("activate"))?;
         let client = BackendClient::new(backend_url, token)?;
 
         // One call activates every requested app; the response carries per-app

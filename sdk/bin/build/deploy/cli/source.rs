@@ -55,7 +55,8 @@ pub struct SourceSyncArgs {
 impl SourceSyncArgs {
     pub async fn run(self) -> Result<()> {
         let repo = normalize_github_repo(&self.repo)?;
-        let (url, token) = resolve_activation(&self.backend, &self.activation_token)?;
+        let (url, token) =
+            resolve_activation("source sync", &self.backend, &self.activation_token)?;
         let result = BackendClient::new(url, token)?
             .sync_installed(&self.platform, &SyncSourceInput { repo: repo.clone() })
             .await?;

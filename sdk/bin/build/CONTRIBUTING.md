@@ -110,10 +110,11 @@ aomi-build compile          # produces the cdylib the platform CI will also buil
 ## 4. Deploy
 
 ```bash
-export AOMI_BACKEND_URL=https://api.aomi.dev
-export AOMI_APP_ACTIVATION_TOKEN=<platform-or-app-token>
-
-aomi-build deploy --platform community --repo owner/repo
+aomi-build deploy \
+  --platform community \
+  --repo owner/repo \
+  --backend https://api.aomi.dev \
+  --activation-token <platform-or-app-token>
 ```
 
 That command is the full lifecycle: SDK check, preflight, backend deploy, wait
@@ -126,7 +127,7 @@ A developer receiving only the `aomi-build` binary still needs:
 - a committed and pushed source repo containing `aomi.toml`
 - the Aomi GitHub App installed on that repo
 - backend URL and a valid platform/app activation token
-- either `--repo owner/repo` or `--app-source-id`/`AOMI_APP_SOURCE_ID`
+- either `--repo owner/repo` or `--app-source-id <id>`
 
 They do not need a GitHub PAT, platform repo write access, database access, or
 an admin private key.
@@ -140,6 +141,10 @@ Resolution order:
 | token | `--activation-token` → `AOMI_APP_ACTIVATION_TOKEN` → saved config |
 | source | `--app-source-id` → `AOMI_APP_SOURCE_ID` → `.aomi/deployment.json` → `--repo owner/repo` source sync |
 | commit | `--commit` → local `HEAD`; branches are rejected |
+
+Admin-only token minting follows the same flag/env rule:
+`AOMI_ADMIN_KEY` -> `--admin-key <pkcs8-pem-or-path>` and `AOMI_ADMIN_KID`
+-> `--admin-kid <kid>`.
 
 `deploy` sends:
 
@@ -256,8 +261,8 @@ one-shot when you want a working agent in your account with zero local setup.
 
 | Error | Cause | Fix |
 |---|---|---|
-| `deploy needs --app-source-id` | CLI doesn't know which connected source repo to deploy | pass `--repo owner/repo`, pass `--app-source-id`, or set `AOMI_APP_SOURCE_ID` |
-| `deploy requires an activation token` | backend deploy needs platform/app authority | export `AOMI_APP_ACTIVATION_TOKEN` or `aomi-build request` one |
+| `deploy needs an app source id` | CLI doesn't know which connected source repo to deploy | pass `--repo owner/repo`, pass `--app-source-id <id>`, or set `AOMI_APP_SOURCE_ID` |
+| `deploy needs an activation token` | backend deploy needs platform/app authority | pass `--activation-token <token>`, export `AOMI_APP_ACTIVATION_TOKEN`, or `aomi-build request` one |
 | `git tree is dirty` | uncommitted files in your source repo | commit, or ignore `.aomi/`, `target/`, `Cargo.lock` |
 | `source is bound to platform ...` | source/app row is already bound to a different platform | deploy to the bound platform or ask ops to repair the binding |
 | `deployment failed before activation: no CI ran` | backend created no candidate CI run | check the platform PR and backend deploy status |
@@ -274,5 +279,5 @@ one-shot when you want a working agent in your account with zero local setup.
 | `POST /api/platforms/:platform/deploy` | source fetch, staging, manifest generation |
 | `POST /api/platforms/:platform/apps/activate` | artifact resolution + activation |
 | platform app endpoint | app verification (`is_active` / `artifact_ready` / `loaded`) |
-| `AOMI_BACKEND_URL` / `AOMI_APP_SOURCE_ID` / `AOMI_APP_ACTIVATION_TOKEN` | CLI inputs |
+| `--backend` / `--app-source-id` / `--activation-token` | CLI deploy inputs; env fallbacks are `AOMI_BACKEND_URL` / `AOMI_APP_SOURCE_ID` / `AOMI_APP_ACTIVATION_TOKEN` |
 | `.aomi/deployment.json` | the backend's deploy record, kept locally |

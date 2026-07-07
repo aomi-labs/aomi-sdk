@@ -73,7 +73,7 @@ impl AomiAppFiles {
         );
     }
 
-    fn from_aomi_toml(path: &Path, git_root: &Path) -> Result<Self> {
+    pub(crate) fn from_aomi_toml(path: &Path, git_root: &Path) -> Result<Self> {
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("failed to read app config {}", path.display()))?;
         let file: toml::Table = toml::from_str(&content)

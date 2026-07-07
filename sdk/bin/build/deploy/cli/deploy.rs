@@ -7,8 +7,8 @@ use anyhow::{Result, anyhow, bail};
 use clap::{Args, Subcommand};
 
 use super::shared::{
-    ACTIVATION_TOKEN_ENV, APP_SOURCE_ID_ENV, BACKEND_URL_ENV, CredentialSource, bin_name,
-    clean_list, env_value, git_context, head_commit, resolve_activation_token,
+    APP_SOURCE_ID_ENV, CredentialSource, bin_name, clean_list, env_value, git_context, head_commit,
+    missing_activation_token, missing_backend, resolve_activation_token,
     resolve_activation_token_with_source, resolve_backend, tracked_aomi_tomls,
 };
 use super::{ActivateArgs, StatusArgs};
@@ -69,20 +69,16 @@ pub(crate) async fn run_activate_step(args: ActivateArgs) -> Result<()> {
         .platform
         .clone()
         .unwrap_or_else(|| Platform::new(&state.deployment.platform.platform));
-    let backend_url = resolve_backend(&args.backend).ok_or_else(|| {
-        anyhow!("activate needs a backend URL — set --backend or {BACKEND_URL_ENV}")
-    })?;
-    let token = resolve_activation_token(&args.activation_token).ok_or_else(|| {
-        anyhow!(
-            "activate requires a token via --activation-token or {ACTIVATION_TOKEN_ENV} \
-             (or run `aomi-build connect`)"
-        )
-    })?;
+    let backend_url =
+        resolve_backend(&args.backend).ok_or_else(|| missing_backend("deploy activate"))?;
+    let token = resolve_activation_token(&args.activation_token)
+        .ok_or_else(|| missing_activation_token("deploy activate"))?;
     wait_for_release(
         &backend_url,
         &token,
         &platform,
         &state.deployment.id,
+        state.deployment.platform.pr_url.as_deref(),
         format!(
             "deployment did not become ready within 30 minutes; rerun `{} deploy activate --path {}` later",
             bin_name(),
@@ -98,14 +94,16 @@ async fn wait_for_release(
     token: &str,
     platform: &Platform,
     deployment_id: &str,
+    pr_url: Option<&str>,
     timeout_message: String,
 ) -> Result<()> {
     println!("Waiting for release readiness...");
-    match flow::poll_deployment_ready(
+    match flow::poll_deployment_ready_with_pr(
         backend_url,
         token,
         platform.as_str(),
         deployment_id,
+        pr_url,
         Duration::from_secs(30 * 60),
         |status| println!("  build         : {status}"),
     )
@@ -181,7 +179,7 @@ pub struct DeployStepArgs {
 impl DeployStepArgs {
     pub async fn run_full_lifecycle(self) -> Result<()> {
         let (git_root, start_dir) = git_context(&self.path)?;
-        let platform = self.platform(&git_root, &start_dir);
+        let platform = self.platform(&git_root, &start_dir)?;
         let backend_url = self.backend_url()?;
         crate::sdk_guard::ensure_project_sdk(&git_root, Some(&backend_url), self.fix_sdk).await?;
 
@@ -238,6 +236,7 @@ impl DeployStepArgs {
             &token,
             &platform,
             &state.deployment.id,
+            state.deployment.platform.pr_url.as_deref(),
             format!(
                 "deployment did not become ready within 30 minutes; resume with `{} deploy activate --path {}`",
                 bin_name(),
@@ -280,7 +279,7 @@ impl DeployStepArgs {
 
     async fn run_step(self, preflight: bool) -> Result<()> {
         let (git_root, start_dir) = git_context(&self.path)?;
-        let platform = self.platform(&git_root, &start_dir);
+        let platform = self.platform(&git_root, &start_dir)?;
         let source_ref = self.source_ref(&git_root)?;
         let aomi_toml_paths = self.aomi_toml_paths(&git_root)?;
         let app_source_id = self.resolve_app_source_id(&git_root, &platform).await?;
@@ -384,18 +383,71 @@ impl DeployStepArgs {
         Ok(())
     }
 
-    pub(crate) fn platform(&self, git_root: &Path, start_dir: &Path) -> Platform {
+    /// Documented precedence: `--platform` flag, then the platform declared by
+    /// the deployed `aomi.toml` manifests, then saved config, then `community`.
+    pub(crate) fn platform(&self, git_root: &Path, start_dir: &Path) -> Result<Platform> {
+        self.resolve_platform(git_root, start_dir, AomiConfig::load().platform)
+    }
+
+    /// `platform` with the saved-config value injected so tests don't depend
+    /// on the machine's `~/.config/aomi/config.toml`.
+    pub(crate) fn resolve_platform(
+        &self,
+        git_root: &Path,
+        start_dir: &Path,
+        saved_platform: Option<String>,
+    ) -> Result<Platform> {
         if let Some(p) = &self.platform {
-            return p.clone();
+            return Ok(p.clone());
         }
-        AomiAppFiles::discover(start_dir, git_root)
+        if let Some(platform) = self.manifest_platform(git_root)? {
+            return Ok(platform);
+        }
+        Ok(AomiAppFiles::discover(start_dir, git_root)
             .ok()
             .and_then(|a| a.platform)
             .map(|name| name.trim().to_string())
             .filter(|name| !name.is_empty())
             .map(Platform::new)
-            .or_else(|| AomiConfig::load().platform.map(Platform::new))
-            .unwrap_or_else(Platform::community)
+            .or_else(|| saved_platform.map(Platform::new))
+            .unwrap_or_else(Platform::community))
+    }
+
+    /// Platform declared by the manifests this deploy actually ships — the
+    /// `--aomi-toml` set, or every tracked `aomi.toml` when the flag is absent.
+    /// `None` when no manifest in the set declares one; an error when the set
+    /// disagrees, since one deploy targets exactly one platform.
+    fn manifest_platform(&self, git_root: &Path) -> Result<Option<Platform>> {
+        let Ok(paths) = self.aomi_toml_paths(git_root) else {
+            // No deployable manifest set (e.g. nothing tracked yet); the deploy
+            // steps surface that error where it matters.
+            return Ok(None);
+        };
+        let mut declared: Vec<(String, Platform)> = Vec::new();
+        for path in paths {
+            let Some(platform) = AomiAppFiles::from_aomi_toml(&git_root.join(&path), git_root)
+                .ok()
+                .and_then(|app| app.platform)
+                .map(Platform::new)
+            else {
+                continue;
+            };
+            if !declared.iter().any(|(_, seen)| *seen == platform) {
+                declared.push((path, platform));
+            }
+        }
+        if declared.len() > 1 {
+            let listing = declared
+                .iter()
+                .map(|(path, platform)| format!("  {path} -> {platform}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            bail!(
+                "the aomi.toml manifests in this deploy declare conflicting platforms:\n{listing}\n\
+                 A deploy targets one platform; align `[app].platform`, scope the deploy with --aomi-toml, or pass --platform."
+            );
+        }
+        Ok(declared.pop().map(|(_, platform)| platform))
     }
 
     pub(crate) fn source_ref(&self, git_root: &Path) -> Result<String> {
@@ -443,9 +495,7 @@ impl DeployStepArgs {
     }
 
     fn backend_url(&self) -> Result<String> {
-        resolve_backend(&self.backend).ok_or_else(|| {
-            anyhow!("deploy needs a backend URL — set --backend or {BACKEND_URL_ENV}")
-        })
+        resolve_backend(&self.backend).ok_or_else(|| missing_backend("deploy"))
     }
 
     async fn activation_target_tags(&self, backend_url: &str) -> Result<Vec<String>> {
@@ -498,10 +548,12 @@ impl DeployStepArgs {
             return Ok(result.source.id);
         }
         Err(anyhow!(
-            "deploy needs --app-source-id (or {APP_SOURCE_ID_ENV}): the connected GitHub \
-             App install to deploy from. Install the Aomi GitHub App on your source repo, \
-             then run `aomi-build source sync --repo <owner/repo> --platform {platform}` \
-             or pass --repo <owner/repo> to let deploy sync it."
+            "deploy needs an app source id for platform `{platform}`.\n\n\
+             Pass an existing source id:\n  {} deploy --app-source-id <id> --platform {platform}\n\n\
+             Or export it:\n  export {APP_SOURCE_ID_ENV}=<id>\n\n\
+             Or let deploy sync an installed GitHub App source:\n  {} deploy --repo <owner/repo> --platform {platform}",
+            bin_name(),
+            bin_name()
         ))
     }
 
@@ -513,12 +565,8 @@ impl DeployStepArgs {
             .filter(|id| *id > 0)
     }
     fn activation_token_with_source(&self) -> Result<(String, CredentialSource)> {
-        resolve_activation_token_with_source(&self.activation_token).ok_or_else(|| {
-            anyhow!(
-                "deploy requires an activation token via --activation-token or {ACTIVATION_TOKEN_ENV} \
-                 (or run `aomi-build connect`)"
-            )
-        })
+        resolve_activation_token_with_source(&self.activation_token)
+            .ok_or_else(|| missing_activation_token("deploy"))
     }
 }
 

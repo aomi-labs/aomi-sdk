@@ -43,7 +43,7 @@ pub struct AppsListArgs {
 
 impl AppsListArgs {
     pub async fn run(self) -> Result<()> {
-        let (url, token) = resolve_activation(&self.backend, &self.activation_token)?;
+        let (url, token) = resolve_activation("apps list", &self.backend, &self.activation_token)?;
         let value = BackendClient::new(url, token)?
             .list_apps(&self.platform)
             .await?;
