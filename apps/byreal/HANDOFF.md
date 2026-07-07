@@ -1,5 +1,14 @@
 # byreal app — handoff
 
+> **SUPERSEDED (2026-07-04).** The runtime primitive this handoff was
+> blocked on (`host::SvmSignTx`) shipped and was then retired by the
+> host's broadcaster recut: spot/lp writes now route
+> `svm_stage_tx` (staged `broadcaster: "venue"`) → `svm_commit_tx`,
+> with who-signs resolved by kernel policy on the user's wallet. See
+> [docs/sign-tx-solana-runtime.md](../../docs/sign-tx-solana-runtime.md)
+> for the current contract. The rest of this doc is kept as a
+> historical record of the original handoff state.
+
 The app is merged to main and the plugin binary is registered in the runtime
 manifest, but **spot/lp write paths are blocked on a runtime primitive that
 hasn't shipped yet**, and the backend hasn't surfaced byreal in `aomi app

@@ -7,7 +7,7 @@
 //!      `routerType` ("AMM" or "RFQ") + opaque continuation fields
 //!      (quoteId/orderId).
 //!   2. The `build_swap` tool routes the unsigned tx through
-//!      `host::SvmSignTx`.
+//!      `host::SvmStageTx` → `host::SvmCommitTx` (venue-broadcast).
 //!   3. Once signed, `submit_swap` calls either [`SpotClient::execute_swap_amm`]
 //!      or [`SpotClient::execute_swap_rfq`] depending on the routerType.
 //!

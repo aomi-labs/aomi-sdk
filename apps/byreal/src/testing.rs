@@ -212,7 +212,7 @@ fn extract_resting_oid(response: &Value) -> Option<u64> {
 //
 // These hit the live `api2.byreal.io` API. No keys, no signing, no funds —
 // just verifies our envelope unwrap, URL construction, and response shape
-// work end-to-end. Useful before the runtime side of `svm_sign_tx` lands.
+// work end-to-end, independent of the host's commit pipeline.
 // ===========================================================================
 
 /// Hit the spot reads we'll exercise most: global overview, top-TVL pools,

@@ -330,15 +330,111 @@ macro_rules! declare_dyn {
 ///     preamble = "...", tools = [ToolA], namespaces = []);
 /// ```
 ///
-/// **Cross-chain** (byreal-style — EVM perps + SVM spot/LP, string-typed):
+/// **Cross-chain with broadcast policy** (byreal-style — EVM perps + SVM
+/// spot/LP; the `broadcast` block is the operator's submit policy for the
+/// app's SVM transactions, see [`BroadcastConfig`](crate::BroadcastConfig)):
 /// ```rust,ignore
-/// dyn_aomi_app!(app = ByrealApp, name = "byreal", version = "0.1.0",
+/// dyn_aomi_app!(app = ByrealApp, name = "byreal", version = "0.2.0",
 ///     preamble = "...", tools = [...],
-///     namespaces = ["evm-core", "svm-reads", "svm-tx-sign"]);
+///     namespaces = ["evm-core", "svm-reads", "svm-write-tx"],
+///     broadcast = { default: "venue", allowed: ["venue", "wallet"] });
 /// ```
 ///
 #[macro_export]
 macro_rules! dyn_aomi_app {
+    // ── With secrets + namespaces + broadcast ────────────────────────────
+    (
+        app = $app_type:ty,
+        name = $name:expr,
+        version = $version:expr,
+        preamble = $preamble:expr,
+        tools = [ $( $tool_type:ty ),* $(,)? ],
+        secrets = [ $( $secret:expr ),* $(,)? ],
+        namespaces = [ $( $ns:expr ),* $(,)? ],
+        broadcast = { default: $bc_default:expr, allowed: [ $( $bc_allowed:expr ),* $(,)? ] } $(,)?
+    ) => {
+        impl $crate::DynAomiApp for $app_type {
+            fn name(&self) -> &'static str { $name }
+            fn version(&self) -> &'static str { $version }
+            fn preamble(&self) -> &'static str { $preamble }
+
+            fn tools(&self) -> ::std::vec::Vec<$crate::DynToolMetadata> {
+                ::std::vec![ $( <$tool_type as $crate::DynAomiTool>::descriptor(self) ),* ]
+            }
+
+            fn namespaces(&self) -> ::std::option::Option<::std::vec::Vec<::std::string::String>> {
+                ::std::option::Option::Some(::std::vec![ $( $ns.to_string() ),* ])
+            }
+
+            fn secrets(&self) -> ::std::option::Option<::std::vec::Vec<$crate::SecretSlot>> {
+                ::std::option::Option::Some(::std::vec![ $( $crate::SecretSlot::from(&$secret) ),* ])
+            }
+
+            fn broadcast(&self) -> ::std::option::Option<$crate::BroadcastConfig> {
+                ::std::option::Option::Some($crate::BroadcastConfig {
+                    default: $bc_default.to_string(),
+                    allowed: ::std::vec![ $( $bc_allowed.to_string() ),* ],
+                })
+            }
+
+            fn start_tool(
+                &self,
+                name: &str,
+                args_json: &str,
+                ctx_json: &str,
+                sink: $crate::DynAsyncSink,
+            ) -> $crate::DynToolDispatch {
+                $crate::__dispatch_tool!(self, name, args_json, ctx_json, sink, [ $( $tool_type ),* ])
+            }
+        }
+
+        $crate::declare_dyn!($app_type);
+    };
+
+    // ── With namespaces + broadcast ──────────────────────────────────────
+    (
+        app = $app_type:ty,
+        name = $name:expr,
+        version = $version:expr,
+        preamble = $preamble:expr,
+        tools = [ $( $tool_type:ty ),* $(,)? ],
+        namespaces = [ $( $ns:expr ),* $(,)? ],
+        broadcast = { default: $bc_default:expr, allowed: [ $( $bc_allowed:expr ),* $(,)? ] } $(,)?
+    ) => {
+        impl $crate::DynAomiApp for $app_type {
+            fn name(&self) -> &'static str { $name }
+            fn version(&self) -> &'static str { $version }
+            fn preamble(&self) -> &'static str { $preamble }
+
+            fn tools(&self) -> ::std::vec::Vec<$crate::DynToolMetadata> {
+                ::std::vec![ $( <$tool_type as $crate::DynAomiTool>::descriptor(self) ),* ]
+            }
+
+            fn namespaces(&self) -> ::std::option::Option<::std::vec::Vec<::std::string::String>> {
+                ::std::option::Option::Some(::std::vec![ $( $ns.to_string() ),* ])
+            }
+
+            fn broadcast(&self) -> ::std::option::Option<$crate::BroadcastConfig> {
+                ::std::option::Option::Some($crate::BroadcastConfig {
+                    default: $bc_default.to_string(),
+                    allowed: ::std::vec![ $( $bc_allowed.to_string() ),* ],
+                })
+            }
+
+            fn start_tool(
+                &self,
+                name: &str,
+                args_json: &str,
+                ctx_json: &str,
+                sink: $crate::DynAsyncSink,
+            ) -> $crate::DynToolDispatch {
+                $crate::__dispatch_tool!(self, name, args_json, ctx_json, sink, [ $( $tool_type ),* ])
+            }
+        }
+
+        $crate::declare_dyn!($app_type);
+    };
+
     // ── With secrets + namespaces ────────────────────────────────────────
     (
         app = $app_type:ty,

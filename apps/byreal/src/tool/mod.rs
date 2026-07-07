@@ -69,7 +69,7 @@ pub(crate) fn validate_confirmation(token: Option<&str>) -> Result<(), String> {
 /// tool args under `signature`.
 ///
 /// Used by [`perps`] (Hyperliquid L1 actions). Solana flows use
-/// [`build_svm_sign_tx_routes`] instead.
+/// [`build_venue_commit_routes`] instead.
 pub(crate) fn build_evm_signed_routes<Submit: RouteTarget>(
     value: Value,
     typed_data: Value,
@@ -103,13 +103,20 @@ pub(crate) fn build_evm_signed_routes<Submit: RouteTarget>(
         .map_err(|e| format!("[byreal] route build failed: {e}"))
 }
 
-/// Build a `svm_sign_tx` route plan: the app emits an unsigned Solana tx
-/// (base64 versioned bytes) and registers the matched `submit_*` as an
-/// `.after()` continuation; the host wallet signs and the runtime splices the
-/// signed bytes into the `submit_*` tool args under `signed_tx`.
+/// Build a venue-broadcast commit route plan: the app emits an unsigned
+/// Solana tx (base64 versioned bytes), routes `svm_stage_tx` (staged with
+/// `broadcaster: "venue"` — byreal's endpoint submits, never the wallet or
+/// the Aomi runtime) then `svm_commit_tx` on the minted `pending_tx_id`,
+/// and registers the matched `submit_*` as an `.after()` continuation.
+///
+/// Who signs is kernel policy on the user's wallet — a human-sync wallet
+/// signs in the FE, an autonomous-armed wallet is signed server-side with
+/// no FE round-trip — either way the runtime splices the signed bytes into
+/// the `submit_*` tool args under `signed_tx`. The app code cannot tell
+/// the difference, which is what makes these flows schedulable.
 ///
 /// Used by spot and lp (byreal Solana endpoints).
-pub(crate) fn build_svm_sign_tx_routes<Submit: RouteTarget>(
+pub(crate) fn build_venue_commit_routes<Submit: RouteTarget>(
     value: Value,
     unsigned_tx_b64: String,
     description: String,
@@ -117,16 +124,22 @@ pub(crate) fn build_svm_sign_tx_routes<Submit: RouteTarget>(
 ) -> Result<ToolReturn, String> {
     ToolReturn::route(value)
         .next(|next| {
-            next.add::<host::SvmSignTx>(json!({
-                "unsigned_tx": unsigned_tx_b64,
+            next.add::<host::SvmStageTx>(json!({
+                "tx": unsigned_tx_b64,
                 "description": description,
-            }))
-            .bind_as("signed_tx");
+                "broadcaster": "venue",
+            }));
+            next.add::<host::SvmCommitTx>(json!({}))
+                .note(
+                    "Call with { \"tx_id\": <pending_tx_id> } — the pending_tx_id \
+                     returned by the svm_stage_tx step above. No other args.",
+                )
+                .bind_as("signed_tx");
         })
         .after::<Submit>(submit_template)
         .awaits("signed_tx")
         .note(
-            "MANDATORY: Wallet just signed the Solana transaction. You MUST call this tool \
+            "MANDATORY: The Solana transaction is signed. You MUST call this tool \
              RIGHT NOW. Do NOT generate a text response. Do NOT acknowledge or summarize. \
              Make this function call immediately. Pass all args exactly as shown. \
              Keep opaque continuation state unchanged.",

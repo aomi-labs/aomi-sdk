@@ -1,14 +1,16 @@
 //! `byreal_spot_*` tools — byreal CLMM / RFQ swap surface on Solana.
 //!
 //! Reads hit byreal's HTTP API directly, no signing. The single write pair
-//! (`build_swap` / `submit_swap`) routes through `host::SvmSignTx`: the
-//! quote response carries the unsigned base64 versioned tx, the host wallet
-//! signs it, and `submit_swap` forwards the signed bytes to byreal's
-//! AMM-or-RFQ submission endpoint depending on the quote's `routerType`.
+//! (`build_swap` / `submit_swap`) routes through `host::SvmStageTx` →
+//! `host::SvmCommitTx` (staged `broadcaster: "venue"`): the quote response
+//! carries the unsigned base64 versioned tx, the kernel routes who signs
+//! from the wallet's authorization, and `submit_swap` forwards the signed
+//! bytes to byreal's AMM-or-RFQ submission endpoint depending on the
+//! quote's `routerType`.
 
 use crate::client::ByrealApp;
 use crate::client::spot::spot_client;
-use crate::tool::{build_svm_sign_tx_routes, ok, resolve_address, validate_confirmation};
+use crate::tool::{build_venue_commit_routes, ok, resolve_address, validate_confirmation};
 use aomi_sdk::schemars::JsonSchema;
 use aomi_sdk::*;
 use serde::{Deserialize, Serialize};
@@ -224,7 +226,7 @@ impl DynAomiTool for GetSwapQuote {
 }
 
 // ===========================================================================
-// WRITE TOOLS — build/submit pair routed via host::SvmSignTx
+// WRITE TOOLS — build/submit pair routed via host::SvmStageTx → SvmCommitTx
 // ===========================================================================
 
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -246,7 +248,7 @@ impl DynAomiTool for BuildSwap {
     type App = ByrealApp;
     type Args = BuildSwapArgs;
     const NAME: &'static str = "byreal_spot_build_swap";
-    const DESCRIPTION: &'static str = "Build (do not submit) a byreal swap. Internally fetches a router quote and returns a preview + a routed `svm_sign_tx` step the host wallet signs. The matched `byreal_spot_submit_swap` continuation runs after the wallet returns the signed bytes. Always emit a one-screen confirmation summary (in/out amount, slippage, router type) and stop the turn before calling this.";
+    const DESCRIPTION: &'static str = "Build (do not submit) a byreal swap. Internally fetches a router quote and returns a preview + routed `svm_stage_tx` → `svm_commit_tx` steps (staged venue-broadcast; the kernel routes who signs from the wallet's authorization). The matched `byreal_spot_submit_swap` continuation runs once the signed bytes come back. Always emit a one-screen confirmation summary (in/out amount, slippage, router type) and stop the turn before calling this.";
 
     fn run_with_routes(
         _app: &Self::App,
@@ -330,7 +332,7 @@ impl DynAomiTool for BuildSwap {
             short_mint(&args.output_mint),
         );
 
-        build_svm_sign_tx_routes::<SubmitSwap>(preview, unsigned_tx, description, submit_template)
+        build_venue_commit_routes::<SubmitSwap>(preview, unsigned_tx, description, submit_template)
     }
 }
 
@@ -347,8 +349,8 @@ pub(crate) struct SubmitSwapArgs {
     pub quote_id: Option<String>,
     /// RFQ-only: the `orderId` from the quote, sent back as `requestId`.
     pub request_id: Option<String>,
-    /// Base64 signed versioned Solana tx. Filled in by the host wallet via
-    /// `svm_sign_tx` — never invent one.
+    /// Base64 signed versioned Solana tx. Filled in by the runtime from the
+    /// `svm_commit_tx` result — never invent one.
     pub signed_tx: Option<String>,
 }
 
@@ -358,12 +360,12 @@ impl DynAomiTool for SubmitSwap {
     type App = ByrealApp;
     type Args = SubmitSwapArgs;
     const NAME: &'static str = "byreal_spot_submit_swap";
-    const DESCRIPTION: &'static str = "Submit a byreal swap that was previously prepared by `byreal_spot_build_swap` and signed via `svm_sign_tx`. Routes to the AMM or RFQ submission endpoint based on `router_type`. The `signed_tx` field is filled in automatically by the runtime.";
+    const DESCRIPTION: &'static str = "Submit a byreal swap that was previously prepared by `byreal_spot_build_swap` and signed via `svm_commit_tx`. Routes to the AMM or RFQ submission endpoint based on `router_type`. The `signed_tx` field is filled in automatically by the runtime.";
 
     fn run(_app: &Self::App, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         validate_confirmation(args.confirmation.as_deref())?;
         let signed = args.signed_tx.as_deref().ok_or_else(|| {
-            "[byreal] signed_tx missing — wait for svm_sign_tx callback".to_string()
+            "[byreal] signed_tx missing — wait for the svm_commit_tx result".to_string()
         })?;
         let client = spot_client()?;
         let resp = match args.router_type.as_str() {
@@ -428,26 +430,30 @@ mod tests {
         assert_eq!(back.quote_id.as_deref(), Some("q"));
     }
 
-    /// End-to-end route-binding test for byreal's 2-node Lane-2-sign
-    /// pipeline: `build_swap → host::SvmSignTx → submit_swap`.
+    /// End-to-end route-binding test for byreal's 3-node Lane-2
+    /// venue-broadcast pipeline:
+    /// `build_swap → host::SvmStageTx → host::SvmCommitTx → submit_swap`.
     ///
     /// `BuildSwap::run_with_routes` hits byreal's HTTP quote endpoint
-    /// before calling `build_svm_sign_tx_routes`. This test bypasses
+    /// before calling `build_venue_commit_routes`. This test bypasses
     /// the HTTP step and exercises the route builder directly with
     /// synthetic inputs — hermetic and fast, but covers the same
     /// bug class smoke tests would surface only after a live wallet
     /// dispatch:
-    ///   - wrong `bind_as` / `awaits` alias (sign result wouldn't
+    ///   - wrong `bind_as` / `awaits` alias (the signed bytes wouldn't
     ///     land in `submit_swap`'s `signed_tx`)
     ///   - wrong tool name in `next.add` (host marker references the
-    ///     wrong wallet verb)
+    ///     wrong verb)
+    ///   - missing `broadcaster: "venue"` on the stage step (the host
+    ///     would fall back to the manifest default — fine for byreal,
+    ///     but the pin is the artifact constraint for RFQ)
     ///   - missing `confirmation` / `unsigned_tx` / `router_type`
     ///     in the submit-args template
-    ///   - trigger types flipped (sign on `on_bound_event`,
+    ///   - trigger types flipped (commit on `on_bound_event`,
     ///     submit on `on_sync_return`)
     #[test]
     fn build_swap_route_plan_binds_sign_to_submit() {
-        use crate::tool::build_svm_sign_tx_routes;
+        use crate::tool::build_venue_commit_routes;
 
         let preview = json!({
             "action_kind": "swap",
@@ -469,7 +475,7 @@ mod tests {
         })
         .unwrap();
 
-        let ret = build_svm_sign_tx_routes::<SubmitSwap>(
+        let ret = build_venue_commit_routes::<SubmitSwap>(
             preview.clone(),
             unsigned_tx.clone(),
             description.clone(),
@@ -488,41 +494,64 @@ mod tests {
         let routes = env["__aomi_tool_routes"].as_array().expect("routes array");
         assert_eq!(
             routes.len(),
-            2,
-            "byreal swap = 2-node (sign → submit). \
+            3,
+            "byreal swap = 3-node (stage → commit → submit). \
              A different count means the route builder grew or shrank \
              a step — update this test if the pipeline shape changed."
         );
 
-        // Node 1 — host::SvmSignTx (sign-only; venue broadcasts).
-        let sign_step = &routes[0];
-        assert_eq!(sign_step["tool"], json!("svm_sign_tx"));
+        // Node 1 — host::SvmStageTx: stage the venue blob with the
+        // venue-broadcast pin. No bind — the artifact that matters
+        // downstream is the commit result.
+        let stage_step = &routes[0];
+        assert_eq!(stage_step["tool"], json!("svm_stage_tx"));
         assert_eq!(
-            sign_step["trigger"],
+            stage_step["trigger"],
             json!({ "type": "on_sync_return" }),
-            "sign fires immediately after build_swap returns"
+            "stage fires immediately after build_swap returns"
         );
+        let stage_args = &stage_step["args"];
         assert_eq!(
-            sign_step["bind_as"],
-            json!("signed_tx"),
-            "sign result must bind to `signed_tx` — the alias submit_swap awaits"
-        );
-        let sign_args = &sign_step["args"];
-        assert_eq!(
-            sign_args["unsigned_tx"],
+            stage_args["tx"],
             json!(unsigned_tx),
-            "the venue-supplied tx blob is what gets signed"
+            "the venue-supplied tx blob is what gets staged"
         );
-        assert_eq!(sign_args["description"], json!(description));
+        assert_eq!(stage_args["description"], json!(description));
+        assert_eq!(
+            stage_args["broadcaster"],
+            json!("venue"),
+            "byreal's endpoint is the broadcaster — the artifact pin, not a model choice"
+        );
         assert!(
-            sign_args.get("continuation").is_none(),
-            "sign step carries no embedded continuation — the submit step is wired \
-             entirely via `.after()` / on_bound_event (see Node 2 below)"
+            stage_step.get("bind_as").is_none(),
+            "stage binds nothing; the signed bytes come from the commit step"
         );
 
-        // Node 2 — submit_swap. Triggered by the bound `signed_tx`
-        // event the sign step emits.
-        let submit_step = &routes[1];
+        // Node 2 — host::SvmCommitTx: execute under kernel policy. The
+        // model fills `tx_id` from the stage result (see the step note);
+        // the signed bytes bind to `signed_tx`.
+        let commit_step = &routes[1];
+        assert_eq!(commit_step["tool"], json!("svm_commit_tx"));
+        assert_eq!(
+            commit_step["trigger"],
+            json!({ "type": "on_sync_return" }),
+            "commit is model-driven right after stage returns the tx_id"
+        );
+        assert_eq!(
+            commit_step["bind_as"],
+            json!("signed_tx"),
+            "commit result must bind to `signed_tx` — the alias submit_swap awaits"
+        );
+        assert!(
+            commit_step["prompt"]
+                .as_str()
+                .is_some_and(|p| p.contains("tx_id")),
+            "commit step must carry the note telling the model to pass the staged tx_id"
+        );
+
+        // Node 3 — submit_swap. Triggered by the bound `signed_tx`
+        // event the commit step emits.
+        let submit_step = &routes[2];
         assert_eq!(submit_step["tool"], json!(SubmitSwap::NAME));
         assert_eq!(
             submit_step["trigger"],
