@@ -86,7 +86,7 @@ platform repo for `required_sdk_version`):
 crate-type = ["cdylib"]
 
 [dependencies]
-aomi-sdk = "=3.0.1"
+aomi-sdk = "=3.0.2"
 ```
 
 Do **not** put GitHub tokens or a `git` field in `aomi.toml`. Source access is
