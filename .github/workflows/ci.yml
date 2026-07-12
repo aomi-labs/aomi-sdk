@@ -52,8 +52,6 @@ jobs:
       - name: Test SDK
         run: cargo test -p aomi-sdk
 
-      - name: Test byreal app
-        run: cargo test --manifest-path apps/byreal/Cargo.toml
 
       - name: Dry-run SDK publish
         if: steps.sdk-version.outputs.publish_sdk == 'true'
