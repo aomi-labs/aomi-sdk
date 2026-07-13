@@ -100,7 +100,7 @@ fn private_namespaces() -> &'static [&'static str] {
 
 // ── FFI helpers ──────────────────────────────────────────────────────────────
 
-fn read_manifest(path: &Path) -> Result<DynManifest, String> {
+pub(crate) fn read_manifest(path: &Path) -> Result<DynManifest, String> {
     let handle =
         unsafe { DynFnHandle::load(path).map_err(|e| format!("dlopen {}: {e}", path.display()))? };
     handle
@@ -110,15 +110,13 @@ fn read_manifest(path: &Path) -> Result<DynManifest, String> {
 
 // ── Public API ───────────────────────────────────────────────────────────────
 
-/// Validate a built plugin library.
+/// Load a built plugin, read its manifest, and validate it.
 ///
-/// Returns a list of error messages (empty = pass).
-pub fn validate_plugin(lib_path: &Path) -> Vec<String> {
+/// Returns the manifest on success, or the list of validation errors.
+pub fn inspect_plugin(lib_path: &Path) -> Result<DynManifest, Vec<String>> {
     let manifest = match read_manifest(lib_path) {
         Ok(m) => m,
-        Err(e) => {
-            return vec![format!("{}: {e}", lib_path.display())];
-        }
+        Err(e) => return Err(vec![format!("{}: {e}", lib_path.display())]),
     };
 
     let mut errors = validate_manifest(&manifest);
@@ -128,7 +126,12 @@ pub fn validate_plugin(lib_path: &Path) -> Vec<String> {
             manifest.name, manifest.sdk_version, AOMI_SDK_VERSION
         ));
     }
-    errors
+
+    if errors.is_empty() {
+        Ok(manifest)
+    } else {
+        Err(errors)
+    }
 }
 
 fn validate_manifest(manifest: &DynManifest) -> Vec<String> {
@@ -208,5 +211,18 @@ mod tests {
 
         assert_eq!(errors.len(), 1);
         assert!(errors[0].contains("namespace 'database' is private"));
+    }
+}
+
+#[cfg(test)]
+mod inspect_tests {
+    use super::*;
+
+    #[test]
+    fn inspect_plugin_reports_errors_for_a_missing_library() {
+        let errors = inspect_plugin(Path::new("/nonexistent/libnope.so"))
+            .expect_err("a missing library must not inspect cleanly");
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("dlopen"), "got: {}", errors[0]);
     }
 }

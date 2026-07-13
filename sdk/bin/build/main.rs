@@ -7,6 +7,7 @@ mod client;
 mod compile;
 mod deploy;
 mod init;
+mod manifest;
 mod new_app;
 mod sdk_guard;
 mod spec_load;
@@ -47,6 +48,8 @@ enum Cmd {
     /// Build every app's cdylib, copy validated plugins into `plugins/`,
     /// codesign on macOS.
     Compile(compile::CompileArgs),
+    /// Print a built plugin's manifest (including declared secret slots) as JSON.
+    Manifest(manifest::ManifestArgs),
     /// Deploy lifecycle: preflight, run, activate, and status.
     Deploy(Box<cli::DeployArgs>),
     /// Alias for `deploy status` for one release cycle.
@@ -82,6 +85,7 @@ async fn main() -> Result<()> {
         Cmd::TightenSpec(args) => tighten::run(args),
         Cmd::Init(args) => init::run(args),
         Cmd::Compile(args) => compile::run(args),
+        Cmd::Manifest(args) => manifest::run(args),
         Cmd::Deploy(args) => args.run().await.map_err(git_error),
         Cmd::Status(args) => args.run().await.map_err(git_error),
         Cmd::Activate(args) => cli::deploy::run_activate_step(args)
