@@ -100,7 +100,7 @@ fn private_namespaces() -> &'static [&'static str] {
 
 // ── FFI helpers ──────────────────────────────────────────────────────────────
 
-fn read_manifest(path: &Path) -> Result<DynManifest, String> {
+pub(crate) fn read_manifest(path: &Path) -> Result<DynManifest, String> {
     let handle =
         unsafe { DynFnHandle::load(path).map_err(|e| format!("dlopen {}: {e}", path.display()))? };
     handle

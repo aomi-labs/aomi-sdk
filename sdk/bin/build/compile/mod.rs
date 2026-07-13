@@ -4,7 +4,7 @@
 //! Ported from the old `cargo xtask build-aomi` subcommand. Public API:
 //! [`CompileArgs`] (clap) + [`run`] (eyre).
 
-mod validate;
+pub(crate) mod validate;
 
 use std::env;
 use std::fs;
