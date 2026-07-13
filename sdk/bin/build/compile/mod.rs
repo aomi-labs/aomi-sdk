@@ -125,16 +125,18 @@ pub fn run(args: CompileArgs) -> Result<()> {
             }
         }
 
-        let validation_errors = validate::validate_plugin(&dest);
-        if !validation_errors.is_empty() {
-            for err in &validation_errors {
-                eprintln!("  validation error: {err}");
+        let _plugin_manifest = match validate::inspect_plugin(&dest) {
+            Ok(manifest) => manifest,
+            Err(validation_errors) => {
+                for err in &validation_errors {
+                    eprintln!("  validation error: {err}");
+                }
+                eprintln!("  [SKIP] {pkg_name} — validation failed");
+                let _ = fs::remove_file(&dest);
+                failed.push(manifest.package_name);
+                continue;
             }
-            eprintln!("  [SKIP] {pkg_name} — validation failed");
-            let _ = fs::remove_file(&dest);
-            failed.push(manifest.package_name);
-            continue;
-        }
+        };
 
         built += 1;
     }
