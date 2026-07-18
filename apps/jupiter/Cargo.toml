@@ -1,0 +1,21 @@
+[package]
+name = "jupiter"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# Standalone package (root workspace lists apps/* under `exclude`). The empty
+# table also stops cargo's upward workspace walk from escaping a git worktree
+# into the main checkout's workspace.
+[workspace]
+
+[dependencies]
+aomi-sdk = "=3.0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
+schemars = "1.0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# No solana-sdk: Jupiter's /swap returns a fully-built base64 VersionedTransaction
+# that the wallet signs as-is at commit — the app never touches the tx bytes.
