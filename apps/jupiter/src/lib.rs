@@ -101,7 +101,10 @@ mod tests {
         assert_eq!(manifest.name, "jupiter");
         assert_eq!(
             manifest.namespaces,
-            Some(vec!["svm-reads".to_string(), "svm-tx-broadcast".to_string()])
+            Some(vec![
+                "svm-reads".to_string(),
+                "svm-tx-broadcast".to_string()
+            ])
         );
         let names: Vec<&str> = manifest.tools.iter().map(|t| t.name.as_str()).collect();
         assert_eq!(names, vec!["jupiter_get_quote", "jupiter_swap"]);

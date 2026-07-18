@@ -116,7 +116,10 @@ fn decode(resp: reqwest::blocking::Response, url: &str) -> Result<Value, String>
     let status = resp.status();
     let text = resp.text().unwrap_or_default();
     if !status.is_success() {
-        return Err(format!("[jupiter] {url} returned HTTP {status}: {}", brief(&text)));
+        return Err(format!(
+            "[jupiter] {url} returned HTTP {status}: {}",
+            brief(&text)
+        ));
     }
     decode_body(&text).map_err(|e| format!("[jupiter] {url}: {e}"))
 }
@@ -124,8 +127,8 @@ fn decode(resp: reqwest::blocking::Response, url: &str) -> Result<Value, String>
 /// Parse + error-check a Jupiter body. Split out so it's unit-testable without a
 /// live response.
 fn decode_body(text: &str) -> Result<Value, String> {
-    let value: Value =
-        serde_json::from_str(text).map_err(|e| format!("decode failed: {e}; body: {}", brief(text)))?;
+    let value: Value = serde_json::from_str(text)
+        .map_err(|e| format!("decode failed: {e}; body: {}", brief(text)))?;
     if let Some(err) = value.get("error").and_then(Value::as_str) {
         let code = value
             .get("errorCode")
@@ -203,7 +206,9 @@ mod tests {
 
         let swap = client.swap(&quote, SOL, true).expect("swap decodes");
         assert!(
-            swap["swapTransaction"].as_str().is_some_and(|s| !s.is_empty()),
+            swap["swapTransaction"]
+                .as_str()
+                .is_some_and(|s| !s.is_empty()),
             "swap must carry a swapTransaction blob: {swap}"
         );
     }

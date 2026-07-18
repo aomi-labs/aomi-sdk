@@ -24,7 +24,8 @@ use crate::client::{JupiterApp, jupiter_client};
 const DEFAULT_SLIPPAGE_BPS: u32 = 50;
 
 fn ok<T: serde::Serialize>(value: T) -> Result<Value, String> {
-    let v = serde_json::to_value(value).map_err(|e| format!("[jupiter] response serialize: {e}"))?;
+    let v =
+        serde_json::to_value(value).map_err(|e| format!("[jupiter] response serialize: {e}"))?;
     Ok(match v {
         Value::Object(mut map) => {
             map.insert("source".to_string(), Value::String("jupiter".to_string()));
@@ -119,8 +120,18 @@ impl DynAomiTool for Swap {
         let client = jupiter_client()?;
 
         // Fresh route — a stale quote can fail once the referenced slot ages out.
-        let quote = client.quote(&args.input_mint, &args.output_mint, &args.amount, slippage, mode)?;
-        let swap = client.swap(&quote, &wallet, wrap_sol(&args.input_mint, &args.output_mint))?;
+        let quote = client.quote(
+            &args.input_mint,
+            &args.output_mint,
+            &args.amount,
+            slippage,
+            mode,
+        )?;
+        let swap = client.swap(
+            &quote,
+            &wallet,
+            wrap_sol(&args.input_mint, &args.output_mint),
+        )?;
         let blob = swap
             .get("swapTransaction")
             .and_then(Value::as_str)
@@ -193,11 +204,16 @@ mod tests {
     #[test]
     fn resolve_wallet_prefers_arg_then_ctx() {
         let ctx = TestCtxBuilder::new("jupiter_swap")
-            .attribute("domain", json!({ "svm": { "address": "CtxW", "cluster": "solana:mainnet" } }))
+            .attribute(
+                "domain",
+                json!({ "svm": { "address": "CtxW", "cluster": "solana:mainnet" } }),
+            )
             .build();
         assert_eq!(resolve_wallet(Some("ArgW".into()), &ctx).unwrap(), "ArgW");
         assert_eq!(resolve_wallet(None, &ctx).unwrap(), "CtxW");
-        let empty = TestCtxBuilder::new("t").attribute("domain", json!({})).build();
+        let empty = TestCtxBuilder::new("t")
+            .attribute("domain", json!({}))
+            .build();
         assert!(resolve_wallet(None, &empty).is_err());
     }
 
