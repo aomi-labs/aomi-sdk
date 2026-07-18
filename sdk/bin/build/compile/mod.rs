@@ -138,6 +138,14 @@ pub fn run(args: CompileArgs) -> Result<()> {
             }
         };
 
+        if let Err(err) = sync_pricing_sidecar(&manifest.path, &manifest_name, &plugins_dir) {
+            eprintln!("  pricing sidecar error: {err}");
+            eprintln!("  [SKIP] {pkg_name} — invalid pricing.toml");
+            let _ = fs::remove_file(&dest);
+            failed.push(manifest.package_name);
+            continue;
+        }
+
         built += 1;
     }
 
@@ -317,6 +325,40 @@ fn cargo_output_file_name(package_name: &str, target_triple: Option<&str>) -> St
     }
 }
 
+/// Ship the app's pricing sidecar into the bundle: `apps/<dir>/pricing.toml`
+/// → `plugins/<manifest-name>.pricing.toml` (the host resolves sidecars by
+/// the dylib's manifest name). Missing file = free app. A stale sidecar in
+/// `plugins/` is removed, so deleting the source file un-prices the app on
+/// the next release. The sidecar must parse as TOML and declare `version`,
+/// so a malformed file fails the build here instead of refusing the app
+/// load on the host.
+fn sync_pricing_sidecar(
+    app_manifest_path: &Path,
+    manifest_name: &str,
+    plugins_dir: &Path,
+) -> Result<()> {
+    let src = app_manifest_path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("pricing.toml");
+    let dest = plugins_dir.join(format!("{manifest_name}.pricing.toml"));
+    if !src.is_file() {
+        if dest.exists() {
+            fs::remove_file(&dest)?;
+        }
+        return Ok(());
+    }
+    let raw = fs::read_to_string(&src)?;
+    let value: Value = toml::from_str(&raw)
+        .map_err(|err| eyre::eyre!("malformed {}: {err}", src.display()))?;
+    if value.get("version").and_then(Value::as_integer).is_none() {
+        bail!("{} must declare an integer `version`", src.display());
+    }
+    fs::copy(&src, &dest)?;
+    println!("  shipped pricing sidecar -> {}", dest.display());
+    Ok(())
+}
+
 fn plugin_manifest_name(lib_path: &Path) -> String {
     let handle = unsafe {
         DynFnHandle::load(lib_path).unwrap_or_else(|err| {
@@ -363,6 +405,34 @@ fn should_codesign(target_triple: Option<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pricing_sidecar_ships_validates_and_removes_stale() {
+        let app_dir = tempfile::tempdir().expect("app dir");
+        let plugins = tempfile::tempdir().expect("plugins dir");
+        let manifest = app_dir.path().join("Cargo.toml");
+        let dest = plugins.path().join("demo.pricing.toml");
+
+        // No source file, no dest: nothing to do.
+        sync_pricing_sidecar(&manifest, "demo", plugins.path()).expect("no-op");
+        assert!(!dest.exists());
+
+        // Valid sidecar ships under the manifest name.
+        fs::write(app_dir.path().join("pricing.toml"), "version = 1").unwrap();
+        sync_pricing_sidecar(&manifest, "demo", plugins.path()).expect("ship");
+        assert!(dest.is_file());
+
+        // Malformed / version-less files fail the build.
+        fs::write(app_dir.path().join("pricing.toml"), "version = ").unwrap();
+        assert!(sync_pricing_sidecar(&manifest, "demo", plugins.path()).is_err());
+        fs::write(app_dir.path().join("pricing.toml"), "flat = 1.0").unwrap();
+        assert!(sync_pricing_sidecar(&manifest, "demo", plugins.path()).is_err());
+
+        // Deleting the source removes the shipped copy.
+        fs::remove_file(app_dir.path().join("pricing.toml")).unwrap();
+        sync_pricing_sidecar(&manifest, "demo", plugins.path()).expect("prune");
+        assert!(!dest.exists());
+    }
 
     #[test]
     fn app_manifest_uses_explicit_lib_name_when_present() {
