@@ -3,6 +3,13 @@ name: Publish SDK
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      force_publish:
+        description: Publish the current SDK version even if it was already present on main
+        required: true
+        default: false
+        type: boolean
 
 env:
   CARGO_TERM_COLOR: always
@@ -20,12 +27,18 @@ jobs:
       - name: Check SDK version bump
         id: sdk-version
         env:
-          SDK_BASE_SHA: ${{ github.event.before }}
+          SDK_BASE_SHA: ${{ github.event_name == 'push' && github.event.before || github.sha }}
+          FORCE_PUBLISH: ${{ inputs.force_publish || false }}
         run: |
-          python3 scripts/check_sdk_version_bump.py \
-            --base "$SDK_BASE_SHA" \
-            --head "${{ github.sha }}" \
+          args=(
+            --base "$SDK_BASE_SHA"
+            --head "${{ github.sha }}"
             --github-output "$GITHUB_OUTPUT"
+          )
+          if [ "$FORCE_PUBLISH" = "true" ]; then
+            args+=(--force-publish)
+          fi
+          python3 scripts/check_sdk_version_bump.py "${args[@]}"
 
       - name: Install Rust
         if: steps.sdk-version.outputs.publish_sdk == 'true'
