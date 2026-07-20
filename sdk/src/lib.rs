@@ -140,6 +140,7 @@
 mod abi;
 mod builder;
 mod ffi;
+#[cfg(not(target_arch = "wasm32"))]
 mod handle;
 pub mod route;
 mod secrets;
@@ -147,6 +148,7 @@ pub mod testing;
 mod types;
 
 pub use abi::*;
+#[cfg(not(target_arch = "wasm32"))]
 pub use handle::*;
 pub use route::*;
 pub use secrets::*;

@@ -1,6 +1,6 @@
 [package]
 name = "aomi-sdk"
-version = "3.0.3"
+version = "3.0.4"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/aomi-labs/aomi-sdk"
@@ -55,8 +55,10 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 schemars = "1.0.4"
 eyre.workspace = true
-libloading = "0.8"
 tracing.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+libloading = "0.8"
 
 # Optional deps — pulled in only when the `cli` feature is enabled.
 anyhow = { version = "1", optional = true }

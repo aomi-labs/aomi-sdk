@@ -92,6 +92,8 @@ pub fn log_poll_error(execution_id: u64, error: &str) {
 /// | `aomi_dyn_exec_cancel`      | Cancels an async execution        |
 /// | `aomi_destroy`              | Frees the plugin instance         |
 /// | `aomi_free_string`          | Frees a returned C string         |
+/// | `aomi_alloc` (WASM only)    | Allocates host input memory       |
+/// | `aomi_dealloc` (WASM only)  | Frees host input memory           |
 ///
 /// [`AOMI_SDK_VERSION`]: crate::AOMI_SDK_VERSION
 #[macro_export]
@@ -296,6 +298,31 @@ macro_rules! declare_dyn {
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn aomi_free_string(ptr: *mut ::std::ffi::c_char) {
             unsafe { $crate::__private::free_c_string(ptr) };
+        }
+
+        /// Allocate a byte buffer for a WebAssembly host to fill.
+        ///
+        /// JavaScript writes NUL-terminated UTF-8 inputs into the returned
+        /// memory before calling `aomi_async_tool_start`.
+        #[cfg(target_arch = "wasm32")]
+        #[unsafe(no_mangle)]
+        pub extern "C" fn aomi_alloc(len: usize) -> *mut u8 {
+            let bytes = ::std::vec![0_u8; len].into_boxed_slice();
+            ::std::boxed::Box::into_raw(bytes).cast()
+        }
+
+        /// Free a byte buffer returned by `aomi_alloc`.
+        ///
+        /// # Safety
+        /// `ptr` and `len` must describe one live allocation returned by
+        /// `aomi_alloc`.
+        #[cfg(target_arch = "wasm32")]
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn aomi_dealloc(ptr: *mut u8, len: usize) {
+            if !ptr.is_null() {
+                let slice = ::std::ptr::slice_from_raw_parts_mut(ptr, len);
+                let _ = unsafe { ::std::boxed::Box::from_raw(slice) };
+            }
         }
     };
 }
@@ -609,6 +636,8 @@ macro_rules! __dispatch_tool {
                         let tool_name = $name.to_string();
                         let app_clone = $self.clone();
                         let sink_clone = $sink.clone();
+
+                        #[cfg(not(target_arch = "wasm32"))]
                         ::std::thread::spawn(move || {
                             let result = <$tool_type as $crate::DynAomiTool>::run_async(
                                 &app_clone, args, ctx, sink_clone.clone(),
@@ -618,6 +647,21 @@ macro_rules! __dispatch_tool {
                                 sink_clone.fail(err);
                             }
                         });
+
+                        // A raw wasm32 module has no background thread. Run the
+                        // producer inline and retain the same queued/poll wire
+                        // contract for the JavaScript host.
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            let result = <$tool_type as $crate::DynAomiTool>::run_async(
+                                &app_clone, args, ctx, sink_clone.clone(),
+                            );
+                            if let Err(ref err) = result {
+                                $crate::__private::log_async_tool_error(&tool_name, err);
+                                sink_clone.fail(err);
+                            }
+                        }
+
                         $crate::DynToolDispatch::AsyncQueued
                     } else {
                         match <$tool_type as $crate::DynAomiTool>::run_with_routes($self, args, ctx) {

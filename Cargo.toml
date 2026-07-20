@@ -3,6 +3,7 @@ members = [
     "sdk",
     "sdk/examples/hello-app",
     "sdk/examples/app-template-http",
+    "sdk/examples/wasm-parity",
     "ext",
 ]
 exclude = [

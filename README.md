@@ -22,7 +22,9 @@ This repository contains public dynamic app crates, the public SDK they build ag
 - `apps/*`: official app crates that compile to dynamic plugins
 - `sdk`: the public plugin SDK used by those apps
 - `sdk/bin/build`: the **`aomi-build`** CLI — scaffold apps from OpenAPI specs, compile and validate plugins, and deploy/activate hosted apps. See [`docs/aomi-build.md`](./docs/aomi-build.md)
+- `bindings/typescript`: the typed WebAssembly host binding for SDK plugins
 - `sdk/examples/app-template-http`: reference app showing the recommended file layout for a new plugin
+- `sdk/examples/wasm-parity`: native/WASM parity fixture exercised from Node
 - `docs/host-interop.md`: the public host capability contract used by execution-oriented apps
 - `docs/repo-structure.md`: how to structure a new app crate in this repo
 
@@ -125,6 +127,35 @@ aomi-build compile --target aarch64-apple-darwin
 
 (Without installing, you can also run it ad-hoc:
 `cargo run -p aomi-sdk --features cli --bin aomi-build -- compile`.)
+
+## Build WebAssembly Plugins
+
+The same `dyn_aomi_app!` plugin can target raw WebAssembly. The SDK exports its
+existing JSON lifecycle ABI plus the memory allocation functions needed by the
+TypeScript host:
+
+```bash
+rustup target add wasm32-unknown-unknown
+cargo build --release --target wasm32-unknown-unknown \
+  --manifest-path path/to/your-app/Cargo.toml
+```
+
+Load the resulting `.wasm` module with
+[`AomiWasmPlugin`](./bindings/typescript/README.md). Manifest discovery, tool
+start, async polling, cancellation, error envelopes, and cleanup retain the
+same wire shapes as the native `DynFnHandle` API.
+
+Run the end-to-end native parity proof with:
+
+```bash
+cd bindings/typescript
+npm install
+npm test
+```
+
+Raw `wasm32-unknown-unknown` has no background threads. Async tool producers
+therefore run inline during tool start and queue their events for later polls;
+the ABI is preserved, while scheduling differs from a native plugin.
 
 ## Deploy Hosted Apps
 
