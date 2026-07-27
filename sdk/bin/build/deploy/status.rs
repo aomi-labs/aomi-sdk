@@ -15,6 +15,7 @@ pub struct StatusResult {
     pub deploy_branch: String,
     pub deployed: bool,
     pub activated: bool,
+    pub project_url: Option<String>,
     pub backend: Option<String>,
     pub deployment: DeploymentBackendStatus,
     pub apps: Vec<AppStatus>,
@@ -102,6 +103,7 @@ impl StatusResult {
             deploy_branch: state.deployment.platform.deploy_branch.clone(),
             deployed: state.state.deployed,
             activated: state.state.activated,
+            project_url: state.project_url.clone(),
             backend: backend_url,
             deployment,
             apps,
@@ -116,6 +118,9 @@ impl StatusResult {
         let _ = writeln!(out, "  deployment_id : {}", self.deployment_id);
         let _ = writeln!(out, "  pr            : {}", self.pr_url);
         let _ = writeln!(out, "  deploy_branch : {}", self.deploy_branch);
+        if let Some(url) = &self.project_url {
+            let _ = writeln!(out, "  project       : {url}");
+        }
         let _ = writeln!(
             out,
             "  local state   : deployed={} activated={}",

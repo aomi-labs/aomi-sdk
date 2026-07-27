@@ -14,8 +14,9 @@ use reqwest::header::{ACCEPT, USER_AGENT};
 
 pub use super::backend::TokenCheck;
 use super::backend::{self, BackendClient};
+use super::build_client::BuildClient;
 use super::platform::Platform;
-use super::types::{OAuthStart, SyncSourceInput};
+use super::types::OAuthStart;
 
 /// Fetch the aomi-build GitHub App install URL for `platform` (optionally scoped
 /// to a single `repo`). `mode` is `"install"` for a fresh install or
@@ -44,25 +45,6 @@ pub async fn validate_activation_token(
     }
 }
 
-/// Resolve-or-bind an installed source repo, returning its `app_source_id`.
-pub async fn sync_source(
-    backend_url: &str,
-    token: &str,
-    platform: &str,
-    repo: &str,
-) -> Result<i64> {
-    let client = BackendClient::new(backend_url.to_string(), token.to_string())?;
-    let result = client
-        .sync_installed(
-            &Platform::new(platform),
-            &SyncSourceInput {
-                repo: repo.to_string(),
-            },
-        )
-        .await?;
-    Ok(result.source.id)
-}
-
 /// Terminal outcome of waiting on a deployment's release build.
 pub enum DeployReady {
     Ready,
@@ -77,6 +59,53 @@ pub enum DeployReady {
 const MAX_STATUS_FAILURES: u32 = 15;
 const GITHUB_STATUS_INTERVAL: Duration = Duration::from_secs(30);
 
+pub async fn poll_build_deployment_ready(
+    client: &BuildClient,
+    platform: &str,
+    deployment_id: &str,
+    timeout: Duration,
+    mut on_state: impl FnMut(&str),
+) -> Result<DeployReady> {
+    let started = Instant::now();
+    let mut last_state: Option<String> = None;
+    let mut failures: u32 = 0;
+    loop {
+        match client.status(platform, deployment_id).await {
+            Ok(status) => {
+                failures = 0;
+                if last_state.as_deref() != Some(status.state.as_str()) {
+                    on_state(&status.state);
+                    last_state = Some(status.state.clone());
+                }
+                match status.state.as_str() {
+                    "ready" => return Ok(DeployReady::Ready),
+                    "failed" | "no_ci" => {
+                        let fallback = if status.state == "failed" {
+                            "release build failed"
+                        } else {
+                            "no CI ran for this deployment commit"
+                        };
+                        return Ok(DeployReady::Failed(
+                            status.message.unwrap_or_else(|| fallback.to_string()),
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+            Err(error) => {
+                failures += 1;
+                if failures >= MAX_STATUS_FAILURES {
+                    return Err(error.context("deployment status polling failed repeatedly"));
+                }
+            }
+        }
+        if started.elapsed() >= timeout {
+            return Ok(DeployReady::TimedOut);
+        }
+        tokio::time::sleep(Duration::from_secs(6)).await;
+    }
+}
+
 /// Poll `deployments/:id/status` until the release build reaches a terminal
 /// state or `timeout` elapses, calling `on_state` whenever the reported state
 /// changes (for progress output). Transient errors are tolerated for the brief
@@ -84,26 +113,6 @@ const GITHUB_STATUS_INTERVAL: Duration = Duration::from_secs(30);
 /// error is surfaced rather than masked (matching the portal, which stopped
 /// turning status 404s into a fake `pending`). Mirrors the portal gating
 /// activation on `ready`.
-pub async fn poll_deployment_ready(
-    backend_url: &str,
-    token: &str,
-    platform: &str,
-    deployment_id: &str,
-    timeout: Duration,
-    mut on_state: impl FnMut(&str),
-) -> Result<DeployReady> {
-    poll_deployment_ready_with_pr(
-        backend_url,
-        token,
-        platform,
-        deployment_id,
-        None,
-        timeout,
-        &mut on_state,
-    )
-    .await
-}
-
 pub async fn poll_deployment_ready_with_pr(
     backend_url: &str,
     token: &str,

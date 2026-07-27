@@ -1,10 +1,8 @@
 //! Global CLI identity persisted at `~/.config/aomi/config.toml`.
 //!
-//! This is account-level state established by `aomi-build connect`: which
-//! backend to talk to, the connected GitHub App `installation_id`, and the
-//! activation token the user got from their Aomi admin. Per-project deploy
-//! state stays in `.aomi/deployment.json`; this file is the cross-project
-//! identity the subcommands (and, later, the wizard) fall back to.
+//! This is account-level state established by `aomi-build login` or `connect`:
+//! which backend and Build UI to use, the verified GitHub Builder identity, and
+//! any CLI/admin credentials. Per-project state stays in `.aomi/deployment.json`.
 //!
 //! The file holds a secret (the activation token), so it is written `0600`.
 
@@ -18,12 +16,24 @@ pub struct AomiConfig {
     /// Backend base URL (`AOMI_BACKEND_URL`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backend_url: Option<String>,
+    /// Aomi Build base URL (`AOMI_BUILD_URL`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_url: Option<String>,
     /// Platform the connection is scoped to.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub platform: Option<String>,
     /// Connected GitHub App installation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installation_id: Option<i64>,
+    /// Verified GitHub user attached to this Builder login.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_user_id: Option<String>,
+    /// Verified GitHub login for friendly CLI output.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_login: Option<String>,
+    /// Builder-authenticated CLI bearer issued by Aomi Build.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cli_access_token: Option<String>,
     /// Activation token (issued by the Aomi admin). Secret — file is `0600`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub activation_token: Option<String>,

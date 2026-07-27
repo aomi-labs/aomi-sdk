@@ -22,7 +22,7 @@ mod tool;
     about = "Build, deploy, and activate Aomi apps: spec → client → tool → backend"
 )]
 struct Cli {
-    /// No subcommand launches the interactive wizard (connect → deploy → activate).
+    /// No subcommand launches the interactive wizard (login → deploy → activate).
     #[command(subcommand)]
     cmd: Option<Cmd>,
 }
@@ -58,6 +58,8 @@ enum Cmd {
     Activate(cli::ActivateArgs),
     /// Connect: install the Aomi GitHub App and save your activation token.
     Connect(cli::ConnectArgs),
+    /// Log in with GitHub and link this CLI to your Aomi Builder account.
+    Login(cli::LoginArgs),
     /// Mint, list, or revoke platform/app activation tokens.
     Token(cli::TokenArgs),
     /// Resolve a connected source repo to its `app_source_id`.
@@ -92,6 +94,7 @@ async fn main() -> Result<()> {
             .await
             .map_err(git_error),
         Cmd::Connect(args) => cli::connect::run(args).await,
+        Cmd::Login(args) => cli::login::run(args).await,
         Cmd::Token(args) => cli::token::run(args).await,
         Cmd::Source(args) => cli::source::run(args).await,
         Cmd::Apps(args) => cli::apps::run(args).await,
