@@ -164,7 +164,7 @@ async fn browser_login(build_url: &str, no_browser: bool) -> Result<LoginIdentit
         }
     }
 
-    let callback = wait_for_callback(&listener, &state)?;
+    let callback = wait_for_callback(&listener, &state, build_url)?;
     let result = exchange_cli_code(build_url, callback, code_verifier).await?;
     if !result.token_type.eq_ignore_ascii_case("bearer") || result.expires_in <= 0 {
         bail!("Aomi Build returned an invalid CLI session");
@@ -180,7 +180,11 @@ fn random_token() -> String {
     format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
 }
 
-fn wait_for_callback(listener: &TcpListener, expected_state: &str) -> Result<String> {
+fn wait_for_callback(
+    listener: &TcpListener,
+    expected_state: &str,
+    build_url: &str,
+) -> Result<String> {
     let started = Instant::now();
     loop {
         match listener.accept() {
@@ -203,7 +207,7 @@ fn wait_for_callback(listener: &TcpListener, expected_state: &str) -> Result<Str
                 let code = params.get("code").map(|value| value.to_string());
                 let error = params.get("error").map(|value| value.to_string());
                 let success = state == Some(expected_state) && code.is_some();
-                write_callback_response(&mut stream, success)?;
+                write_callback_response(&mut stream, build_url, success)?;
 
                 if state != Some(expected_state) {
                     bail!("Aomi Build login returned an invalid state");
@@ -224,23 +228,51 @@ fn wait_for_callback(listener: &TcpListener, expected_state: &str) -> Result<Str
     }
 }
 
-fn write_callback_response(stream: &mut std::net::TcpStream, success: bool) -> Result<()> {
-    let message = if success {
-        "Login complete. You can return to aomi-build."
-    } else {
-        "Login failed. Return to aomi-build for details."
-    };
-    let body = format!(
-        "<!doctype html><meta charset=\"utf-8\"><title>Aomi Build</title>\
-         <body style=\"font-family:system-ui;padding:3rem\"><h1>{message}</h1></body>"
-    );
+fn completion_url(build_url: &str, success: bool) -> Result<Url> {
+    let mut url = Url::parse(build_url.trim()).context("invalid Aomi Build URL")?;
+    url.set_path("/cli/auth-complete");
+    url.set_query(None);
+    url.set_fragment(None);
+    url.query_pairs_mut()
+        .append_pair("status", if success { "complete" } else { "failed" });
+    Ok(url)
+}
+
+fn write_callback_response(
+    stream: &mut std::net::TcpStream,
+    build_url: &str,
+    success: bool,
+) -> Result<()> {
+    let location = completion_url(build_url, success)?;
     write!(
         stream,
-        "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\n\
-         Content-Length: {}\r\nConnection: close\r\n\r\n{}",
-        body.len(),
-        body
+        "HTTP/1.1 303 See Other\r\nLocation: {location}\r\nCache-Control: no-store\r\n\
+         Content-Length: 0\r\nConnection: close\r\n\r\n"
     )?;
     stream.flush()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::completion_url;
+
+    #[test]
+    fn completion_url_exposes_only_the_result() {
+        let complete = completion_url(
+            "https://build.example.test/old?secret=hidden#fragment",
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            complete.as_str(),
+            "https://build.example.test/cli/auth-complete?status=complete"
+        );
+
+        let failed = completion_url("https://build.example.test", false).unwrap();
+        assert_eq!(
+            failed.as_str(),
+            "https://build.example.test/cli/auth-complete?status=failed"
+        );
+    }
 }
