@@ -83,15 +83,20 @@ pub struct DeployPayload {
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Source {
+    #[serde(alias = "installationId")]
     pub installation_id: i64,
+    #[serde(alias = "repositoryId")]
     pub repository_id: i64,
+    #[serde(alias = "repositoryLink")]
     pub repository_link: String,
     /// Normalized `owner/name` slug from `repository_link`.
-    #[serde(default)]
+    #[serde(default, alias = "ownerRepoName")]
     pub owner_repo_name: String,
     #[serde(rename = "ref")]
     pub source_ref: String,
+    #[serde(alias = "commitHash")]
     pub commit_hash: String,
+    #[serde(alias = "aomiTomlPaths")]
     pub aomi_toml_paths: Vec<String>,
     /// The connected GitHub App install (`app_source`) this deploy ran from.
     /// Absent from the backend deploy response; the CLI records the id it sent
@@ -104,18 +109,20 @@ pub struct Source {
 pub struct Platform {
     pub platform: String,
     pub repository: String,
+    #[serde(alias = "sourceBranch")]
     pub source_branch: String,
+    #[serde(alias = "deployBranch")]
     pub deploy_branch: String,
     // Null until the backend's write/PR path lands (it commits + opens the PR).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "commitHash", skip_serializing_if = "Option::is_none")]
     pub commit_hash: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "prNumber", skip_serializing_if = "Option::is_none")]
     pub pr_number: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "prUrl", skip_serializing_if = "Option::is_none")]
     pub pr_url: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "ciStatus", skip_serializing_if = "Option::is_none")]
     pub ci_status: Option<CiStatus>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "ciUrl", skip_serializing_if = "Option::is_none")]
     pub ci_url: Option<String>,
     pub apps: Vec<AppRecord>,
 }
@@ -124,7 +131,9 @@ pub struct Platform {
 pub struct AppRecord {
     pub name: String,
     pub path: String,
+    #[serde(alias = "aomiTomlPath")]
     pub aomi_toml_path: String,
+    #[serde(alias = "releaseTag")]
     pub release_tag: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sdk_version: Option<String>,
