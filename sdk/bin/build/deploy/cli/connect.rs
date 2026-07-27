@@ -123,13 +123,12 @@ impl ConnectArgs {
         }
 
         // 4. Persist account identity.
-        let path = AomiConfig {
-            backend_url: Some(backend_url),
-            platform: Some(self.platform.to_string()),
-            installation_id: Some(installation_id),
-            activation_token: Some(token),
-        }
-        .save()?;
+        let mut config = AomiConfig::load();
+        config.backend_url = Some(backend_url);
+        config.platform = Some(self.platform.to_string());
+        config.installation_id = Some(installation_id);
+        config.activation_token = Some(token);
+        let path = config.save()?;
 
         println!();
         println!("Connected. Saved to {}", path.display());

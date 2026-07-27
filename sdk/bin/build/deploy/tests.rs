@@ -12,7 +12,8 @@ use tempfile::TempDir;
 use super::cli::{ActivateArgs, DeployStepArgs, StatusArgs};
 use super::platform::Platform;
 use super::types::{
-    ActivateInput, ActivateResult, DeployInput, DeployResult, LocalDeployment, ReleaseTags,
+    ActivateInput, ActivateResult, BuildDeployInput, DeployInput, DeployResult, LocalDeployment,
+    ReleaseTags,
 };
 
 // ── deploy: arg parsing ─────────────────────────────────────────────────────
@@ -90,6 +91,8 @@ fn deploy_prerequisite_flags_parse_on_lifecycle_steps() {
         "deploy",
         "--backend",
         "https://api.aomi.dev",
+        "--build-url",
+        "https://build.aomi.dev",
         "--activation-token",
         "aat_live",
         "--app-source-id",
@@ -99,6 +102,10 @@ fn deploy_prerequisite_flags_parse_on_lifecycle_steps() {
     match cli.cmd {
         Some(crate::Cmd::Deploy(args)) => {
             assert_eq!(args.step.backend.as_deref(), Some("https://api.aomi.dev"));
+            assert_eq!(
+                args.step.build_url.as_deref(),
+                Some("https://build.aomi.dev")
+            );
             assert_eq!(args.step.activation_token.as_deref(), Some("aat_live"));
             assert_eq!(args.step.app_source_id, Some(626));
         }
@@ -224,6 +231,61 @@ fn no_subcommand_enters_wizard() {
     assert!(
         cli.cmd.is_none(),
         "a bare invocation should enter the wizard"
+    );
+}
+
+#[test]
+fn login_parses_build_environment() {
+    let cli = crate::Cli::try_parse_from([
+        "aomi-build",
+        "login",
+        "--build-url",
+        "https://build-staging.aomi.dev",
+        "--no-browser",
+    ])
+    .expect("parse login");
+    match cli.cmd {
+        Some(crate::Cmd::Login(args)) => {
+            assert_eq!(
+                args.build_url.as_deref(),
+                Some("https://build-staging.aomi.dev")
+            );
+            assert!(args.no_browser);
+        }
+        _ => panic!("expected login"),
+    }
+}
+
+#[test]
+fn build_deploy_input_uses_bff_camel_case_contract() {
+    let request = BuildDeployInput {
+        platform: "somm.finance".into(),
+        repo: "peggyjv/somm-agent".into(),
+        source_ref: "abc1234".into(),
+        aomi_toml_paths: vec!["aomi.toml".into()],
+        app_source_id: Some(1065),
+    };
+    assert_eq!(
+        serde_json::to_value(request).unwrap(),
+        json!({
+            "platform": "somm.finance",
+            "repo": "peggyjv/somm-agent",
+            "sourceRef": "abc1234",
+            "aomiTomlPaths": ["aomi.toml"],
+            "appSourceId": 1065
+        })
+    );
+}
+
+#[test]
+fn backend_environment_maps_to_matching_build_frontend() {
+    assert_eq!(
+        super::cli::shared::infer_build_url("https://api-staging.aomi.dev"),
+        Some("https://build-staging.aomi.dev".into())
+    );
+    assert_eq!(
+        super::cli::shared::infer_build_url("https://api.aomi.dev/"),
+        Some("https://build.aomi.dev".into())
     );
 }
 
@@ -852,6 +914,7 @@ async fn status_reads_deployment_from_repo_root_when_path_is_app_dir() {
 
     StatusArgs {
         backend: Some(String::new()),
+        build_url: None,
         path: repo.path("apps/bot"),
         activation_token: None,
         json: true,

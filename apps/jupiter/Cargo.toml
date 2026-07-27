@@ -12,7 +12,7 @@ crate-type = ["cdylib", "rlib"]
 [workspace]
 
 [dependencies]
-aomi-sdk = "=3.0.3"
+aomi-sdk = { path = "../../sdk" }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }
 schemars = "1.0.4"
 serde = { version = "1.0", features = ["derive"] }
