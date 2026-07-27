@@ -1,13 +1,4 @@
-//! The repo-scoped deploy/activate wire contract, in code.
-//!
-//! Aligned to the live backend (`/api/platforms`): deploy is
-//! `POST /api/platforms/:platform/deploy` with `{app_source_id, source_ref,
-//! aomi_toml_paths, preflight?}`; activation is release-tags based,
-//! `POST /api/platforms/:platform/apps/activate` with `{target, apps?,
-//! target_tags?}` returning `{ok, activation:{…, apps[]}}` with a
-//! per-app partial-failure shape. JSON is snake_case to match the backend. Type
-//! names intentionally mirror the backend deploy payload where the concept is
-//! shared; local-only persistence types keep a `Local*` prefix.
+//! Repo-scoped wire types accepting backend snake_case and Builder camelCase.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -75,7 +66,7 @@ pub struct DeployPayload {
     pub id: String,
     /// `preflight` | `pr_created` | `pr_updated` | `unchanged`.
     pub status: DeployStatus,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "sdkVersion", skip_serializing_if = "Option::is_none")]
     pub sdk_version: Option<String>,
     pub source: Source,
     pub platform: Platform,
@@ -83,15 +74,20 @@ pub struct DeployPayload {
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct Source {
+    #[serde(alias = "installationId")]
     pub installation_id: i64,
+    #[serde(alias = "repositoryId")]
     pub repository_id: i64,
+    #[serde(alias = "repositoryLink")]
     pub repository_link: String,
     /// Normalized `owner/name` slug from `repository_link`.
-    #[serde(default)]
+    #[serde(default, alias = "ownerRepoName")]
     pub owner_repo_name: String,
     #[serde(rename = "ref")]
     pub source_ref: String,
+    #[serde(alias = "commitHash")]
     pub commit_hash: String,
+    #[serde(alias = "aomiTomlPaths")]
     pub aomi_toml_paths: Vec<String>,
     /// The connected GitHub App install (`app_source`) this deploy ran from.
     /// Absent from the backend deploy response; the CLI records the id it sent
@@ -104,18 +100,20 @@ pub struct Source {
 pub struct Platform {
     pub platform: String,
     pub repository: String,
+    #[serde(alias = "sourceBranch")]
     pub source_branch: String,
+    #[serde(alias = "deployBranch")]
     pub deploy_branch: String,
     // Null until the backend's write/PR path lands (it commits + opens the PR).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "commitHash", skip_serializing_if = "Option::is_none")]
     pub commit_hash: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "prNumber", skip_serializing_if = "Option::is_none")]
     pub pr_number: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "prUrl", skip_serializing_if = "Option::is_none")]
     pub pr_url: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "ciStatus", skip_serializing_if = "Option::is_none")]
     pub ci_status: Option<CiStatus>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "ciUrl", skip_serializing_if = "Option::is_none")]
     pub ci_url: Option<String>,
     pub apps: Vec<AppRecord>,
 }
@@ -124,9 +122,11 @@ pub struct Platform {
 pub struct AppRecord {
     pub name: String,
     pub path: String,
+    #[serde(alias = "aomiTomlPath")]
     pub aomi_toml_path: String,
+    #[serde(alias = "releaseTag")]
     pub release_tag: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "sdkVersion", skip_serializing_if = "Option::is_none")]
     pub sdk_version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
@@ -135,13 +135,7 @@ pub struct AppRecord {
     pub activated: Option<bool>,
 }
 
-// ── Activate ───────────────────────────────────────────────────────────────
-//
-// Activation is release-tags based:
-// `POST /api/platforms/:platform/apps/activate`. One call promotes the
-// requested release candidates to the platform live branch, then activates each
-// requested app, returning per-app results with a partial-failure shape. Mirrors
-// the backend `ActivateAppsRequest` / `ActivateAppsResponse`.
+// Release-tag activation request and response.
 
 #[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
 pub struct ReleaseTags {
@@ -206,15 +200,15 @@ pub struct ActivationTarget {
     /// Array for `release_tags`.
     #[serde(default)]
     pub value: serde_json::Value,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(alias = "platformRepo", skip_serializing_if = "Option::is_none")]
     pub platform_repo: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(alias = "platformBranch", skip_serializing_if = "Option::is_none")]
     pub platform_branch: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(alias = "platformCommitHash", skip_serializing_if = "Option::is_none")]
     pub platform_commit_hash: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(alias = "ciStatus", skip_serializing_if = "Option::is_none")]
     pub ci_status: Option<CiStatus>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(alias = "ciUrl", skip_serializing_if = "Option::is_none")]
     pub ci_url: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub promoted: Vec<ActivationPromotion>,
@@ -223,53 +217,55 @@ pub struct ActivationTarget {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ActivationPromotion {
     pub name: String,
+    #[serde(alias = "releaseTag")]
     pub release_tag: String,
+    #[serde(alias = "sourceBranch")]
     pub source_branch: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(alias = "platformCommitHash", skip_serializing_if = "Option::is_none")]
     pub platform_commit_hash: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(alias = "activatedCommitHash", skip_serializing_if = "Option::is_none")]
     pub activated_commit_hash: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(alias = "liveCommitHash", skip_serializing_if = "Option::is_none")]
     pub live_commit_hash: Option<String>,
+    #[serde(alias = "ciStatus")]
     pub ci_status: CiStatus,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(alias = "ciUrl", skip_serializing_if = "Option::is_none")]
     pub ci_url: Option<String>,
+    #[serde(alias = "releaseAssets")]
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub release_assets: Vec<String>,
+    #[serde(alias = "releaseAssetDigests")]
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub release_asset_digests: BTreeMap<String, String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(alias = "activationStatus", skip_serializing_if = "Option::is_none")]
     pub activation_status: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ActivatedApp {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(alias = "applicationId", skip_serializing_if = "Option::is_none")]
     pub application_id: Option<i64>,
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(alias = "releaseTag", skip_serializing_if = "Option::is_none")]
     pub release_tag: Option<String>,
+    #[serde(alias = "isActive")]
     pub is_active: bool,
-    #[serde(default)]
+    #[serde(default, alias = "artifactReady")]
     pub artifact_ready: bool,
     pub loaded: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(alias = "sourceBranch", skip_serializing_if = "Option::is_none")]
     pub source_branch: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(alias = "liveCommitHash", skip_serializing_if = "Option::is_none")]
     pub live_commit_hash: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(alias = "activationStatus", skip_serializing_if = "Option::is_none")]
     pub activation_status: Option<String>,
 }
 
-// ── Bootstrap: tokens, sources ──────────────────────────────────────────────
-//
-// The platform-token + source-resolution surface that precedes deploy. These
-// mirror the backend's `/api/platforms/:platform/*` bodies (token mint, source
-// sync-installed).
+// Platform-token and source bootstrap types.
 
 /// Body of `POST /api/platforms/:platform/tokens`.
 #[derive(Debug, Clone, Serialize)]
