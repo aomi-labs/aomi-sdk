@@ -77,17 +77,15 @@ pub async fn poll_build_deployment_ready(
                 }
                 match status.state.as_str() {
                     "ready" => return Ok(DeployReady::Ready),
-                    "failed" => {
+                    "failed" | "no_ci" => {
+                        let fallback = if status.state == "failed" {
+                            "release build failed"
+                        } else {
+                            "no CI ran for this deployment commit"
+                        };
                         return Ok(DeployReady::Failed(
-                            status
-                                .message
-                                .unwrap_or_else(|| "release build failed".to_string()),
+                            status.message.unwrap_or_else(|| fallback.to_string()),
                         ));
-                    }
-                    "no_ci" => {
-                        return Ok(DeployReady::Failed(status.message.unwrap_or_else(|| {
-                            "no CI ran for this deployment commit".to_string()
-                        })));
                     }
                     _ => {}
                 }

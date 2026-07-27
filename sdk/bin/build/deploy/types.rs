@@ -44,7 +44,6 @@ pub struct DeployInput {
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DeployResult {
-    pub ok: bool,
     pub deployment: DeployPayload,
 }
 
@@ -64,14 +63,9 @@ pub struct BuildDeployInput {
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BuildDeployResult {
-    pub ok: bool,
     pub app_source_id: i64,
     pub deployment: DeployPayload,
     pub project_url: String,
-    #[serde(default)]
-    pub release_tags: Vec<String>,
-    #[serde(default)]
-    pub apps: Vec<String>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -413,7 +407,6 @@ impl LocalDeployment {
         let project_url = resp.project_url;
         let mut state = Self::from_deploy(
             DeployResult {
-                ok: resp.ok,
                 deployment: resp.deployment,
             },
             resp.app_source_id,

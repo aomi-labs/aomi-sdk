@@ -156,20 +156,7 @@ async fn existing_dir_flow(backend_url: &str, build_url: &str, platform: &str) -
     };
     let repo = normalize_github_repo(repo.trim())?;
 
-    resolve_and_deploy(backend_url, build_url, platform, &dir, &repo).await
-}
-
-/// Resolve the connected source for `repo` at `dir` — installing the aomi-build
-/// App and retrying if it isn't connected yet — then deploy + activate. Shared
-/// by the deploy-local and scaffold flows.
-async fn resolve_and_deploy(
-    backend_url: &str,
-    build_url: &str,
-    platform: &str,
-    dir: &Path,
-    repo: &str,
-) -> Result<()> {
-    deploy_then_activate(platform, backend_url, build_url, dir, repo).await
+    deploy_then_activate(platform, backend_url, build_url, &dir, &repo).await
 }
 
 /// Install the aomi-build GitHub App on `repo` from inside the wizard: open the
@@ -254,7 +241,7 @@ async fn scaffold_flow(backend_url: &str, build_url: &str, platform: &str) -> Re
     println!("Cloning {clone_url} → {} …", target.display());
     clone_repo(&clone_url, &target)?;
 
-    resolve_and_deploy(backend_url, build_url, platform, &target, &slug).await
+    deploy_then_activate(platform, backend_url, build_url, &target, &slug).await
 }
 
 /// `git clone <repo_link> <dir>`. The example repo is public, so no auth.
@@ -280,11 +267,11 @@ async fn deploy_then_activate(
     dir: &Path,
     repo: &str,
 ) -> Result<()> {
-    let go = Confirm::new(&format!("Deploy `{platform}` from {}?", dir.display()))
+    if !Confirm::new(&format!("Deploy `{platform}` from {}?", dir.display()))
         .with_default(true)
         .prompt()
-        .context("wizard cancelled")?;
-    if !go {
+        .context("wizard cancelled")?
+    {
         println!("Stopped before deploy. Re-run `aomi-build` anytime.");
         return Ok(());
     }
@@ -351,13 +338,14 @@ async fn deploy_then_activate(
     // Gate activation on the release build, like the portal: poll the
     // deployment's status until it's `ready` before promoting. The deploy step
     // recorded the id in `.aomi/deployment.json`.
-    if let Some(id) = deployment_id(dir) {
+    let deployment = local_deployment(dir);
+    if let Some(id) = deployment.as_ref().map(|state| &state.deployment.id) {
         let client = login::ensure_logged_in(build_url).await?.client;
         println!("Waiting for the release build (up to 30 min, Ctrl-C to stop)…");
         match flow::poll_build_deployment_ready(
             &client,
             platform,
-            &id,
+            id,
             Duration::from_secs(30 * 60),
             |state| println!("  build: {state}"),
         )
@@ -397,7 +385,7 @@ async fn deploy_then_activate(
         .await;
         match result {
             Ok(()) => {
-                if let Some(url) = project_url(dir) {
+                if let Some(url) = deployment.and_then(|state| state.project_url) {
                     println!("\nView your deployment:\n  {url}");
                 }
                 return Ok(());
@@ -412,22 +400,9 @@ async fn deploy_then_activate(
     }
 }
 
-/// The deployment id the last deploy recorded in `.aomi/deployment.json`, if
-/// readable. Used to poll the release build before activating.
-fn deployment_id(dir: &Path) -> Option<String> {
+fn local_deployment(dir: &Path) -> Option<LocalDeployment> {
     let git_root = git_context(dir).ok()?.0;
-    LocalDeployment::read(&git_root)
-        .ok()
-        .flatten()
-        .map(|d| d.deployment.id)
-}
-
-fn project_url(dir: &Path) -> Option<String> {
-    let git_root = git_context(dir).ok()?.0;
-    LocalDeployment::read(&git_root)
-        .ok()
-        .flatten()
-        .and_then(|deployment| deployment.project_url)
+    LocalDeployment::read(&git_root).ok().flatten()
 }
 
 /// Small yes/no retry prompt; a cancel (Ctrl-C) propagates out to exit.
@@ -439,7 +414,7 @@ fn retry(question: &str) -> Result<bool> {
 }
 
 /// Best-effort `owner/name` from the repo's `origin` remote.
-fn git_origin_slug(dir: &PathBuf) -> Option<String> {
+fn git_origin_slug(dir: &Path) -> Option<String> {
     let out = Command::new("git")
         .arg("-C")
         .arg(dir)

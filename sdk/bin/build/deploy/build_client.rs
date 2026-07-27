@@ -3,20 +3,16 @@
 //! Human CLI deploys use the same ownership-checked surface as the Build UI.
 //! Privileged activation tokens remain in `backend.rs` for admin/CI commands.
 
-use std::time::Duration;
-
 use anyhow::{Context, Result, bail};
 use reqwest::Url;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+use super::backend::http_client;
 use super::types::{
     ActivateResult, BuildActivateInput, BuildDeployInput, BuildDeployResult, CliExchangeInput,
     CliExchangeResult, CliStatusResult, DeploymentStatusResult,
 };
-
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
 
 #[derive(Clone, Debug)]
 pub struct BuildClient {
@@ -150,12 +146,4 @@ async fn decode_response<Resp: DeserializeOwned>(
     }
     serde_json::from_str(&text)
         .with_context(|| format!("Aomi Build {operation} returned invalid JSON"))
-}
-
-fn http_client() -> reqwest::Client {
-    reqwest::Client::builder()
-        .timeout(REQUEST_TIMEOUT)
-        .connect_timeout(CONNECT_TIMEOUT)
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new())
 }

@@ -27,11 +27,7 @@ pub async fn oauth_start(
         bail!("backend URL is required via --backend or AOMI_BACKEND_URL");
     }
     let endpoint = format!("{base}/api/integrations/github-app/oauth/start");
-    let http = reqwest::Client::builder()
-        .timeout(REQUEST_TIMEOUT)
-        .connect_timeout(CONNECT_TIMEOUT)
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new());
+    let http = http_client();
     let mut query = vec![("platform", platform.to_string())];
     if let Some(repo) = repo {
         query.push(("repo", repo.to_string()));
@@ -64,6 +60,14 @@ pub async fn oauth_start(
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
 
+pub(crate) fn http_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(REQUEST_TIMEOUT)
+        .connect_timeout(CONNECT_TIMEOUT)
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new())
+}
+
 /// Outcome of probing an activation token against a platform. Separates an
 /// auth rejection from a transport failure so callers don't report "bad token"
 /// when the backend was merely unreachable.
@@ -95,15 +99,10 @@ impl BackendClient {
                 "activation token is required via --activation-token or AOMI_APP_ACTIVATION_TOKEN"
             );
         }
-        let http = reqwest::Client::builder()
-            .timeout(REQUEST_TIMEOUT)
-            .connect_timeout(CONNECT_TIMEOUT)
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
         Ok(Self {
             base_url,
             bearer,
-            http,
+            http: http_client(),
         })
     }
 

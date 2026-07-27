@@ -92,13 +92,14 @@ impl DeployArgs {
         // The Builder-authenticated preflight is also the source-claim seam:
         // when no local app_source_id exists, Build resolves the installed repo
         // and links it to the signed-in Builder before any deployment write.
-        let preflight = if self.preflight || request.app_source_id.is_none() {
-            Some(client.deploy(&request, true).await.map_err(|error| {
-                self.explain_deploy_error(error, &platform, &source_ref, &build_url)
-            })?)
-        } else {
-            None
-        };
+        let preflight =
+            if self.preflight || request.app_source_id.is_none() {
+                Some(client.deploy(&request, true).await.map_err(|error| {
+                    explain_deploy_error(error, &platform, &source_ref, &build_url)
+                })?)
+            } else {
+                None
+            };
         if self.preflight {
             println!(
                 "{}",
@@ -113,9 +114,10 @@ impl DeployArgs {
         if let Some(preflight) = preflight {
             request.app_source_id = Some(preflight.app_source_id);
         }
-        let response = client.deploy(&request, false).await.map_err(|error| {
-            self.explain_deploy_error(error, &platform, &source_ref, &build_url)
-        })?;
+        let response = client
+            .deploy(&request, false)
+            .await
+            .map_err(|error| explain_deploy_error(error, &platform, &source_ref, &build_url))?;
 
         let project_url = response.project_url.clone();
         let state = LocalDeployment::from_build_deploy(response);
@@ -155,29 +157,6 @@ impl DeployArgs {
         Ok(())
     }
 
-    fn explain_deploy_error(
-        &self,
-        err: anyhow::Error,
-        platform: &Platform,
-        source_ref: &str,
-        build_url: &str,
-    ) -> anyhow::Error {
-        let msg = err.to_string();
-        if !(msg.contains("403 Forbidden") || msg.contains("401 Unauthorized")) {
-            return err;
-        }
-        anyhow!(
-            "{msg}\n\n\
-             Deploy authorization needs a verified Builder login that owns this GitHub source.\n\
-             Platform: `{platform}`\n\
-             Source: {}\n\
-             Log in again with:\n\
-               aomi-build login --build-url {build_url}\n\
-             Headless automation may set {BUILD_TOKEN_ENV}.",
-            source_ref_label(source_ref),
-        )
-    }
-
     pub(crate) fn platform(&self, git_root: &Path, start_dir: &Path) -> Platform {
         if let Some(p) = &self.platform {
             return p.clone();
@@ -196,22 +175,21 @@ impl DeployArgs {
             .branch
             .as_deref()
             .map(str::trim)
-            .filter(|b| !b.is_empty())
-            .is_some()
+            .is_some_and(|branch| !branch.is_empty())
         {
             bail!(
                 "--branch is not supported by the current backend deploy contract; checkout the branch locally or pass --commit with a resolved SHA"
             );
         }
-        if let Some(commit) = self
+        match self
             .commit
             .as_deref()
             .map(str::trim)
             .filter(|c| !c.is_empty())
         {
-            return validate_source_commit(commit);
+            Some(commit) => validate_source_commit(commit),
+            None => validate_source_commit(&head_commit(git_root)?),
         }
-        validate_source_commit(&head_commit(git_root)?)
     }
 
     pub(crate) fn aomi_toml_paths(&self, git_root: &Path) -> Result<Vec<String>> {
@@ -239,19 +217,14 @@ impl DeployArgs {
         // Resolution order: flag → env → the id recorded by a prior deploy /
         // `source sync` in `.aomi/deployment.json`. The last step is what lets a
         // re-deploy run with no `--app-source-id` once the source is known.
-        if let Some(id) = self.app_source_id.filter(|id| *id > 0) {
-            return Some(id);
-        }
-        if let Some(id) = env_value(APP_SOURCE_ID_ENV)
-            .and_then(|v| v.parse::<i64>().ok())
+        self.app_source_id
             .filter(|id| *id > 0)
-        {
-            return Some(id);
-        }
-        if let Some(id) = self.recorded_app_source_id(git_root) {
-            return Some(id);
-        }
-        None
+            .or_else(|| {
+                env_value(APP_SOURCE_ID_ENV)
+                    .and_then(|value| value.parse::<i64>().ok())
+                    .filter(|id| *id > 0)
+            })
+            .or_else(|| self.recorded_app_source_id(git_root))
     }
 
     pub(crate) fn recorded_app_source_id(&self, git_root: &Path) -> Option<i64> {
@@ -263,8 +236,25 @@ impl DeployArgs {
     }
 }
 
-fn source_ref_label(source_ref: &str) -> String {
-    format!("commit `{source_ref}`")
+fn explain_deploy_error(
+    err: anyhow::Error,
+    platform: &Platform,
+    source_ref: &str,
+    build_url: &str,
+) -> anyhow::Error {
+    let msg = err.to_string();
+    if !(msg.contains("403 Forbidden") || msg.contains("401 Unauthorized")) {
+        return err;
+    }
+    anyhow!(
+        "{msg}\n\n\
+         Deploy authorization needs a verified Builder login that owns this GitHub source.\n\
+         Platform: `{platform}`\n\
+         Source: commit `{source_ref}`\n\
+         Log in again with:\n\
+           aomi-build login --build-url {build_url}\n\
+         Headless automation may set {BUILD_TOKEN_ENV}."
+    )
 }
 
 fn validate_source_commit(value: &str) -> Result<String> {
