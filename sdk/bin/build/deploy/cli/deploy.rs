@@ -9,11 +9,9 @@ use clap::Args;
 use super::login::ensure_logged_in;
 use super::shared::{
     APP_SOURCE_ID_ENV, BUILD_TOKEN_ENV, BUILD_URL_ENV, bin_name, env_value, git_context,
-    head_commit, remote_origin, resolve_backend, resolve_build_token, resolve_build_url,
-    tracked_aomi_tomls,
+    head_commit, remote_origin, resolve_backend, resolve_build_url, tracked_aomi_tomls,
 };
 use crate::deploy::app::AomiAppFiles;
-use crate::deploy::build_client::BuildClient;
 use crate::deploy::platform::Platform;
 use crate::deploy::platform::normalize_github_repo;
 use crate::deploy::types::{BuildDeployInput, LocalDeployment};
@@ -83,11 +81,7 @@ impl DeployArgs {
             resolve_build_url(&self.build_url, backend_url.as_deref()).ok_or_else(|| {
                 anyhow!("deploy needs an Aomi Build URL — set --build-url or {BUILD_URL_ENV}")
             })?;
-        ensure_logged_in(&build_url).await?;
-        let token = resolve_build_token().ok_or_else(|| {
-            anyhow!("Builder login did not save a session; run `aomi-build login`")
-        })?;
-        let client = BuildClient::new(&build_url, token)?;
+        let client = ensure_logged_in(&build_url).await?.client;
         let mut request = BuildDeployInput {
             platform: platform.to_string(),
             repo,

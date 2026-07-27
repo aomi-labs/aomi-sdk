@@ -7,10 +7,8 @@ use clap::Args;
 
 use super::login::ensure_logged_in;
 use super::shared::{
-    bin_name, git_context, resolve_activation_token, resolve_backend, resolve_build_token,
-    resolve_build_url,
+    bin_name, git_context, resolve_activation_token, resolve_backend, resolve_build_url,
 };
-use crate::deploy::build_client::BuildClient;
 use crate::deploy::status::StatusResult;
 use crate::deploy::types::LocalDeployment;
 
@@ -67,14 +65,9 @@ impl StatusArgs {
         let mut report = StatusResult::collect(&state, backend_url, token).await;
 
         if let Some(build_url) = build_url {
-            ensure_logged_in(&build_url).await?;
-            let build_token = resolve_build_token().ok_or_else(|| {
-                anyhow!(
-                    "Aomi Build login did not save a session; run `{} login`",
-                    bin_name()
-                )
-            })?;
-            let build_status = BuildClient::new(build_url, build_token)?
+            let build_status = ensure_logged_in(&build_url)
+                .await?
+                .client
                 .status(&state.deployment.platform.platform, &state.deployment.id)
                 .await?;
             report.build_state = Some(build_status.state);

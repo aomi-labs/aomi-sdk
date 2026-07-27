@@ -112,16 +112,7 @@ impl BuildClient {
             .send()
             .await
             .with_context(|| format!("failed to call Aomi Build {operation}"))?;
-        let status = response.status();
-        let text = response
-            .text()
-            .await
-            .with_context(|| format!("failed to read Aomi Build {operation} response"))?;
-        if !matches!(status.as_u16(), 200..=202) {
-            bail!("Aomi Build {operation} returned {status}: {}", text.trim());
-        }
-        serde_json::from_str(&text)
-            .with_context(|| format!("Aomi Build {operation} returned invalid JSON"))
+        decode_response(response, operation, 200..=202).await
     }
 }
 
@@ -141,15 +132,24 @@ pub async fn exchange_cli_code(
         .send()
         .await
         .with_context(|| format!("failed to call CLI exchange endpoint {endpoint}"))?;
+    decode_response(response, "CLI exchange", 200..=201).await
+}
+
+async fn decode_response<Resp: DeserializeOwned>(
+    response: reqwest::Response,
+    operation: &str,
+    success: std::ops::RangeInclusive<u16>,
+) -> Result<Resp> {
     let status = response.status();
     let text = response
         .text()
         .await
-        .context("failed to read CLI exchange response")?;
-    if !matches!(status.as_u16(), 200 | 201) {
-        bail!("CLI exchange returned {status}: {}", text.trim());
+        .with_context(|| format!("failed to read Aomi Build {operation} response"))?;
+    if !success.contains(&status.as_u16()) {
+        bail!("Aomi Build {operation} returned {status}: {}", text.trim());
     }
-    serde_json::from_str(&text).context("CLI exchange returned invalid JSON")
+    serde_json::from_str(&text)
+        .with_context(|| format!("Aomi Build {operation} returned invalid JSON"))
 }
 
 fn http_client() -> reqwest::Client {

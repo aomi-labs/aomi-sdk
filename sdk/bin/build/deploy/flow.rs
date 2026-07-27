@@ -58,14 +58,12 @@ pub enum DeployReady {
 const MAX_STATUS_FAILURES: u32 = 15;
 
 pub async fn poll_build_deployment_ready(
-    build_url: &str,
-    token: &str,
+    client: &BuildClient,
     platform: &str,
     deployment_id: &str,
     timeout: Duration,
     mut on_state: impl FnMut(&str),
 ) -> Result<DeployReady> {
-    let client = BuildClient::new(build_url, token)?;
     let started = Instant::now();
     let mut last_state: Option<String> = None;
     let mut failures: u32 = 0;

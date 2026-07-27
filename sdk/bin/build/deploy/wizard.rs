@@ -12,7 +12,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use inquire::{Confirm, Select, Text};
 
 use super::cli::login;
-use super::cli::shared::{BUILD_URL_ENV, git_context, infer_build_url, resolve_build_token};
+use super::cli::shared::{BUILD_URL_ENV, git_context, infer_build_url};
 use super::cli::{ActivateArgs, DeployArgs};
 use super::config::AomiConfig;
 use super::flow;
@@ -33,8 +33,7 @@ pub async fn run() -> Result<()> {
 
     // Human deploys are always tied to a verified GitHub Builder. The saved
     // session is reused only after Build validates it.
-    login::ensure_logged_in(&build_url).await?;
-    config = AomiConfig::load();
+    config = login::ensure_logged_in(&build_url).await?.config;
     config.backend_url = Some(backend_url.clone());
     config.build_url = Some(build_url.clone());
 
@@ -353,12 +352,10 @@ async fn deploy_then_activate(
     // deployment's status until it's `ready` before promoting. The deploy step
     // recorded the id in `.aomi/deployment.json`.
     if let Some(id) = deployment_id(dir) {
-        let token = resolve_build_token()
-            .ok_or_else(|| anyhow!("Aomi Build login expired; run `aomi-build login`"))?;
+        let client = login::ensure_logged_in(build_url).await?.client;
         println!("Waiting for the release build (up to 30 min, Ctrl-C to stop)…");
         match flow::poll_build_deployment_ready(
-            build_url,
-            &token,
+            &client,
             platform,
             &id,
             Duration::from_secs(30 * 60),

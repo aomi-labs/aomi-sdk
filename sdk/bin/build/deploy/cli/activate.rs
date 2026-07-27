@@ -7,11 +7,10 @@ use clap::Args;
 
 use super::login::ensure_logged_in;
 use super::shared::{
-    ACTIVATION_TOKEN_ENV, BACKEND_URL_ENV, BUILD_TOKEN_ENV, BUILD_URL_ENV, bin_name, env_value,
-    git_context, resolve_backend, resolve_build_token, resolve_build_url,
+    ACTIVATION_TOKEN_ENV, BACKEND_URL_ENV, BUILD_URL_ENV, bin_name, env_value, git_context,
+    resolve_backend, resolve_build_url,
 };
 use crate::deploy::backend::BackendClient;
-use crate::deploy::build_client::BuildClient;
 use crate::deploy::platform::Platform;
 use crate::deploy::types::{ActivateInput, BuildActivateInput, LocalDeployment, ReleaseTags};
 
@@ -109,16 +108,11 @@ impl ActivateArgs {
                 resolve_build_url(&self.build_url, backend_url.as_deref()).ok_or_else(|| {
                     anyhow!("activate needs an Aomi Build URL — set --build-url or {BUILD_URL_ENV}")
                 })?;
-            ensure_logged_in(&build_url).await?;
-            let token = resolve_build_token().ok_or_else(|| {
-                anyhow!(
-                    "activate requires a Builder login (or set {BUILD_TOKEN_ENV} for headless Builder automation)"
-                )
-            })?;
+            let client = ensure_logged_in(&build_url).await?.client;
             let app_source_id = state.app_source_id().ok_or_else(|| {
                 anyhow!("deployment has no app_source_id; deploy again while logged in")
             })?;
-            BuildClient::new(build_url, token)?
+            client
                 .activate(&BuildActivateInput {
                     platform: platform.to_string(),
                     app_source_id,

@@ -51,38 +51,38 @@ impl LoginArgs {
                  known {BACKEND_URL_ENV} staging/production URLs are inferred automatically"
                 )
             })?;
-        let identity = browser_login(&build_url, self.no_browser).await?;
+        let (authenticated, path) =
+            browser_login_and_save(&build_url, backend_url, self.no_browser).await?;
 
-        let mut config = AomiConfig::load();
-        if let Some(backend_url) = backend_url {
-            config.backend_url = Some(backend_url);
-        }
-        config.build_url = Some(build_url);
-        config.github_user_id = Some(identity.github_user_id.clone());
-        config.github_login = Some(identity.github_login.clone());
-        config.cli_access_token = Some(identity.access_token);
-        let path = config.save()?;
-
-        println!("✓ Logged in as @{}", identity.github_login);
+        println!("✓ Logged in as @{}", authenticated.status.github_login);
         println!("  saved to {}", path.display());
         Ok(())
     }
 }
 
-pub async fn ensure_logged_in(build_url: &str) -> Result<CliStatusResult> {
+pub struct AuthenticatedBuild {
+    pub client: BuildClient,
+    pub status: CliStatusResult,
+    pub config: AomiConfig,
+}
+
+pub async fn ensure_logged_in(build_url: &str) -> Result<AuthenticatedBuild> {
+    let mut config = AomiConfig::load();
     let env_token = env_value(BUILD_TOKEN_ENV);
-    let saved_token = AomiConfig::load().cli_access_token;
-    if let Some(token) = env_token.clone().or(saved_token)
-        && let Ok(status) = BuildClient::new(build_url, token)?.whoami().await
-        && status.signed_in
-    {
-        let mut config = AomiConfig::load();
-        config.build_url = Some(build_url.to_string());
-        config.github_user_id = Some(status.github_user_id.clone());
-        config.github_login = Some(status.github_login.clone());
-        config.save()?;
-        println!("✓ Logged in as @{}\n", status.github_login);
-        return Ok(status);
+    let saved_token = config.cli_access_token.clone();
+    if let Some(token) = env_token.clone().or(saved_token) {
+        let client = BuildClient::new(build_url, token)?;
+        if let Ok(status) = client.whoami().await
+            && status.signed_in
+        {
+            save_identity(&mut config, build_url, &status, None)?;
+            println!("✓ Logged in as @{}\n", status.github_login);
+            return Ok(AuthenticatedBuild {
+                client,
+                status,
+                config,
+            });
+        }
     }
     if env_token.is_some() {
         bail!(
@@ -91,26 +91,57 @@ pub async fn ensure_logged_in(build_url: &str) -> Result<CliStatusResult> {
     }
 
     println!("You need to log in to Aomi Build.");
-    let identity = browser_login(build_url, false).await?;
-    let status = CliStatusResult {
-        signed_in: true,
-        github_login: identity.github_login.clone(),
-        github_user_id: identity.github_user_id.clone(),
-    };
-    let mut config = AomiConfig::load();
-    config.build_url = Some(build_url.to_string());
-    config.github_user_id = Some(identity.github_user_id);
-    config.github_login = Some(identity.github_login);
-    config.cli_access_token = Some(identity.access_token);
-    config.save()?;
-    println!("✓ Logged in as @{}\n", status.github_login);
-    Ok(status)
+    let (authenticated, _) = browser_login_and_save(build_url, None, false).await?;
+    println!("✓ Logged in as @{}\n", authenticated.status.github_login);
+    Ok(authenticated)
 }
 
 struct LoginIdentity {
     access_token: String,
     github_login: String,
     github_user_id: String,
+}
+
+async fn browser_login_and_save(
+    build_url: &str,
+    backend_url: Option<String>,
+    no_browser: bool,
+) -> Result<(AuthenticatedBuild, std::path::PathBuf)> {
+    let identity = browser_login(build_url, no_browser).await?;
+    let status = CliStatusResult {
+        signed_in: true,
+        github_login: identity.github_login,
+        github_user_id: identity.github_user_id,
+    };
+    let client = BuildClient::new(build_url, identity.access_token.clone())?;
+    let mut config = AomiConfig::load();
+    if let Some(backend_url) = backend_url {
+        config.backend_url = Some(backend_url);
+    }
+    let path = save_identity(&mut config, build_url, &status, Some(identity.access_token))?;
+    Ok((
+        AuthenticatedBuild {
+            client,
+            status,
+            config,
+        },
+        path,
+    ))
+}
+
+fn save_identity(
+    config: &mut AomiConfig,
+    build_url: &str,
+    status: &CliStatusResult,
+    access_token: Option<String>,
+) -> Result<std::path::PathBuf> {
+    config.build_url = Some(build_url.to_string());
+    config.github_user_id = Some(status.github_user_id.clone());
+    config.github_login = Some(status.github_login.clone());
+    if let Some(access_token) = access_token {
+        config.cli_access_token = Some(access_token);
+    }
+    config.save()
 }
 
 async fn browser_login(build_url: &str, no_browser: bool) -> Result<LoginIdentity> {

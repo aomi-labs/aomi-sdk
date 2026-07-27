@@ -75,10 +75,6 @@ pub(crate) fn infer_build_url(backend_url: &str) -> Option<String> {
     }
 }
 
-pub(crate) fn resolve_build_token() -> Option<String> {
-    env_value(BUILD_TOKEN_ENV).or_else(|| AomiConfig::load().cli_access_token)
-}
-
 /// `--activation-token` flag → `AOMI_APP_ACTIVATION_TOKEN` → saved `connect`
 /// config. Lets a connected user run deploy/activate with no env wiring.
 pub(crate) fn resolve_activation_token(flag: &Option<String>) -> Option<String> {
