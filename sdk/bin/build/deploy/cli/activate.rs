@@ -5,13 +5,15 @@ use std::path::PathBuf;
 use anyhow::{Result, anyhow, bail};
 use clap::Args;
 
+use super::login::ensure_logged_in;
 use super::shared::{
-    ACTIVATION_TOKEN_ENV, BACKEND_URL_ENV, bin_name, git_context, resolve_activation_token,
-    resolve_backend,
+    ACTIVATION_TOKEN_ENV, BACKEND_URL_ENV, BUILD_TOKEN_ENV, BUILD_URL_ENV, bin_name, env_value,
+    git_context, resolve_backend, resolve_build_token, resolve_build_url,
 };
 use crate::deploy::backend::BackendClient;
+use crate::deploy::build_client::BuildClient;
 use crate::deploy::platform::Platform;
-use crate::deploy::types::{ActivateInput, LocalDeployment, ReleaseTags};
+use crate::deploy::types::{ActivateInput, BuildActivateInput, LocalDeployment, ReleaseTags};
 
 pub async fn run(args: ActivateArgs) -> eyre::Result<()> {
     args.run().await.map_err(crate::git_error)
@@ -36,6 +38,10 @@ pub struct ActivateArgs {
     /// Backend base URL (default: `AOMI_BACKEND_URL`).
     #[arg(long, value_name = "URL")]
     pub backend: Option<String>,
+
+    /// Aomi Build URL for Builder-authenticated activation.
+    #[arg(long = "build-url", value_name = "URL")]
+    pub build_url: Option<String>,
 
     /// Activation token (default: `AOMI_APP_ACTIVATION_TOKEN`).
     #[arg(long, value_name = "TOKEN")]
@@ -84,20 +90,43 @@ impl ActivateArgs {
             return Ok(());
         }
 
-        let backend_url = resolve_backend(&self.backend).ok_or_else(|| {
-            anyhow!("activate needs a backend URL — set --backend or {BACKEND_URL_ENV}")
-        })?;
-        let token = resolve_activation_token(&self.activation_token).ok_or_else(|| {
-            anyhow!(
-                "activate requires a token via --activation-token or {ACTIVATION_TOKEN_ENV} \
-                 (or run `aomi-build connect`)"
-            )
-        })?;
-        let client = BackendClient::new(backend_url, token)?;
-
-        // One call activates every requested app; the response carries per-app
-        // results with a partial-failure shape.
-        let response = client.activate(&platform, &request).await?;
+        let backend_url = resolve_backend(&self.backend);
+        let explicit_activation_token = self
+            .activation_token
+            .clone()
+            .or_else(|| env_value(ACTIVATION_TOKEN_ENV));
+        let response = if let Some(token) = explicit_activation_token {
+            // Explicit headless/admin compatibility path. Saved activation
+            // tokens are deliberately not used for interactive human deploys.
+            let backend_url = backend_url.ok_or_else(|| {
+                anyhow!("activate needs a backend URL — set --backend or {BACKEND_URL_ENV}")
+            })?;
+            BackendClient::new(backend_url, token)?
+                .activate(&platform, &request)
+                .await?
+        } else {
+            let build_url =
+                resolve_build_url(&self.build_url, backend_url.as_deref()).ok_or_else(|| {
+                    anyhow!("activate needs an Aomi Build URL — set --build-url or {BUILD_URL_ENV}")
+                })?;
+            ensure_logged_in(&build_url).await?;
+            let token = resolve_build_token().ok_or_else(|| {
+                anyhow!(
+                    "activate requires a Builder login (or set {BUILD_TOKEN_ENV} for headless Builder automation)"
+                )
+            })?;
+            let app_source_id = state.app_source_id().ok_or_else(|| {
+                anyhow!("deployment has no app_source_id; deploy again while logged in")
+            })?;
+            BuildClient::new(build_url, token)?
+                .activate(&BuildActivateInput {
+                    platform: platform.to_string(),
+                    app_source_id,
+                    release_tags: request.target.value.clone(),
+                    apps: request.apps.clone(),
+                })
+                .await?
+        };
         state.apply_target_activation(&response);
         state.write(&git_root)?;
 

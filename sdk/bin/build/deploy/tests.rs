@@ -435,6 +435,7 @@ fn activate_args() -> ActivateArgs {
         platform: None,
         release_tags: Vec::new(),
         backend: None,
+        build_url: None,
         activation_token: None,
         target_tags: Vec::new(),
         path: ".".into(),
@@ -588,6 +589,7 @@ async fn status_reads_deployment_from_repo_root_when_path_is_app_dir() {
 
     StatusArgs {
         backend: Some(String::new()),
+        build_url: None,
         path: repo.path("apps/bot"),
         activation_token: None,
         json: true,
@@ -624,6 +626,7 @@ fn deploy_args(path: &Path) -> DeployArgs {
         commit: None,
         aomi_toml: vec![],
         backend: None,
+        build_url: None,
         path: path.to_path_buf(),
         preflight: false,
         json: false,

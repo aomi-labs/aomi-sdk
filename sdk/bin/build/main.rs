@@ -20,7 +20,7 @@ mod tool;
     about = "Build, deploy, and activate Aomi apps: spec → client → tool → backend"
 )]
 struct Cli {
-    /// No subcommand launches the interactive wizard (connect → deploy → activate).
+    /// No subcommand launches the interactive wizard (login → deploy → activate).
     #[command(subcommand)]
     cmd: Option<Cmd>,
 }
@@ -46,14 +46,16 @@ enum Cmd {
     /// Build every app's cdylib, copy validated plugins into `plugins/`,
     /// codesign on macOS.
     Compile(compile::CompileArgs),
-    /// Deploy tracked `aomi.toml` apps from a source ref through the backend.
+    /// Deploy tracked `aomi.toml` apps through your Builder account.
     Deploy(cli::DeployArgs),
-    /// Show local + backend deployment status.
+    /// Show local, Build CI, and backend deployment status.
     Status(cli::StatusArgs),
     /// Activate platform releases by release tag.
     Activate(cli::ActivateArgs),
-    /// Connect: install the Aomi GitHub App and save your activation token.
+    /// Admin/legacy setup: install the GitHub App and save an activation token.
     Connect(cli::ConnectArgs),
+    /// Log in with GitHub and link this CLI to your Aomi Builder account.
+    Login(cli::LoginArgs),
     /// Mint, list, or revoke platform/app activation tokens.
     Token(cli::TokenArgs),
     /// Resolve a connected source repo to its `app_source_id`.
@@ -83,6 +85,7 @@ async fn main() -> Result<()> {
         Cmd::Status(args) => cli::status::run(args).await,
         Cmd::Activate(args) => cli::activate::run(args).await,
         Cmd::Connect(args) => cli::connect::run(args).await,
+        Cmd::Login(args) => cli::login::run(args).await,
         Cmd::Token(args) => cli::token::run(args).await,
         Cmd::Source(args) => cli::source::run(args).await,
         Cmd::Apps(args) => cli::apps::run(args).await,

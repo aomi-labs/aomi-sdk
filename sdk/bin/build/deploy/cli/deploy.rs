@@ -6,15 +6,17 @@ use std::path::{Path, PathBuf};
 use anyhow::{Result, anyhow, bail};
 use clap::Args;
 
+use super::login::ensure_logged_in;
 use super::shared::{
-    ACTIVATION_TOKEN_ENV, APP_SOURCE_ID_ENV, BACKEND_URL_ENV, CredentialSource, bin_name,
-    env_value, git_context, head_commit, resolve_activation_token_with_source, resolve_backend,
+    APP_SOURCE_ID_ENV, BUILD_TOKEN_ENV, BUILD_URL_ENV, bin_name, env_value, git_context,
+    head_commit, remote_origin, resolve_backend, resolve_build_token, resolve_build_url,
     tracked_aomi_tomls,
 };
 use crate::deploy::app::AomiAppFiles;
-use crate::deploy::backend::BackendClient;
+use crate::deploy::build_client::BuildClient;
 use crate::deploy::platform::Platform;
-use crate::deploy::types::{DeployInput, LocalDeployment};
+use crate::deploy::platform::normalize_github_repo;
+use crate::deploy::types::{BuildDeployInput, LocalDeployment};
 
 pub async fn run(args: DeployArgs) -> eyre::Result<()> {
     args.run().await.map_err(crate::git_error)
@@ -50,6 +52,11 @@ pub struct DeployArgs {
     #[arg(long, value_name = "URL")]
     pub backend: Option<String>,
 
+    /// Aomi Build URL (default: `AOMI_BUILD_URL`, saved login, or inferred from
+    /// the backend environment).
+    #[arg(long = "build-url", value_name = "URL")]
+    pub build_url: Option<String>,
+
     /// App source directory. Defaults to the current directory.
     #[arg(long, default_value = ".")]
     pub path: PathBuf,
@@ -69,29 +76,55 @@ impl DeployArgs {
         let platform = self.platform(&git_root, &start_dir);
         let source_ref = self.source_ref(&git_root)?;
         let aomi_toml_paths = self.aomi_toml_paths(&git_root)?;
-        let app_source_id = self.resolve_app_source_id(&git_root)?;
-
-        let request = DeployInput {
-            app_source_id,
+        let app_source_id = self.resolve_app_source_id(&git_root);
+        let repo = normalize_github_repo(&remote_origin(&git_root)?)?;
+        let backend_url = resolve_backend(&self.backend);
+        let build_url =
+            resolve_build_url(&self.build_url, backend_url.as_deref()).ok_or_else(|| {
+                anyhow!("deploy needs an Aomi Build URL — set --build-url or {BUILD_URL_ENV}")
+            })?;
+        ensure_logged_in(&build_url).await?;
+        let token = resolve_build_token().ok_or_else(|| {
+            anyhow!("Builder login did not save a session; run `aomi-build login`")
+        })?;
+        let client = BuildClient::new(&build_url, token)?;
+        let mut request = BuildDeployInput {
+            platform: platform.to_string(),
+            repo,
             source_ref: source_ref.clone(),
             aomi_toml_paths,
-            preflight: self.preflight,
+            app_source_id,
         };
-
+        // The Builder-authenticated preflight is also the source-claim seam:
+        // when no local app_source_id exists, Build resolves the installed repo
+        // and links it to the signed-in Builder before any deployment write.
+        let preflight = if self.preflight || request.app_source_id.is_none() {
+            Some(client.deploy(&request, true).await.map_err(|error| {
+                self.explain_deploy_error(error, &platform, &source_ref, &build_url)
+            })?)
+        } else {
+            None
+        };
         if self.preflight {
-            return self.run_preflight(&platform, &request).await;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(
+                    preflight
+                        .as_ref()
+                        .expect("preflight response exists when requested")
+                )?
+            );
+            return Ok(());
         }
+        if let Some(preflight) = preflight {
+            request.app_source_id = Some(preflight.app_source_id);
+        }
+        let response = client.deploy(&request, false).await.map_err(|error| {
+            self.explain_deploy_error(error, &platform, &source_ref, &build_url)
+        })?;
 
-        let backend_url = self.backend_url()?;
-        let (token, token_source) = activation_token_with_source()?;
-        let response = BackendClient::new(backend_url, token)?
-            .deploy(&platform, &request)
-            .await
-            .map_err(|e| {
-                self.explain_deploy_error(e, &platform, app_source_id, &source_ref, token_source)
-            })?;
-
-        let state = LocalDeployment::from_deploy(response, app_source_id);
+        let project_url = response.project_url.clone();
+        let state = LocalDeployment::from_build_deploy(response);
         let path = state.write(&git_root)?;
 
         if self.json {
@@ -118,6 +151,7 @@ impl DeployArgs {
                 println!("  - {} -> {}", app.name, app.release_tag);
             }
             println!("  deployment    : {}", path.display());
+            println!("  project       : {project_url}");
             println!();
             println!("Next: track CI, then activate once it is green:");
             let bin = bin_name();
@@ -131,9 +165,8 @@ impl DeployArgs {
         &self,
         err: anyhow::Error,
         platform: &Platform,
-        app_source_id: i64,
         source_ref: &str,
-        token_source: CredentialSource,
+        build_url: &str,
     ) -> anyhow::Error {
         let msg = err.to_string();
         if !(msg.contains("403 Forbidden") || msg.contains("401 Unauthorized")) {
@@ -141,39 +174,14 @@ impl DeployArgs {
         }
         anyhow!(
             "{msg}\n\n\
-             Deploy authorization needs:\n\
-               - a valid activation token for platform `{platform}` (using {})\n\
-               - a connected GitHub App source id for this repo (`app_source_id: {app_source_id}`)\n\
-               - the source ref pushed to GitHub ({})\n\
-             {}\n\
-             To refresh the source id, run:\n\
-               aomi-build source sync --repo <owner/repo>\n\
-             To refresh credentials, run:\n\
-               aomi-build connect --platform {platform}",
-            token_source.label(),
+             Deploy authorization needs a verified Builder login that owns this GitHub source.\n\
+             Platform: `{platform}`\n\
+             Source: {}\n\
+             Log in again with:\n\
+               aomi-build login --build-url {build_url}\n\
+             Headless automation may set {BUILD_TOKEN_ENV}.",
             source_ref_label(source_ref),
-            token_source.stale_hint()
         )
-    }
-
-    /// Preflight: POST with `preflight: true` when a backend + token are
-    /// available (the backend validates source commit scope and renders the
-    /// deployment record); otherwise print the request we would send, fully
-    /// offline.
-    async fn run_preflight(&self, platform: &Platform, request: &DeployInput) -> Result<()> {
-        match (self.backend_url().ok(), activation_token().ok()) {
-            (Some(url), Some(token)) => {
-                let response = BackendClient::new(url, token)?
-                    .deploy(platform, request)
-                    .await?;
-                println!("{}", serde_json::to_string_pretty(&response)?);
-            }
-            _ => {
-                println!("{}", serde_json::to_string_pretty(request)?);
-                println!("\n(preflight: no backend/token; printed the request only)");
-            }
-        }
-        Ok(())
     }
 
     pub(crate) fn platform(&self, git_root: &Path, start_dir: &Path) -> Platform {
@@ -233,34 +241,23 @@ impl DeployArgs {
         Ok(found)
     }
 
-    fn backend_url(&self) -> Result<String> {
-        resolve_backend(&self.backend).ok_or_else(|| {
-            anyhow!("deploy needs a backend URL — set --backend or {BACKEND_URL_ENV}")
-        })
-    }
-
-    pub(crate) fn resolve_app_source_id(&self, git_root: &Path) -> Result<i64> {
+    pub(crate) fn resolve_app_source_id(&self, git_root: &Path) -> Option<i64> {
         // Resolution order: flag → env → the id recorded by a prior deploy /
         // `source sync` in `.aomi/deployment.json`. The last step is what lets a
         // re-deploy run with no `--app-source-id` once the source is known.
         if let Some(id) = self.app_source_id.filter(|id| *id > 0) {
-            return Ok(id);
+            return Some(id);
         }
         if let Some(id) = env_value(APP_SOURCE_ID_ENV)
             .and_then(|v| v.parse::<i64>().ok())
             .filter(|id| *id > 0)
         {
-            return Ok(id);
+            return Some(id);
         }
         if let Some(id) = self.recorded_app_source_id(git_root) {
-            return Ok(id);
+            return Some(id);
         }
-        Err(anyhow!(
-            "deploy needs --app-source-id (or {APP_SOURCE_ID_ENV}): the connected GitHub \
-             App install to deploy from. Install the Aomi GitHub App on your source repo, \
-             then run `aomi-build source sync --repo <owner/repo>` (or use the app_source id \
-             ops/the portal issued you)."
-        ))
+        None
     }
 
     pub(crate) fn recorded_app_source_id(&self, git_root: &Path) -> Option<i64> {
@@ -270,19 +267,6 @@ impl DeployArgs {
             .and_then(|state| state.app_source_id())
             .filter(|id| *id > 0)
     }
-}
-
-fn activation_token() -> Result<String> {
-    activation_token_with_source().map(|(token, _)| token)
-}
-
-fn activation_token_with_source() -> Result<(String, CredentialSource)> {
-    resolve_activation_token_with_source(&None).ok_or_else(|| {
-        anyhow!(
-            "deploy requires an activation token via {ACTIVATION_TOKEN_ENV} \
-             (or run `aomi-build connect`)"
-        )
-    })
 }
 
 fn source_ref_label(source_ref: &str) -> String {

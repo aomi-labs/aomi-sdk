@@ -29,6 +29,7 @@ pub type DeployStatus = String;
 pub type CiStatus = String;
 
 /// Body of `POST /api/platforms/:platform/deploy`.
+#[cfg(test)]
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DeployInput {
     /// The connected GitHub App install (`app_source`) to deploy from.
@@ -45,6 +46,32 @@ pub struct DeployInput {
 pub struct DeployResult {
     pub ok: bool,
     pub deployment: DeployPayload,
+}
+
+/// Aomi Build BFF request. Browser and CLI deployments share this Builder-
+/// authenticated surface; the BFF derives ownership from the signed session.
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildDeployInput {
+    pub platform: String,
+    pub repo: String,
+    pub source_ref: String,
+    pub aomi_toml_paths: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub app_source_id: Option<i64>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildDeployResult {
+    pub ok: bool,
+    pub app_source_id: i64,
+    pub deployment: DeployPayload,
+    pub project_url: String,
+    #[serde(default)]
+    pub release_tags: Vec<String>,
+    #[serde(default)]
+    pub apps: Vec<String>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -153,6 +180,15 @@ pub struct ActivateInput {
 pub struct ActivateResult {
     pub ok: bool,
     pub activation: Activation,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildActivateInput {
+    pub platform: String,
+    pub app_source_id: i64,
+    pub release_tags: Vec<String>,
+    pub apps: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -293,6 +329,31 @@ pub struct DeploymentStatusResult {
     pub message: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliExchangeInput {
+    pub code: String,
+    pub code_verifier: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliExchangeResult {
+    pub access_token: String,
+    pub token_type: String,
+    pub expires_in: i64,
+    pub github_login: String,
+    pub github_user_id: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CliStatusResult {
+    pub signed_in: bool,
+    pub github_login: String,
+    pub github_user_id: String,
+}
+
 /// Envelope around a single source row (`{ ok, source }`).
 #[derive(Debug, Clone, Deserialize)]
 pub struct SourceResult {
@@ -314,6 +375,8 @@ pub struct LocalDeployment {
     pub state: LocalDeploymentState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_activation: Option<Activation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default, Serialize, Deserialize)]
@@ -342,7 +405,21 @@ impl LocalDeployment {
                 activated: false,
             },
             last_activation: None,
+            project_url: None,
         }
+    }
+
+    pub fn from_build_deploy(resp: BuildDeployResult) -> Self {
+        let project_url = resp.project_url;
+        let mut state = Self::from_deploy(
+            DeployResult {
+                ok: resp.ok,
+                deployment: resp.deployment,
+            },
+            resp.app_source_id,
+        );
+        state.project_url = Some(project_url);
+        state
     }
 
     fn path(repo_root: &Path) -> PathBuf {
@@ -439,6 +516,7 @@ impl LocalDeployment {
     }
 }
 
+#[cfg(test)]
 fn is_false(b: &bool) -> bool {
     !*b
 }

@@ -11,6 +11,8 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use inquire::{Confirm, Select, Text};
 
+use super::cli::login;
+use super::cli::shared::{BUILD_URL_ENV, git_context, infer_build_url, resolve_build_token};
 use super::cli::{ActivateArgs, DeployArgs};
 use super::config::AomiConfig;
 use super::flow;
@@ -26,6 +28,15 @@ pub async fn run() -> Result<()> {
 
     let backend_url = pick_backend(&config)?;
     config.backend_url = Some(backend_url.clone());
+    let build_url = pick_build_url(&config, &backend_url)?;
+    config.build_url = Some(build_url.clone());
+
+    // Human deploys are always tied to a verified GitHub Builder. The saved
+    // session is reused only after Build validates it.
+    login::ensure_logged_in(&build_url).await?;
+    config = AomiConfig::load();
+    config.backend_url = Some(backend_url.clone());
+    config.build_url = Some(build_url.clone());
 
     // The deploy *destination* platform (a `DbPlatform`, e.g. `community`) —
     // not the source/template repo it's copied from.
@@ -37,14 +48,9 @@ pub async fn run() -> Result<()> {
         .to_string();
     config.platform = Some(platform.clone());
 
-    let token = ensure_token(&mut config, &backend_url, &platform).await?;
-    // Persist what we have so a re-run resumes with backend/token/platform set.
-    // This must succeed: deploy/activate re-read the token from this file (the
-    // `*Args` structs take no token), so a silent failure here would resurface
-    // later as a confusing "no activation token" error.
-    config
-        .save()
-        .context("couldn't save your Aomi config — deploy needs the token on disk")?;
+    // Persist environment/platform selection. Login already persisted the
+    // Builder session.
+    config.save().context("couldn't save your Aomi config")?;
 
     // Main loop: a failed step prints its error and returns here instead of
     // tearing down the wizard. Only an explicit Quit (or Ctrl-C at a prompt)
@@ -63,9 +69,11 @@ pub async fn run() -> Result<()> {
 
         let outcome = match choice {
             c if c.starts_with("Deploy") => {
-                existing_dir_flow(&backend_url, &platform, &token).await
+                existing_dir_flow(&backend_url, &build_url, &platform).await
             }
-            c if c.starts_with("Scaffold") => scaffold_flow(&backend_url, &platform, &token).await,
+            c if c.starts_with("Scaffold") => {
+                scaffold_flow(&backend_url, &build_url, &platform).await
+            }
             _ => return Ok(()),
         };
 
@@ -80,6 +88,23 @@ pub async fn run() -> Result<()> {
             return Ok(());
         }
     }
+}
+
+fn pick_build_url(config: &AomiConfig, backend_url: &str) -> Result<String> {
+    if let Some(url) = config.build_url.as_deref().filter(|url| !url.is_empty()) {
+        return Ok(url.trim_end_matches('/').to_string());
+    }
+    if let Some(url) = infer_build_url(backend_url) {
+        return Ok(url);
+    }
+    let url = Text::new(&format!("Aomi Build URL ({BUILD_URL_ENV}):"))
+        .prompt()
+        .context("wizard cancelled")?;
+    let url = url.trim().trim_end_matches('/');
+    if url.is_empty() {
+        bail!("Aomi Build URL is required");
+    }
+    Ok(url.to_string())
 }
 
 /// Print a step error exactly (the full anyhow chain) without leaving the
@@ -114,67 +139,7 @@ fn pick_backend(config: &AomiConfig) -> Result<String> {
     })
 }
 
-/// Reuse a saved token if it still validates; otherwise prompt for one and
-/// (optionally) point the user at `connect` to install the GitHub App.
-async fn ensure_token(
-    config: &mut AomiConfig,
-    backend_url: &str,
-    platform: &str,
-) -> Result<String> {
-    if let Some(saved) = config.activation_token.clone() {
-        match flow::validate_activation_token(backend_url, &saved, platform).await {
-            flow::TokenCheck::Valid => {
-                println!("Using your saved activation token (verified).\n");
-                return Ok(saved);
-            }
-            flow::TokenCheck::Unreachable => {
-                // Don't force re-entry over a network blip — the token was fine
-                // last time and we couldn't reach the backend to say otherwise.
-                println!("Couldn't reach the backend to verify your saved token — using it.\n");
-                return Ok(saved);
-            }
-            flow::TokenCheck::Invalid => {
-                println!("Saved token was rejected for `{platform}` — let's set a new one.");
-            }
-        }
-    } else {
-        println!(
-            "You'll need an activation token from your Aomi admin. If you haven't installed\n\
-             the GitHub App yet, run `aomi-build connect` first (or paste the token below).\n"
-        );
-    }
-    loop {
-        let token = inquire::Password::new("Activation token (from your Aomi admin):")
-            .without_confirmation()
-            .prompt()
-            .context("wizard cancelled")?
-            .trim()
-            .to_string();
-        if token.is_empty() {
-            println!("  a token is required to deploy.");
-            continue;
-        }
-        match flow::validate_activation_token(backend_url, &token, platform).await {
-            flow::TokenCheck::Valid => println!("  token verified.\n"),
-            flow::TokenCheck::Unreachable => {
-                println!("  couldn't reach the backend to verify — using it anyway.\n")
-            }
-            flow::TokenCheck::Invalid => {
-                let keep = Confirm::new("That token was rejected — use it anyway?")
-                    .with_default(false)
-                    .prompt()
-                    .context("wizard cancelled")?;
-                if !keep {
-                    continue;
-                }
-            }
-        }
-        config.activation_token = Some(token.clone());
-        return Ok(token);
-    }
-}
-
-async fn existing_dir_flow(backend_url: &str, platform: &str, token: &str) -> Result<()> {
+async fn existing_dir_flow(backend_url: &str, build_url: &str, platform: &str) -> Result<()> {
     let dir = Text::new("Path to the app's source repo:")
         .with_default(".")
         .prompt()
@@ -192,7 +157,7 @@ async fn existing_dir_flow(backend_url: &str, platform: &str, token: &str) -> Re
     };
     let repo = normalize_github_repo(repo.trim())?;
 
-    resolve_and_deploy(backend_url, platform, token, &dir, &repo).await
+    resolve_and_deploy(backend_url, build_url, platform, &dir, &repo).await
 }
 
 /// Resolve the connected source for `repo` at `dir` — installing the aomi-build
@@ -200,41 +165,12 @@ async fn existing_dir_flow(backend_url: &str, platform: &str, token: &str) -> Re
 /// by the deploy-local and scaffold flows.
 async fn resolve_and_deploy(
     backend_url: &str,
+    build_url: &str,
     platform: &str,
-    token: &str,
     dir: &Path,
     repo: &str,
 ) -> Result<()> {
-    println!("Resolving the connected source…");
-    let app_source_id = match flow::sync_source(backend_url, token, platform, repo).await {
-        Ok(id) => id,
-        Err(_) => {
-            // The repo isn't connected yet — the aomi-build App isn't installed
-            // on it. Offer to install it inline, then retry the sync once.
-            println!(
-                "That repo isn't connected yet — the aomi-build GitHub App isn't installed on it."
-            );
-            let install = Confirm::new("Install the aomi-build GitHub App now?")
-                .with_default(true)
-                .prompt()
-                .context("wizard cancelled")?;
-            if !install {
-                bail!(
-                    "source sync needs the aomi-build GitHub App installed on {repo} — \
-                     run `aomi-build connect --repo {repo}`, then try again."
-                );
-            }
-            ensure_app_installed(backend_url, platform, Some(repo)).await?;
-            flow::sync_source(backend_url, token, platform, repo)
-                .await
-                .context(
-                    "still couldn't resolve the source after install — \
-                 give GitHub a moment to propagate, then try again",
-                )?
-        }
-    };
-    println!("  app_source_id: {app_source_id}\n");
-    deploy_then_activate(platform, backend_url, token, dir, Some(app_source_id)).await
+    deploy_then_activate(platform, backend_url, build_url, dir, repo).await
 }
 
 /// Install the aomi-build GitHub App on `repo` from inside the wizard: open the
@@ -262,7 +198,7 @@ async fn ensure_app_installed(backend_url: &str, platform: &str, repo: Option<&s
 /// page so the user creates their own repo from the example, clone it, then run
 /// the same resolve-and-deploy path as a local repo. Uses only the aomi-build
 /// App — the repo is created by GitHub's template UI, not a backend call.
-async fn scaffold_flow(backend_url: &str, platform: &str, token: &str) -> Result<()> {
+async fn scaffold_flow(backend_url: &str, build_url: &str, platform: &str) -> Result<()> {
     const GENERATE_URL: &str = "https://github.com/aomi-labs/playground-example/generate";
     println!("Create your repo from the example template:");
     println!("  {GENERATE_URL}");
@@ -319,7 +255,7 @@ async fn scaffold_flow(backend_url: &str, platform: &str, token: &str) -> Result
     println!("Cloning {clone_url} → {} …", target.display());
     clone_repo(&clone_url, &target)?;
 
-    resolve_and_deploy(backend_url, platform, token, &target, &slug).await
+    resolve_and_deploy(backend_url, build_url, platform, &target, &slug).await
 }
 
 /// `git clone <repo_link> <dir>`. The example repo is public, so no auth.
@@ -341,9 +277,9 @@ fn clone_repo(repo_link: &str, dir: &Path) -> Result<()> {
 async fn deploy_then_activate(
     platform: &str,
     backend_url: &str,
-    token: &str,
+    build_url: &str,
     dir: &Path,
-    app_source_id: Option<i64>,
+    repo: &str,
 ) -> Result<()> {
     let go = Confirm::new(&format!("Deploy `{platform}` from {}?", dir.display()))
         .with_default(true)
@@ -356,14 +292,16 @@ async fn deploy_then_activate(
 
     // Deploy with inline retry — a transient backend failure prints and offers
     // a retry instead of unwinding the whole wizard.
+    let mut offered_install = false;
     loop {
         let result = DeployArgs {
             platform: Some(Platform::new(platform)),
-            app_source_id,
+            app_source_id: None,
             branch: None,
             commit: None,
             aomi_toml: vec![],
             backend: Some(backend_url.to_string()),
+            build_url: Some(build_url.to_string()),
             path: dir.to_path_buf(),
             preflight: false,
             json: false,
@@ -374,6 +312,22 @@ async fn deploy_then_activate(
             Ok(()) => break,
             Err(e) => {
                 print_step_error(&e);
+                let message = e.to_string().to_ascii_lowercase();
+                if !offered_install
+                    && (message.contains("source")
+                        || message.contains("installation")
+                        || message.contains("github"))
+                {
+                    offered_install = true;
+                    if Confirm::new("Install or re-authorize the Aomi GitHub App for this repo?")
+                        .with_default(true)
+                        .prompt()
+                        .context("wizard cancelled")?
+                    {
+                        ensure_app_installed(backend_url, platform, Some(repo)).await?;
+                        continue;
+                    }
+                }
                 if !retry("Retry the deploy?")? {
                     return Ok(());
                 }
@@ -399,10 +353,12 @@ async fn deploy_then_activate(
     // deployment's status until it's `ready` before promoting. The deploy step
     // recorded the id in `.aomi/deployment.json`.
     if let Some(id) = deployment_id(dir) {
+        let token = resolve_build_token()
+            .ok_or_else(|| anyhow!("Aomi Build login expired; run `aomi-build login`"))?;
         println!("Waiting for the release build (up to 30 min, Ctrl-C to stop)…");
-        match flow::poll_deployment_ready(
-            backend_url,
-            token,
+        match flow::poll_build_deployment_ready(
+            build_url,
+            &token,
             platform,
             &id,
             Duration::from_secs(30 * 60),
@@ -431,7 +387,8 @@ async fn deploy_then_activate(
             platform: Some(Platform::new(platform)),
             release_tags: vec![],
             backend: Some(backend_url.to_string()),
-            activation_token: Some(token.to_string()),
+            build_url: Some(build_url.to_string()),
+            activation_token: None,
             // Empty: let the backend use the deployment's server_tags, as the
             // portal does (it sends no target_tags).
             target_tags: vec![],
@@ -442,7 +399,12 @@ async fn deploy_then_activate(
         .run()
         .await;
         match result {
-            Ok(()) => return Ok(()),
+            Ok(()) => {
+                if let Some(url) = project_url(dir) {
+                    println!("\nView your deployment:\n  {url}");
+                }
+                return Ok(());
+            }
             Err(e) => {
                 print_step_error(&e);
                 if !retry("Retry activation?")? {
@@ -456,10 +418,19 @@ async fn deploy_then_activate(
 /// The deployment id the last deploy recorded in `.aomi/deployment.json`, if
 /// readable. Used to poll the release build before activating.
 fn deployment_id(dir: &Path) -> Option<String> {
-    LocalDeployment::read(dir)
+    let git_root = git_context(dir).ok()?.0;
+    LocalDeployment::read(&git_root)
         .ok()
         .flatten()
         .map(|d| d.deployment.id)
+}
+
+fn project_url(dir: &Path) -> Option<String> {
+    let git_root = git_context(dir).ok()?.0;
+    LocalDeployment::read(&git_root)
+        .ok()
+        .flatten()
+        .and_then(|deployment| deployment.project_url)
 }
 
 /// Small yes/no retry prompt; a cancel (Ctrl-C) propagates out to exit.

@@ -6,8 +6,8 @@ use serde::de::DeserializeOwned;
 
 use super::platform::Platform;
 use super::types::{
-    ActivateInput, ActivateResult, DeployInput, DeployResult, DeploymentStatusResult,
-    MintTokenInput, MintTokenResult, OAuthStart, SourceResult, SyncSourceInput,
+    ActivateInput, ActivateResult, MintTokenInput, MintTokenResult, OAuthStart, SourceResult,
+    SyncSourceInput,
 };
 
 /// GET the aomi-build GitHub App install URL for `platform`. Query params mirror
@@ -107,16 +107,6 @@ impl BackendClient {
         })
     }
 
-    /// Repo-scoped deploy: `POST /api/platforms/:platform/deploy`.
-    pub async fn deploy(&self, platform: &Platform, request: &DeployInput) -> Result<DeployResult> {
-        self.post(
-            &format!("/api/platforms/{}/deploy", platform.as_str()),
-            request,
-            "deploy",
-        )
-        .await
-    }
-
     /// Release-tags activation:
     /// `POST /api/platforms/:platform/apps/activate`.
     pub async fn activate(
@@ -191,25 +181,6 @@ impl BackendClient {
         self.get(
             &format!("/api/platforms/{}/apps", platform.as_str()),
             "apps list",
-        )
-        .await
-    }
-
-    /// Build status of a deployment:
-    /// `GET /api/platforms/:platform/deployments/:id/status`. Matches the
-    /// portal's poll source — used to gate activation on the release build.
-    pub async fn deployment_status(
-        &self,
-        platform: &Platform,
-        deployment_id: &str,
-    ) -> Result<DeploymentStatusResult> {
-        self.get(
-            &format!(
-                "/api/platforms/{}/deployments/{}/status",
-                platform.as_str(),
-                deployment_id
-            ),
-            "deployment status",
         )
         .await
     }
