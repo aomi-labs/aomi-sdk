@@ -5,7 +5,10 @@ use std::path::PathBuf;
 use anyhow::{Result, anyhow};
 use clap::Args;
 
-use super::shared::{bin_name, git_context, resolve_activation_token, resolve_backend};
+use super::login::ensure_logged_in;
+use super::shared::{
+    bin_name, git_context, resolve_activation_token, resolve_backend, resolve_build_url,
+};
 use crate::deploy::status::StatusResult;
 use crate::deploy::types::LocalDeployment;
 
@@ -19,6 +22,11 @@ pub struct StatusArgs {
     /// skip the backend probe.
     #[arg(long, value_name = "URL")]
     pub backend: Option<String>,
+
+    /// Aomi Build URL. Defaults to `AOMI_BUILD_URL`, saved login config, or
+    /// the known staging/production URL associated with the backend.
+    #[arg(long = "build-url", value_name = "URL")]
+    pub build_url: Option<String>,
 
     /// Source repo path for the `.aomi/deployment.json` lookup.
     #[arg(long, default_value = ".")]
@@ -53,7 +61,19 @@ impl StatusArgs {
             .as_ref()
             .and_then(|_| resolve_activation_token(&self.activation_token));
 
-        let report = StatusResult::collect(&state, backend_url, token).await;
+        let build_url = resolve_build_url(&self.build_url, backend_url.as_deref());
+        let mut report = StatusResult::collect(&state, backend_url, token).await;
+
+        if let Some(build_url) = build_url {
+            let build_status = ensure_logged_in(&build_url)
+                .await?
+                .client
+                .status(&state.deployment.platform.platform, &state.deployment.id)
+                .await?;
+            report.build_state = Some(build_status.state);
+            report.build_message = build_status.message;
+        }
+
         if self.json {
             println!("{}", serde_json::to_string_pretty(&report)?);
         } else {

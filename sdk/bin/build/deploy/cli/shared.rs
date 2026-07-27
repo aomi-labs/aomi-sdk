@@ -10,6 +10,8 @@ use crate::deploy::config::AomiConfig;
 
 pub(crate) const ACTIVATION_TOKEN_ENV: &str = "AOMI_APP_ACTIVATION_TOKEN";
 pub(crate) const BACKEND_URL_ENV: &str = "AOMI_BACKEND_URL";
+pub(crate) const BUILD_URL_ENV: &str = "AOMI_BUILD_URL";
+pub(crate) const BUILD_TOKEN_ENV: &str = "AOMI_BUILD_TOKEN";
 pub(crate) const APP_SOURCE_ID_ENV: &str = "AOMI_APP_SOURCE_ID";
 pub(crate) const ADMIN_KEY_ENV: &str = "AOMI_ADMIN_KEY";
 pub(crate) const ADMIN_KID_ENV: &str = "AOMI_ADMIN_KID";
@@ -41,27 +43,6 @@ pub(crate) enum CredentialSource {
     Config,
 }
 
-impl CredentialSource {
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            CredentialSource::Flag => "--activation-token",
-            CredentialSource::Env => ACTIVATION_TOKEN_ENV,
-            CredentialSource::Config => "~/.config/aomi/config.toml",
-        }
-    }
-
-    pub(crate) fn stale_hint(self) -> &'static str {
-        match self {
-            CredentialSource::Env => {
-                "AOMI_APP_ACTIVATION_TOKEN overrides the saved connect token; unset it if it is stale."
-            }
-            CredentialSource::Flag | CredentialSource::Config => {
-                "Run `aomi-build connect` with a valid activation token if this token is stale."
-            }
-        }
-    }
-}
-
 /// `--backend` flag → `AOMI_BACKEND_URL` → saved `connect` config.
 pub(crate) fn resolve_backend(flag: &Option<String>) -> Option<String> {
     flag.clone()
@@ -69,6 +50,29 @@ pub(crate) fn resolve_backend(flag: &Option<String>) -> Option<String> {
         .filter(|v| !v.is_empty())
         .or_else(|| env_value(BACKEND_URL_ENV))
         .or_else(|| AomiConfig::load().backend_url)
+}
+
+/// `--build-url` flag → `AOMI_BUILD_URL` → saved login config → known backend
+/// environment mapping.
+pub(crate) fn resolve_build_url(
+    flag: &Option<String>,
+    backend_url: Option<&str>,
+) -> Option<String> {
+    flag.clone()
+        .map(|v| v.trim().trim_end_matches('/').to_string())
+        .filter(|v| !v.is_empty())
+        .or_else(|| env_value(BUILD_URL_ENV))
+        .or_else(|| AomiConfig::load().build_url)
+        .or_else(|| infer_build_url(backend_url?))
+}
+
+pub(crate) fn infer_build_url(backend_url: &str) -> Option<String> {
+    let url = backend_url.trim().trim_end_matches('/');
+    match url {
+        "https://api-staging.aomi.dev" => Some("https://build-staging.aomi.dev".to_string()),
+        "https://api.aomi.dev" => Some("https://build.aomi.dev".to_string()),
+        _ => None,
+    }
 }
 
 /// `--activation-token` flag → `AOMI_APP_ACTIVATION_TOKEN` → saved `connect`

@@ -40,17 +40,19 @@ pub mod activate;
 pub mod apps;
 pub mod connect;
 pub mod deploy;
+pub mod login;
 pub mod request;
 pub mod source;
 pub mod status;
 pub mod token;
 
-mod shared;
+pub(crate) mod shared;
 
 pub use activate::ActivateArgs;
 pub use apps::AppsArgs;
 pub use connect::ConnectArgs;
 pub use deploy::DeployArgs;
+pub use login::LoginArgs;
 pub use request::RequestArgs;
 pub use source::SourceArgs;
 pub use status::StatusArgs;

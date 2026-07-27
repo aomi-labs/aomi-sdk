@@ -18,6 +18,9 @@ pub struct StatusResult {
     pub deploy_branch: String,
     pub deployed: bool,
     pub activated: bool,
+    pub project_url: Option<String>,
+    pub build_state: Option<String>,
+    pub build_message: Option<String>,
     pub backend: Option<String>,
     pub apps: Vec<AppStatus>,
 }
@@ -81,6 +84,9 @@ impl StatusResult {
             deploy_branch: state.deployment.platform.deploy_branch.clone(),
             deployed: state.state.deployed,
             activated: state.state.activated,
+            project_url: state.project_url.clone(),
+            build_state: None,
+            build_message: None,
             backend: backend_url,
             apps,
         }
@@ -93,6 +99,15 @@ impl StatusResult {
         let _ = writeln!(out, "  platform      : {}", self.platform);
         let _ = writeln!(out, "  pr            : {}", self.pr_url);
         let _ = writeln!(out, "  deploy_branch : {}", self.deploy_branch);
+        if let Some(url) = &self.project_url {
+            let _ = writeln!(out, "  project       : {url}");
+        }
+        if let Some(state) = &self.build_state {
+            let _ = writeln!(out, "  release build : {state}");
+            if let Some(message) = &self.build_message {
+                let _ = writeln!(out, "  build detail  : {message}");
+            }
+        }
         let _ = writeln!(
             out,
             "  local state   : deployed={} activated={}",
