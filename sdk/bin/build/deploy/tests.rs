@@ -692,7 +692,7 @@ fn release_tag_activation_promotions_mark_ci_and_sync_last_activation() {
 }
 
 #[test]
-fn activation_response_accepts_live_promoted_shape() {
+fn activation_response_accepts_builder_camel_case() {
     let response: ActivateResult = serde_json::from_value(json!({
         "ok": true,
         "activation": {
@@ -701,25 +701,26 @@ fn activation_response_accepts_live_promoted_shape() {
             "target": {
                 "kind": "release_tags",
                 "value": ["apps-141779906-r2bf7fd9ccb-playground-example-6fe687c7d6e4"],
-                "platform_repo": "aomi-labs/community-apps",
-                "live_branch": "publish",
+                "platformRepo": "aomi-labs/community-apps",
+                "platformBranch": "publish",
                 "promoted": [{
                     "name": "playground-example",
-                    "release_tag": "apps-141779906-r2bf7fd9ccb-playground-example-6fe687c7d6e4",
-                    "source_branch": "ceciliaz030/playground-example-1/141779906/6fe687c7d6e4",
-                    "activated_commit_hash": "cfb6a6411712f1f65ce81d7373decd1d21be4ea1",
-                    "live_commit_hash": "cfb6a6411712f1f65ce81d7373decd1d21be4ea1",
-                    "ci_status": "passed",
-                    "ci_url": "https://github.com/aomi-labs/community-apps/actions/runs/1",
-                    "release_assets": ["manifest.json"]
+                    "releaseTag": "apps-141779906-r2bf7fd9ccb-playground-example-6fe687c7d6e4",
+                    "sourceBranch": "ceciliaz030/playground-example-1/141779906/6fe687c7d6e4",
+                    "platformCommitHash": "cfb6a6411712f1f65ce81d7373decd1d21be4ea1",
+                    "liveCommitHash": "cfb6a6411712f1f65ce81d7373decd1d21be4ea1",
+                    "ciStatus": "passed",
+                    "ciUrl": "https://github.com/aomi-labs/community-apps/actions/runs/1",
+                    "releaseAssets": ["manifest.json"]
                 }]
             },
             "apps": [{
+                "applicationId": 42,
                 "name": "playground-example",
                 "path": "apps/141779906/r2bf7fd9ccb/playground-example",
-                "release_tag": "apps-141779906-r2bf7fd9ccb-playground-example-6fe687c7d6e4",
-                "is_active": true,
-                "artifact_ready": true,
+                "releaseTag": "apps-141779906-r2bf7fd9ccb-playground-example-6fe687c7d6e4",
+                "isActive": true,
+                "artifactReady": true,
                 "loaded": true,
                 "error": null
             }]
@@ -728,9 +729,9 @@ fn activation_response_accepts_live_promoted_shape() {
     .unwrap();
 
     let promoted = &response.activation.target.promoted[0];
-    assert_eq!(promoted.platform_commit_hash, None);
+    assert!(promoted.platform_commit_hash.is_some());
     assert_eq!(
-        promoted.activated_commit_hash.as_deref(),
+        promoted.live_commit_hash.as_deref(),
         Some("cfb6a6411712f1f65ce81d7373decd1d21be4ea1")
     );
 }
