@@ -100,6 +100,10 @@ jobs:
           for path in sorted(plugins_dir.iterdir()):
               if not path.is_file() or path.name == "manifest.json":
                   continue
+              # Pricing sidecars (<app>.pricing.toml) ride the tarball next to
+              # their dylibs but are not plugins themselves.
+              if path.suffix == ".toml":
+                  continue
               plugins[path.stem] = {
                   "file": path.name,
                   "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
