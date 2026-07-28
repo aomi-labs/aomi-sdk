@@ -180,5 +180,8 @@ dyn_aomi_app!(
     // (`/dex/v2/send-swap-tx` for AMM, `/rfq/v1/swap` for RFQ).
     // The legacy `solana-core` alias was removed in host iter 39;
     // canonical names only.
-    namespaces = ["evm-core", "svm-reads", "svm-tx-sign"]
+    // `aomi-core` provides `schedule_intent` so users can schedule
+    // future swaps (executed via the runtime heartbeat + authorized
+    // signing); without it the agent has no scheduling tool at all.
+    namespaces = ["aomi-core", "evm-core", "svm-reads", "svm-tx-sign"]
 );
