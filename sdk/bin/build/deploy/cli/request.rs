@@ -10,10 +10,6 @@ use crate::deploy::app::AomiAppFiles;
 use crate::deploy::discord;
 use crate::deploy::platform::{Platform, normalize_github_repo};
 
-pub async fn run(args: RequestArgs) -> eyre::Result<()> {
-    args.run().await.map_err(crate::git_error)
-}
-
 #[derive(Debug, Args, Clone)]
 pub struct RequestArgs {
     /// Email where platform ops will send activation details.

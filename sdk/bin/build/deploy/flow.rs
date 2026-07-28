@@ -49,6 +49,10 @@ pub async fn validate_activation_token(
 pub enum DeployReady {
     Ready,
     Failed(String),
+    /// No CI ran for the deployment commit at all. Distinct from `Failed`: the
+    /// release build did not break, it never started — usually a missing or
+    /// unpicked-up workflow on the platform repo, which is a different fix.
+    NoCi(String),
     TimedOut,
 }
 
@@ -79,14 +83,18 @@ pub async fn poll_build_deployment_ready(
                 }
                 match status.state.as_str() {
                     "ready" => return Ok(DeployReady::Ready),
-                    "failed" | "no_ci" => {
-                        let fallback = if status.state == "failed" {
-                            "release build failed"
-                        } else {
-                            "no CI ran for this deployment commit"
-                        };
+                    "failed" => {
                         return Ok(DeployReady::Failed(
-                            status.message.unwrap_or_else(|| fallback.to_string()),
+                            status
+                                .message
+                                .unwrap_or_else(|| "release build failed".to_string()),
+                        ));
+                    }
+                    "no_ci" => {
+                        return Ok(DeployReady::NoCi(
+                            status
+                                .message
+                                .unwrap_or_else(|| "no CI ran for this deployment commit".into()),
                         ));
                     }
                     _ => {}
@@ -97,6 +105,13 @@ pub async fn poll_build_deployment_ready(
                 if failures >= MAX_STATUS_FAILURES {
                     return Err(error.context("deployment status polling failed repeatedly"));
                 }
+                // Say so instead of showing a frozen screen for the ~90s this
+                // rides out. Clearing `last_state` makes the next good poll
+                // re-print the real state.
+                on_state(&format!(
+                    "status unavailable, retrying ({failures}/{MAX_STATUS_FAILURES}): {error}"
+                ));
+                last_state = None;
             }
         }
         if started.elapsed() >= timeout {
@@ -149,7 +164,7 @@ pub async fn poll_deployment_ready_with_pr(
                         ));
                     }
                     "no_ci" => {
-                        return Ok(DeployReady::Failed(status.message.unwrap_or_else(|| {
+                        return Ok(DeployReady::NoCi(status.message.unwrap_or_else(|| {
                             "no CI ran for this deployment commit".to_string()
                         })));
                     }
@@ -161,6 +176,10 @@ pub async fn poll_deployment_ready_with_pr(
                 if failures >= MAX_STATUS_FAILURES {
                     return Err(e.context("deployment status polling failed repeatedly"));
                 }
+                on_state(&format!(
+                    "status unavailable, retrying ({failures}/{MAX_STATUS_FAILURES}): {e}"
+                ));
+                last_state = None;
             }
         }
         if let Some(pr) = &github_pr {

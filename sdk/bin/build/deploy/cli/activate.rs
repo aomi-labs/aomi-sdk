@@ -6,14 +6,16 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow, bail};
 use clap::Args;
 
-use super::login::ensure_logged_in;
 use super::shared::{
-    ACTIVATION_TOKEN_ENV, BACKEND_URL_ENV, BUILD_URL_ENV, bin_name, clean_list, env_value,
-    git_context, resolve_backend, resolve_build_url,
+    ACTIVATION_TOKEN_ENV, BACKEND_URL_ENV, bin_name, clean_list, env_value, git_context,
+    resolve_backend,
 };
 use crate::deploy::backend::BackendClient;
+use crate::deploy::build_client::BuildClient;
 use crate::deploy::platform::Platform;
-use crate::deploy::types::{ActivateInput, BuildActivateInput, LocalDeployment, ReleaseTags};
+use crate::deploy::session::Session;
+use crate::deploy::state::LocalDeployment;
+use crate::deploy::types::{ActivateInput, BuildActivateInput, ReleaseTags};
 
 #[derive(Debug, Args, Clone, Default)]
 pub struct ActivateArgs {
@@ -124,22 +126,23 @@ impl ActivateArgs {
             verify_activation(&client, &platform, &mut response).await?;
             response
         } else {
-            let build_url =
-                resolve_build_url(&self.build_url, backend_url.as_deref()).ok_or_else(|| {
-                    anyhow!("activate needs an Aomi Build URL — set --build-url or {BUILD_URL_ENV}")
-                })?;
-            let client = ensure_logged_in(&build_url).await?.client;
+            let session = Session::open(&self.backend, &self.build_url).await?;
             let app_source_id = state.app_source_id().ok_or_else(|| {
                 anyhow!("deployment has no app_source_id; deploy again while logged in")
             })?;
-            client
-                .activate(&BuildActivateInput {
+            activate_until_loaded(
+                &session.client,
+                &BuildActivateInput {
                     platform: platform.to_string(),
                     app_source_id,
                     release_tags: request.target.value.clone(),
                     apps: request.apps.clone(),
-                })
-                .await?
+                    // Was silently dropped here, so `--target-tag` was accepted
+                    // and ignored on every Builder (i.e. every human) activation.
+                    target_tags: request.target_tags.clone(),
+                },
+            )
+            .await?
         };
         state.apply_target_activation(&response);
         Ok(response)
@@ -221,6 +224,50 @@ impl ActivateArgs {
             apps: app_names,
             target_tags: clean_list(&self.target_tags),
         })
+    }
+}
+
+/// How long to let the backend finish loading a freshly activated artifact.
+/// Mirrors [`verify_activation`]'s budget on the activation-token path.
+const ACTIVATION_SETTLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
+/// Activate through the Builder BFF and wait for the result to actually settle.
+///
+/// The `is_active` / `artifact_ready` / `loaded` flags in an activation response
+/// are a snapshot taken as activation is requested, and the backend loads the
+/// artifact asynchronously — which is exactly why the activation-token path polls
+/// `get_app` for five minutes before believing them. The Builder path had no such
+/// wait, so it reported `N app(s) failed to activate` on deploys that had in fact
+/// succeeded, and re-running `activate` "fixed" it.
+///
+/// There is no Builder-side read endpoint for per-app state, so this re-issues the
+/// activation instead. Release-tag activation is declarative — "make these tags the
+/// active ones" — so repeating it is what the portal does when a user clicks
+/// Activate twice, not a second distinct mutation.
+async fn activate_until_loaded(
+    client: &BuildClient,
+    input: &BuildActivateInput,
+) -> Result<crate::deploy::types::ActivateResult> {
+    let started = Instant::now();
+    let mut announced = false;
+    loop {
+        let response = client.activate(input).await?;
+        let apps = &response.activation.apps;
+        // A hard per-app error is terminal; retrying only delays the report.
+        let settled = apps.iter().any(|app| app.error.is_some())
+            || apps
+                .iter()
+                .all(|app| app.is_active && app.artifact_ready && app.loaded);
+        // On timeout, return the last response as-is so `print_activation`
+        // names exactly which flags are still false.
+        if settled || started.elapsed() >= ACTIVATION_SETTLE_TIMEOUT {
+            return Ok(response);
+        }
+        if !announced {
+            println!("  waiting for the backend to load the activated release…");
+            announced = true;
+        }
+        tokio::time::sleep(Duration::from_secs(6)).await;
     }
 }
 

@@ -15,15 +15,11 @@ use uuid::Uuid;
 use super::shared::{
     BACKEND_URL_ENV, BUILD_TOKEN_ENV, BUILD_URL_ENV, env_value, resolve_backend, resolve_build_url,
 };
-use crate::deploy::build_client::{BuildClient, exchange_cli_code};
+use crate::deploy::build_client::{AuthProbe, BuildClient, exchange_cli_code};
 use crate::deploy::config::AomiConfig;
 use crate::deploy::types::CliStatusResult;
 
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
-
-pub async fn run(args: LoginArgs) -> eyre::Result<()> {
-    args.run().await.map_err(crate::git_error)
-}
 
 #[derive(Debug, Args, Clone)]
 pub struct LoginArgs {
@@ -54,29 +50,47 @@ impl LoginArgs {
         let (authenticated, path) =
             browser_login_and_save(&build_url, backend_url, self.no_browser).await?;
 
-        println!("✓ Logged in as @{}", authenticated.status.github_login);
+        println!("✓ Logged in as @{}", authenticated.identity.github_login);
         println!("  saved to {}", path.display());
         Ok(())
     }
 }
 
-pub struct AuthenticatedBuild {
+/// A working Build credential and who it belongs to. Wrapped by
+/// [`Session`](crate::deploy::session::Session), which is what commands hold.
+pub struct Authenticated {
     pub client: BuildClient,
-    pub status: CliStatusResult,
+    pub identity: CliStatusResult,
 }
 
-pub async fn ensure_logged_in(build_url: &str) -> Result<AuthenticatedBuild> {
-    let mut config = AomiConfig::load();
+/// Prove the stored credential works, falling back to a browser login.
+///
+/// Deliberately silent on success: announcing the identity is the session's job,
+/// so it happens once per process instead of once per command step.
+pub async fn authenticate(build_url: &str) -> Result<Authenticated> {
     let env_token = env_value(BUILD_TOKEN_ENV);
-    let saved_token = config.cli_access_token.clone();
+    let saved_token = AomiConfig::load().cli_access_token;
     if let Some(token) = env_token.clone().or(saved_token) {
         let client = BuildClient::new(build_url, token)?;
-        if let Ok(status) = client.whoami().await
-            && status.signed_in
-        {
-            save_identity(&mut config, build_url, &status, None)?;
-            println!("✓ Logged in as @{}\n", status.github_login);
-            return Ok(AuthenticatedBuild { client, status });
+        match client.probe_identity().await {
+            AuthProbe::SignedIn(identity) => {
+                AomiConfig::update(|config| apply_identity(config, build_url, &identity, None))?;
+                return Ok(Authenticated { client, identity });
+            }
+            // Build is unreachable, so we cannot tell whether the credential is
+            // still good. Surface the transport failure rather than assuming the
+            // session expired and opening a browser at an offline user.
+            AuthProbe::Unreachable(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "couldn't verify your Aomi Build login against {build_url}. \
+                         Your saved credential was left alone — check the URL and your \
+                         network, then retry. If it really has expired, run \
+                         `aomi-build login --build-url {build_url}`."
+                    )
+                });
+            }
+            AuthProbe::Rejected => {}
         }
     }
     if env_token.is_some() {
@@ -87,7 +101,6 @@ pub async fn ensure_logged_in(build_url: &str) -> Result<AuthenticatedBuild> {
 
     println!("You need to log in to Aomi Build.");
     let (authenticated, _) = browser_login_and_save(build_url, None, false).await?;
-    println!("✓ Logged in as @{}\n", authenticated.status.github_login);
     Ok(authenticated)
 }
 
@@ -101,35 +114,35 @@ async fn browser_login_and_save(
     build_url: &str,
     backend_url: Option<String>,
     no_browser: bool,
-) -> Result<(AuthenticatedBuild, std::path::PathBuf)> {
-    let identity = browser_login(build_url, no_browser).await?;
-    let status = CliStatusResult {
+) -> Result<(Authenticated, std::path::PathBuf)> {
+    let login = browser_login(build_url, no_browser).await?;
+    let identity = CliStatusResult {
         signed_in: true,
-        github_login: identity.github_login,
-        github_user_id: identity.github_user_id,
+        github_login: login.github_login,
+        github_user_id: login.github_user_id,
     };
-    let client = BuildClient::new(build_url, identity.access_token.clone())?;
-    let mut config = AomiConfig::load();
-    if let Some(backend_url) = backend_url {
-        config.backend_url = Some(backend_url);
-    }
-    let path = save_identity(&mut config, build_url, &status, Some(identity.access_token))?;
-    Ok((AuthenticatedBuild { client, status }, path))
+    let client = BuildClient::new(build_url, login.access_token.clone())?;
+    let path = AomiConfig::update(|config| {
+        if let Some(backend_url) = backend_url {
+            config.backend_url = Some(backend_url);
+        }
+        apply_identity(config, build_url, &identity, Some(login.access_token));
+    })?;
+    Ok((Authenticated { client, identity }, path))
 }
 
-fn save_identity(
+fn apply_identity(
     config: &mut AomiConfig,
     build_url: &str,
     status: &CliStatusResult,
     access_token: Option<String>,
-) -> Result<std::path::PathBuf> {
+) {
     config.build_url = Some(build_url.to_string());
     config.github_user_id = Some(status.github_user_id.clone());
     config.github_login = Some(status.github_login.clone());
     if let Some(access_token) = access_token {
         config.cli_access_token = Some(access_token);
     }
-    config.save()
 }
 
 async fn browser_login(build_url: &str, no_browser: bool) -> Result<LoginIdentity> {

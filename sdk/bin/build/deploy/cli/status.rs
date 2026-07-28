@@ -5,12 +5,12 @@ use std::path::PathBuf;
 use anyhow::{Result, anyhow};
 use clap::Args;
 
-use super::login::ensure_logged_in;
 use super::shared::{
     bin_name, git_context, resolve_activation_token, resolve_backend, resolve_build_url,
 };
+use crate::deploy::session::Session;
+use crate::deploy::state::LocalDeployment;
 use crate::deploy::status::{DeploymentBackendStatus, StatusResult};
-use crate::deploy::types::LocalDeployment;
 
 #[derive(Debug, Args, Clone)]
 pub struct StatusArgs {
@@ -66,7 +66,7 @@ impl StatusArgs {
         };
         let mut report = StatusResult::collect(&state, backend_url, token).await;
         if let Some(build_url) = build_url {
-            let status = ensure_logged_in(&build_url)
+            let status = Session::at(&build_url, None)
                 .await?
                 .client
                 .status(&state.deployment.platform.platform, &state.deployment.id)
@@ -80,6 +80,15 @@ impl StatusArgs {
             println!("{}", serde_json::to_string_pretty(&report)?);
         } else {
             print!("{}", report.render());
+            // The reason people run `status` mid-deploy is to find out whether
+            // they can proceed — say what proceeding looks like.
+            if !report.activated {
+                println!(
+                    "Resume: {} activate --path {}",
+                    bin_name(),
+                    self.path.display()
+                );
+            }
         }
         Ok(())
     }

@@ -8,10 +8,6 @@ use crate::deploy::config::AomiConfig;
 use crate::deploy::flow::{TokenCheck, oauth_install_url, validate_activation_token};
 use crate::deploy::platform::{Platform, normalize_github_repo};
 
-pub async fn run(args: ConnectArgs) -> eyre::Result<()> {
-    args.run().await.map_err(crate::git_error)
-}
-
 #[derive(Debug, Args, Clone)]
 pub struct ConnectArgs {
     /// Platform to connect for (scopes the install + token check).
