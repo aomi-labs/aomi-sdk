@@ -8,11 +8,8 @@ use clap::{Args, Subcommand};
 use super::shared::{APP_SOURCE_ID_ENV, git_context, resolve_activation};
 use crate::deploy::backend::BackendClient;
 use crate::deploy::platform::{Platform, normalize_github_repo};
-use crate::deploy::types::{LocalDeployment, SourceResult, SyncSourceInput};
-
-pub async fn run(args: SourceArgs) -> eyre::Result<()> {
-    args.run().await.map_err(crate::git_error)
-}
+use crate::deploy::state::LocalDeployment;
+use crate::deploy::types::{SourceResult, SyncSourceInput};
 
 #[derive(Debug, Args, Clone)]
 pub struct SourceArgs {

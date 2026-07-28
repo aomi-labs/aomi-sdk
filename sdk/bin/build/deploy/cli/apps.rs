@@ -7,10 +7,6 @@ use super::shared::resolve_activation;
 use crate::deploy::backend::BackendClient;
 use crate::deploy::platform::Platform;
 
-pub async fn run(args: AppsArgs) -> eyre::Result<()> {
-    args.run().await.map_err(crate::git_error)
-}
-
 #[derive(Debug, Args, Clone)]
 pub struct AppsArgs {
     #[command(subcommand)]

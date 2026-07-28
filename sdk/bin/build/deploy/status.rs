@@ -4,7 +4,7 @@
 
 use super::backend::BackendClient;
 use super::platform::Platform;
-use super::types::LocalDeployment;
+use super::state::LocalDeployment;
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]

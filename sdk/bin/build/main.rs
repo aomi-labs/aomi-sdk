@@ -93,13 +93,13 @@ async fn main() -> Result<()> {
         Cmd::Activate(args) => cli::deploy::run_activate_step(args)
             .await
             .map_err(git_error),
-        Cmd::Connect(args) => cli::connect::run(args).await,
-        Cmd::Login(args) => cli::login::run(args).await,
-        Cmd::Token(args) => cli::token::run(args).await,
-        Cmd::Source(args) => cli::source::run(args).await,
-        Cmd::Apps(args) => cli::apps::run(args).await,
+        Cmd::Connect(args) => args.run().await.map_err(git_error),
+        Cmd::Login(args) => args.run().await.map_err(git_error),
+        Cmd::Token(args) => args.run().await.map_err(git_error),
+        Cmd::Source(args) => args.run().await.map_err(git_error),
+        Cmd::Apps(args) => args.run().await.map_err(git_error),
         Cmd::Sdk(args) => sdk_guard::run(args).await,
-        Cmd::Request(args) => cli::request::run(args).await,
+        Cmd::Request(args) => args.run().await.map_err(git_error),
     }
 }
 

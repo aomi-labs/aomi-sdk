@@ -17,10 +17,6 @@ use crate::deploy::backend::BackendClient;
 use crate::deploy::platform::Platform;
 use crate::deploy::types::MintTokenInput;
 
-pub async fn run(args: TokenArgs) -> eyre::Result<()> {
-    args.run().await.map_err(crate::git_error)
-}
-
 #[derive(Debug, Args, Clone)]
 pub struct TokenArgs {
     #[command(subcommand)]

@@ -217,6 +217,32 @@ pub(crate) fn remote_origin(git_root: &Path) -> Result<String> {
         .to_string())
 }
 
+/// Current branch name, or `None` when detached (or git fails).
+pub(crate) fn head_branch(git_root: &Path) -> Option<String> {
+    let name = git_output_at(git_root, ["rev-parse", "--abbrev-ref", "HEAD"]).ok()?;
+    let name = name.trim();
+    (!name.is_empty() && name != "HEAD").then(|| name.to_string())
+}
+
+/// Whether tracked files differ from HEAD. Untracked files are ignored — they
+/// wouldn't ship either, but counting them would flag every repo forever once
+/// the CLI writes its own (usually untracked) `.aomi/deployment.json`.
+/// `None` when git can't say.
+pub(crate) fn worktree_dirty(git_root: &Path) -> Option<bool> {
+    git_output_at(git_root, ["status", "--porcelain", "--untracked-files=no"])
+        .ok()
+        .map(|out| !out.trim().is_empty())
+}
+
+/// Whether `commit` is reachable from any remote-tracking ref — i.e. whether a
+/// deploy that ships this commit can be synced by the backend from GitHub.
+/// `None` when git can't say (no remotes fetched, shallow clone, …).
+pub(crate) fn commit_on_remote(git_root: &Path, commit: &str) -> Option<bool> {
+    git_output_at(git_root, ["branch", "-r", "--contains", commit])
+        .ok()
+        .map(|out| !out.trim().is_empty())
+}
+
 pub(crate) fn tracked_aomi_tomls(git_root: &Path) -> Result<Vec<String>> {
     let raw = git_output_at(
         git_root,
