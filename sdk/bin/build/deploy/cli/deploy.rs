@@ -97,7 +97,14 @@ pub(crate) async fn run_activate_step(args: ActivateArgs) -> Result<()> {
         let build_url = resolve_build_url(&args.build_url, backend_url.as_deref())
             .ok_or_else(|| anyhow!("deploy activate needs --build-url or {BUILD_URL_ENV}"))?;
         let client = ensure_logged_in(&build_url).await?.client;
-        wait_for_build_release(&client, &platform, &state.deployment.id, timeout_message).await?;
+        wait_for_build_release(
+            &client,
+            &platform,
+            &state.deployment.id,
+            state.deployment.platform.pr_url.as_deref(),
+            timeout_message,
+        )
+        .await?;
     }
     args.run().await
 }
@@ -124,15 +131,28 @@ async fn wait_for_backend_release(
     {
         flow::DeployReady::Ready => println!("Release is ready."),
         flow::DeployReady::Failed(msg) => bail!("deployment failed before activation: {msg}"),
+        flow::DeployReady::NoCi(msg) => bail!("{}", no_ci_message(&msg, pr_url)),
         flow::DeployReady::TimedOut => bail!("{timeout_message}"),
     }
     Ok(())
+}
+
+/// `no_ci` is not a build failure — nothing broke, nothing ran. Point at the
+/// deploy PR, since a missing or unpicked-up release workflow on the platform
+/// repo is the usual cause.
+fn no_ci_message(detail: &str, pr_url: Option<&str>) -> String {
+    format!(
+        "no CI ran for this deployment, so there is no release to activate: {detail}\n\
+         Check that the platform repo's deploy PR has a release workflow: {}",
+        pr_url.unwrap_or("(no PR URL recorded)")
+    )
 }
 
 async fn wait_for_build_release(
     client: &BuildClient,
     platform: &Platform,
     deployment_id: &str,
+    pr_url: Option<&str>,
     timeout_message: String,
 ) -> Result<()> {
     println!("Waiting for release readiness...");
@@ -147,6 +167,7 @@ async fn wait_for_build_release(
     {
         flow::DeployReady::Ready => println!("Release is ready."),
         flow::DeployReady::Failed(msg) => bail!("deployment failed before activation: {msg}"),
+        flow::DeployReady::NoCi(msg) => bail!("{}", no_ci_message(&msg, pr_url)),
         flow::DeployReady::TimedOut => bail!("{timeout_message}"),
     }
     Ok(())
@@ -267,6 +288,7 @@ impl DeployStepArgs {
             &client,
             &platform,
             &state.deployment.id,
+            state.deployment.platform.pr_url.as_deref(),
             format!(
                 "deployment did not become ready within 30 minutes; resume with `{} deploy activate --path {}`",
                 bin_name(),
@@ -377,10 +399,10 @@ impl DeployStepArgs {
         };
         Ok(BuildDeployInput {
             platform: platform.to_string(),
-            repo,
             source_ref: self.source_ref(git_root)?,
             aomi_toml_paths: self.aomi_toml_paths(git_root)?,
-            app_source_id: self.resolve_app_source_id(git_root),
+            app_source_id: self.resolve_app_source_id(git_root, &repo),
+            repo,
         })
     }
 
@@ -500,26 +522,42 @@ impl DeployStepArgs {
         Ok(found)
     }
 
-    pub(crate) fn resolve_app_source_id(&self, git_root: &Path) -> Option<i64> {
-        // Resolution order: flag → env → the id recorded by a prior deploy /
-        // `source sync` in `.aomi/deployment.json`. The last step is what lets a
-        // re-deploy run with no `--app-source-id` once the source is known.
-        self.app_source_id
+    /// Resolution order: flag → env → the id recorded by a prior deploy /
+    /// `source sync` in `.aomi/deployment.json`. The last step is what lets a
+    /// re-deploy run with no `--app-source-id` once the source is known.
+    ///
+    /// `repo` is the source the caller actually asked to deploy. The backend
+    /// resolves the repo *from* `app_source_id`, so a recorded id belonging to a
+    /// different repo would silently win over that request — making the wizard's
+    /// "Source repo (owner/name)" answer a no-op. When they disagree, the
+    /// recorded id is dropped so preflight re-resolves the source from `repo`.
+    pub(crate) fn resolve_app_source_id(&self, git_root: &Path, repo: &str) -> Option<i64> {
+        if let Some(id) = self.app_source_id.filter(|id| *id > 0) {
+            return Some(id);
+        }
+        if let Some(id) = env_value(APP_SOURCE_ID_ENV)
+            .and_then(|value| value.parse::<i64>().ok())
             .filter(|id| *id > 0)
-            .or_else(|| {
-                env_value(APP_SOURCE_ID_ENV)
-                    .and_then(|value| value.parse::<i64>().ok())
-                    .filter(|id| *id > 0)
-            })
-            .or_else(|| self.recorded_app_source_id(git_root))
-    }
-
-    pub(crate) fn recorded_app_source_id(&self, git_root: &Path) -> Option<i64> {
-        LocalDeployment::read(git_root)
-            .ok()
-            .flatten()
-            .and_then(|state| state.app_source_id())
-            .filter(|id| *id > 0)
+        {
+            return Some(id);
+        }
+        let state = LocalDeployment::read(git_root).ok().flatten()?;
+        let id = state.app_source_id().filter(|id| *id > 0)?;
+        let recorded_repo = state
+            .source_repo_hint()
+            .and_then(|hint| normalize_github_repo(hint).ok());
+        match recorded_repo {
+            // Recorded against a different repo — re-resolve rather than deploy
+            // the wrong source under the user's nose.
+            Some(recorded) if !recorded.eq_ignore_ascii_case(repo) => {
+                eprintln!(
+                    "  note: .aomi/deployment.json records app_source_id {id} for `{recorded}`, \
+                     but this deploy targets `{repo}` — re-resolving the source."
+                );
+                None
+            }
+            _ => Some(id),
+        }
     }
 }
 

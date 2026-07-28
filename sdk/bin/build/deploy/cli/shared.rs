@@ -57,16 +57,45 @@ pub(crate) fn resolve_backend(flag: &Option<String>) -> Option<String> {
 /// `--build-url` flag → `AOMI_BUILD_URL` → known backend environment mapping
 /// → saved login config. An explicitly selected staging/production backend must
 /// not accidentally reuse a saved Build URL from the other environment.
+///
+/// The env var still wins over the inferred URL — pointing at a local Build is a
+/// legitimate thing to do — but silently pairing a staging backend with the
+/// production Builder is not something a user ever means, so a stale exported
+/// `AOMI_BUILD_URL` that contradicts the chosen backend is called out.
 pub(crate) fn resolve_build_url(
     flag: &Option<String>,
     backend_url: Option<&str>,
 ) -> Option<String> {
-    flag.clone()
+    if let Some(flag) = flag
+        .clone()
         .map(|value| value.trim().trim_end_matches('/').to_string())
         .filter(|value| !value.is_empty())
-        .or_else(|| env_value(BUILD_URL_ENV))
-        .or_else(|| infer_build_url(backend_url?))
+    {
+        return Some(flag);
+    }
+    if let Some(from_env) = env_value(BUILD_URL_ENV) {
+        let from_env = from_env.trim_end_matches('/').to_string();
+        if let Some(inferred) = backend_url.and_then(infer_build_url)
+            && inferred != from_env
+        {
+            warn_once(&format!(
+                "{BUILD_URL_ENV}={from_env} overrides the Aomi Build URL for the selected \
+                 backend ({inferred}). If that is not deliberate, unset {BUILD_URL_ENV} \
+                 or pass --build-url {inferred}."
+            ));
+        }
+        return Some(from_env);
+    }
+    backend_url
+        .and_then(infer_build_url)
         .or_else(|| AomiConfig::load().build_url)
+}
+
+/// Emit a warning at most once per process — the resolvers run on every
+/// command step, and a warning repeated four times per deploy is noise.
+fn warn_once(message: &str) {
+    static WARNED: std::sync::Once = std::sync::Once::new();
+    WARNED.call_once(|| eprintln!("  warning: {message}"));
 }
 
 pub(crate) fn infer_build_url(backend_url: &str) -> Option<String> {

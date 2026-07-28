@@ -56,8 +56,13 @@ pub struct BuildDeployInput {
 #[serde(rename_all = "camelCase")]
 pub struct BuildDeployResult {
     pub ok: bool,
+    /// Snake aliases keep the envelope as tolerant as the nested payloads: the
+    /// Builder BFF answers camelCase, the Rust backend snake_case, and a single
+    /// CLI build has to read whichever one it is pointed at.
+    #[serde(alias = "app_source_id")]
     pub app_source_id: i64,
     pub deployment: DeployPayload,
+    #[serde(alias = "project_url")]
     pub project_url: String,
 }
 
@@ -183,6 +188,11 @@ pub struct BuildActivateInput {
     pub app_source_id: i64,
     pub release_tags: Vec<String>,
     pub apps: Vec<String>,
+    /// Backend server tags from `--target-tag`. Omitted entirely when unused so
+    /// the common request body is byte-for-byte what it has always been; when
+    /// the user does pass the flag it reaches the BFF instead of being dropped.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub target_tags: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -252,7 +262,11 @@ pub struct ActivatedApp {
     pub release_tag: Option<String>,
     #[serde(alias = "isActive")]
     pub is_active: bool,
-    #[serde(default, alias = "artifactReady")]
+    // No `default`: a missing field used to deserialize to `false`, which
+    // `print_activation` reports as a failed activation. Absent and "not ready"
+    // are different problems, so an omitted field is now a parse error like its
+    // `is_active` / `loaded` siblings.
+    #[serde(alias = "artifactReady")]
     pub artifact_ready: bool,
     pub loaded: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -339,18 +353,26 @@ pub struct CliExchangeInput {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CliExchangeResult {
+    #[serde(alias = "access_token")]
     pub access_token: String,
+    #[serde(alias = "token_type")]
     pub token_type: String,
+    #[serde(alias = "expires_in")]
     pub expires_in: i64,
+    #[serde(alias = "github_login")]
     pub github_login: String,
+    #[serde(alias = "github_user_id")]
     pub github_user_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CliStatusResult {
+    #[serde(alias = "signed_in")]
     pub signed_in: bool,
+    #[serde(alias = "github_login")]
     pub github_login: String,
+    #[serde(alias = "github_user_id")]
     pub github_user_id: String,
 }
 
@@ -485,6 +507,16 @@ impl LocalDeployment {
     /// The connected source id recorded by the last deploy, if any.
     pub fn app_source_id(&self) -> Option<i64> {
         self.deployment.source.app_source_id
+    }
+
+    /// The source repo this deployment was created from, as the backend
+    /// reported it — its own `owner/name` slug when present, else the raw
+    /// repository link. Callers normalize before comparing.
+    pub fn source_repo_hint(&self) -> Option<&str> {
+        let source = &self.deployment.source;
+        [source.owner_repo_name.trim(), source.repository_link.trim()]
+            .into_iter()
+            .find(|value| !value.is_empty())
     }
 
     /// Record the connected source id (used by `source sync` / `scaffold` to

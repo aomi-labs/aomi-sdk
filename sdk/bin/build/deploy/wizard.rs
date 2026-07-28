@@ -72,14 +72,13 @@ pub async fn run() -> Result<()> {
 
 async fn deployment_context(config: &mut AomiConfig) -> Result<(String, String, String)> {
     let backend_url = pick_backend(config)?;
-    config.backend_url = Some(backend_url.clone());
     let build_url = resolve_build_url(&None, Some(&backend_url)).ok_or_else(|| {
         anyhow!(
             "custom backend `{backend_url}` needs AOMI_BUILD_URL or a saved `aomi-build login --build-url ...`"
         )
     })?;
+    // May run a browser login, which persists the CLI bearer to the config file.
     login::ensure_logged_in(&build_url).await?;
-    config.build_url = Some(build_url.clone());
 
     // The deploy *destination* platform (a `DbPlatform`, e.g. `community`) —
     // not the source/template repo it's copied from.
@@ -89,11 +88,21 @@ async fn deployment_context(config: &mut AomiConfig) -> Result<(String, String, 
         .context("wizard cancelled")?
         .trim()
         .to_string();
-    config.platform = Some(platform.clone());
 
-    config
-        .save()
-        .context("couldn't save your Aomi Builder config")?;
+    // Merge onto whatever is on disk *now* rather than saving the snapshot this
+    // function started from: `ensure_logged_in` may have written a fresh bearer
+    // in between, and a wholesale save of the stale snapshot would erase it.
+    AomiConfig::update(|saved| {
+        saved.backend_url = Some(backend_url.clone());
+        saved.build_url = Some(build_url.clone());
+        saved.platform = Some(platform.clone());
+    })
+    .context("couldn't save your Aomi Builder config")?;
+
+    // Keep the caller's in-memory copy in step for later loop iterations.
+    config.backend_url = Some(backend_url.clone());
+    config.build_url = Some(build_url.clone());
+    config.platform = Some(platform.clone());
 
     Ok((backend_url, build_url, platform))
 }
@@ -439,32 +448,46 @@ async fn deploy_then_activate(
 
     // Gate activation on the release build, like the portal: poll the
     // deployment's status until it's `ready` before promoting. The deploy step
-    // recorded the id in `.aomi/deployment.json`.
-    let deployment = local_deployment(dir);
-    if let Some(id) = deployment.as_ref().map(|state| &state.deployment.id) {
-        let client = login::ensure_logged_in(build_url).await?.client;
-        println!("Waiting for the release build (up to 30 min, Ctrl-C to stop)…");
-        match flow::poll_build_deployment_ready(
-            &client,
-            platform,
-            id,
-            Duration::from_secs(30 * 60),
-            |state| println!("  build: {state}"),
-        )
-        .await?
-        {
-            flow::DeployReady::Ready => println!("  release is ready — activating.\n"),
-            flow::DeployReady::Failed(msg) => {
-                bail!("the release build failed: {msg}");
-            }
-            flow::DeployReady::TimedOut => {
-                println!(
-                    "Still building after 30 min. Activate once CI is green:\n  \
-                     aomi-build activate --path {}",
-                    dir.display()
-                );
-                return Ok(());
-            }
+    // recorded the id in `.aomi/deployment.json`. A read failure here used to be
+    // swallowed, so the wizard skipped the wait it had just promised and went
+    // straight to an activation that could not succeed either — the same file is
+    // what `activate` reads its release tags from.
+    let deployment = local_deployment(dir)?;
+    let client = login::ensure_logged_in(build_url).await?.client;
+    println!("Waiting for the release build (up to 30 min, Ctrl-C to stop)…");
+    match flow::poll_build_deployment_ready(
+        &client,
+        platform,
+        &deployment.deployment.id,
+        Duration::from_secs(30 * 60),
+        |state| println!("  build: {state}"),
+    )
+    .await?
+    {
+        flow::DeployReady::Ready => println!("  release is ready — activating.\n"),
+        flow::DeployReady::Failed(msg) => {
+            bail!("the release build failed: {msg}");
+        }
+        flow::DeployReady::NoCi(msg) => {
+            bail!(
+                "no CI ran for this deployment, so there is no release to activate: {msg}\n\
+                 The deploy PR opens on the platform repo — check that it has a release \
+                 workflow and that the PR was picked up:\n  {}",
+                deployment
+                    .deployment
+                    .platform
+                    .pr_url
+                    .as_deref()
+                    .unwrap_or("(no PR URL recorded)")
+            );
+        }
+        flow::DeployReady::TimedOut => {
+            println!(
+                "Still building after 30 min. Activate once CI is green:\n  \
+                 aomi-build activate --path {}",
+                dir.display()
+            );
+            return Ok(());
         }
     }
 
@@ -491,9 +514,16 @@ async fn deploy_then_activate(
     }
 }
 
-fn local_deployment(dir: &Path) -> Option<LocalDeployment> {
-    let git_root = super::cli::shared::git_context(dir).ok()?.0;
-    LocalDeployment::read(&git_root).ok().flatten()
+fn local_deployment(dir: &Path) -> Result<LocalDeployment> {
+    let (git_root, _) = super::cli::shared::git_context(dir)?;
+    LocalDeployment::read(&git_root)?.ok_or_else(|| {
+        anyhow!(
+            "the deploy did not leave a .aomi/deployment.json at {} — \
+             without it there is no deployment id to wait on and no release tag to \
+             activate. Re-run the deploy, or activate manually once CI is green.",
+            git_root.display()
+        )
+    })
 }
 
 /// Small yes/no retry prompt; a cancel (Ctrl-C) propagates out to exit.

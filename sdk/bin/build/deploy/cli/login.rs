@@ -15,7 +15,7 @@ use uuid::Uuid;
 use super::shared::{
     BACKEND_URL_ENV, BUILD_TOKEN_ENV, BUILD_URL_ENV, env_value, resolve_backend, resolve_build_url,
 };
-use crate::deploy::build_client::{BuildClient, exchange_cli_code};
+use crate::deploy::build_client::{AuthProbe, BuildClient, exchange_cli_code};
 use crate::deploy::config::AomiConfig;
 use crate::deploy::types::CliStatusResult;
 
@@ -66,17 +66,30 @@ pub struct AuthenticatedBuild {
 }
 
 pub async fn ensure_logged_in(build_url: &str) -> Result<AuthenticatedBuild> {
-    let mut config = AomiConfig::load();
     let env_token = env_value(BUILD_TOKEN_ENV);
-    let saved_token = config.cli_access_token.clone();
+    let saved_token = AomiConfig::load().cli_access_token;
     if let Some(token) = env_token.clone().or(saved_token) {
         let client = BuildClient::new(build_url, token)?;
-        if let Ok(status) = client.whoami().await
-            && status.signed_in
-        {
-            save_identity(&mut config, build_url, &status, None)?;
-            println!("✓ Logged in as @{}\n", status.github_login);
-            return Ok(AuthenticatedBuild { client, status });
+        match client.probe_identity().await {
+            AuthProbe::SignedIn(status) => {
+                save_identity(build_url, &status, None)?;
+                println!("✓ Logged in as @{}\n", status.github_login);
+                return Ok(AuthenticatedBuild { client, status });
+            }
+            // Build is unreachable, so we cannot tell whether the credential is
+            // still good. Surface the transport failure rather than assuming the
+            // session expired and opening a browser at an offline user.
+            AuthProbe::Unreachable(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "couldn't verify your Aomi Build login against {build_url}. \
+                         Your saved credential was left alone — check the URL and your \
+                         network, then retry. If it really has expired, run \
+                         `aomi-build login --build-url {build_url}`."
+                    )
+                });
+            }
+            AuthProbe::Rejected => {}
         }
     }
     if env_token.is_some() {
@@ -109,27 +122,35 @@ async fn browser_login_and_save(
         github_user_id: identity.github_user_id,
     };
     let client = BuildClient::new(build_url, identity.access_token.clone())?;
-    let mut config = AomiConfig::load();
-    if let Some(backend_url) = backend_url {
-        config.backend_url = Some(backend_url);
-    }
-    let path = save_identity(&mut config, build_url, &status, Some(identity.access_token))?;
+    let path = AomiConfig::update(|config| {
+        if let Some(backend_url) = backend_url {
+            config.backend_url = Some(backend_url);
+        }
+        apply_identity(config, build_url, &status, Some(identity.access_token));
+    })?;
     Ok((AuthenticatedBuild { client, status }, path))
 }
 
 fn save_identity(
-    config: &mut AomiConfig,
     build_url: &str,
     status: &CliStatusResult,
     access_token: Option<String>,
 ) -> Result<std::path::PathBuf> {
+    AomiConfig::update(|config| apply_identity(config, build_url, status, access_token))
+}
+
+fn apply_identity(
+    config: &mut AomiConfig,
+    build_url: &str,
+    status: &CliStatusResult,
+    access_token: Option<String>,
+) {
     config.build_url = Some(build_url.to_string());
     config.github_user_id = Some(status.github_user_id.clone());
     config.github_login = Some(status.github_login.clone());
     if let Some(access_token) = access_token {
         config.cli_access_token = Some(access_token);
     }
-    config.save()
 }
 
 async fn browser_login(build_url: &str, no_browser: bool) -> Result<LoginIdentity> {
