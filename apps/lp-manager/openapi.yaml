@@ -1,0 +1,434 @@
+openapi: 3.0.3
+info:
+  title: CryptoPanic API
+  version: "2.0"
+  description: |
+    CryptoPanic news aggregator API (v2) — crypto headline feeds with
+    per-currency filtering, sentiment/UI filters (hot, rising, bullish,
+    bearish, important), and PanicScore-based trending. Used by the
+    lp-manager Aomi app for market context around LP positions.
+
+    ## Base URL
+    The base URL embeds the API plan:
+    `https://cryptopanic.com/api/{api_plan}/v2` where `api_plan` is one of
+    `developer`, `growth`, `enterprise`. Construct the client with the full
+    plan-qualified base URL; paths below are relative to it.
+
+    ## Auth
+    Every request authenticates via the `auth_token` **query parameter**
+    (no signing). Because progenitor ignores `securitySchemes` when
+    generating positional args, `auth_token` is declared as an explicit
+    required query parameter on each operation.
+
+    ## Plan gating
+    Some parameters are Enterprise-only (`last_pull`, `panic_score`,
+    `panic_period`, `panic_sort`, `size`, `with_content`, `search`); the API
+    returns 403 when a plan lacks access. Rate limits are two-layer:
+    requests/second plus a monthly cap (403/429 on breach).
+  contact:
+    email: api@cryptopanic.com
+externalDocs:
+  description: CryptoPanic API reference
+  url: https://cryptopanic.com/developers/api/
+servers:
+  - url: https://cryptopanic.com/api/{api_plan}/v2
+    variables:
+      api_plan:
+        enum: [developer, growth, enterprise]
+        default: developer
+security:
+  - authToken: []
+paths:
+  /posts/:
+    get:
+      operationId: getPosts
+      summary: Retrieve a list of news posts
+      description: |
+        Headline feed with optional filtering by currency codes, region,
+        UI filter (hot/rising/bullish/bearish/important/saved/lol), and
+        kind (news/media). Enterprise plans can additionally sort by
+        PanicScore over a period (trending), full-text search, and request
+        embedded article content.
+      parameters:
+        - $ref: '#/components/parameters/AuthToken'
+        - name: public
+          in: query
+          required: false
+          description: >
+            Enable public usage mode (non-user-specific news, ignores
+            personal source settings). Omit for private mode.
+          schema:
+            type: boolean
+        - name: currencies
+          in: query
+          required: false
+          description: >
+            Comma-separated currency codes to filter by, e.g. `BTC,ETH`.
+          schema:
+            type: string
+        - name: regions
+          in: query
+          required: false
+          description: >
+            Region/language code (e.g. `en`, `de`, `es`, `fr`, `it`, `pt`,
+            `ru`, `tr`, `ar`, `zh`, `ja`, `ko`). Default `en`.
+          schema:
+            type: string
+            default: en
+        - name: filter
+          in: query
+          required: false
+          description: UI filter from the CryptoPanic site.
+          schema:
+            type: string
+            enum: [rising, hot, bullish, bearish, important, saved, lol]
+        - name: kind
+          in: query
+          required: false
+          description: News kind. Default `all`.
+          schema:
+            type: string
+            enum: [news, media, all]
+            default: all
+        - name: following
+          in: query
+          required: false
+          description: >
+            Only sources the authenticated user follows (strictly private
+            API usage).
+          schema:
+            type: boolean
+        - name: last_pull
+          in: query
+          required: false
+          description: >
+            Limit results to items since this ISO 8601 date-time
+            (Enterprise only).
+          schema:
+            type: string
+            format: date-time
+        - name: panic_score
+          in: query
+          required: false
+          description: Include PanicScore for each item (Enterprise only).
+          schema:
+            type: boolean
+        - name: panic_period
+          in: query
+          required: false
+          description: >
+            PanicScore period for trending sort (Enterprise only).
+            Mandatory when `panic_sort` is set.
+          schema:
+            type: string
+            enum: [1h, 6h, 24h]
+        - name: panic_sort
+          in: query
+          required: false
+          description: >
+            Sort items by PanicScore ascending or descending (Enterprise
+            only; requires `panic_period`).
+          schema:
+            type: string
+            enum: [asc, desc]
+        - name: size
+          in: query
+          required: false
+          description: Items per page, 1–50 (Enterprise only).
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+        - name: page
+          in: query
+          required: false
+          description: Page number, 1–50. Default 1.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+            default: 1
+        - name: with_content
+          in: query
+          required: false
+          description: >
+            Only items that have full article content (Enterprise only).
+          schema:
+            type: boolean
+        - name: search
+          in: query
+          required: false
+          description: Keyword search (Enterprise only).
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated list of news posts.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PostsPage'
+        '401':
+          description: Unauthorized — invalid or missing auth_token.
+        '403':
+          description: >
+            Forbidden — rate limit exceeded or plan lacks access to this
+            endpoint/parameter.
+        '429':
+          description: Too many requests — rate limited.
+  /status/:
+    get:
+      operationId: getApiStatus
+      summary: Retrieve API status for your key
+      description: >
+        Usage quota, plan validity, and current call count for the
+        authenticated API key.
+      parameters:
+        - $ref: '#/components/parameters/AuthToken'
+      responses:
+        '200':
+          description: API plan and usage status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiUsage'
+        '401':
+          description: Unauthorized — invalid or missing auth_token.
+components:
+  securitySchemes:
+    authToken:
+      type: apiKey
+      in: query
+      name: auth_token
+      description: CryptoPanic API key.
+  parameters:
+    AuthToken:
+      name: auth_token
+      in: query
+      required: true
+      description: CryptoPanic API key (authenticates every request).
+      schema:
+        type: string
+  schemas:
+    PostsPage:
+      type: object
+      description: One page of news posts with cursor-style page links.
+      properties:
+        next:
+          type: string
+          format: uri
+          nullable: true
+          description: URL of the next page of results, or null.
+        previous:
+          type: string
+          format: uri
+          nullable: true
+          description: URL of the previous page of results, or null.
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Post'
+      required: [results]
+    Post:
+      type: object
+      description: A single news/media post.
+      properties:
+        id:
+          type: integer
+          format: int64
+          description: Unique identifier for the post.
+        slug:
+          type: string
+          description: URL-friendly short title.
+        title:
+          type: string
+          description: Full title of the post.
+        description:
+          type: string
+          nullable: true
+          description: Short summary or excerpt.
+        published_at:
+          type: string
+          format: date-time
+          description: When the post was published (ISO 8601).
+        created_at:
+          type: string
+          format: date-time
+          description: When the post was created in the system.
+        kind:
+          type: string
+          description: Post kind (e.g. news, media).
+        source:
+          $ref: '#/components/schemas/NewsSource'
+        original_url:
+          type: string
+          format: uri
+          nullable: true
+          description: Link to the original article.
+        url:
+          type: string
+          format: uri
+          description: Link to the CryptoPanic-hosted article.
+        image:
+          type: string
+          format: uri
+          nullable: true
+          description: URL of the cover image.
+        instruments:
+          type: array
+          description: Instruments (currencies) mentioned in the post.
+          items:
+            $ref: '#/components/schemas/Instrument'
+        votes:
+          $ref: '#/components/schemas/Votes'
+        panic_score:
+          type: integer
+          nullable: true
+          description: >
+            Proprietary 0–100 score quantifying news market importance and
+            impact (plan-dependent).
+        panic_score_1h:
+          type: integer
+          nullable: true
+          description: PanicScore within the first hour (plan-dependent).
+        author:
+          type: string
+          nullable: true
+          description: Name of the article's author.
+        content:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/ArticleContent'
+      required: [id, title, published_at, kind, url]
+    Instrument:
+      type: object
+      description: A currency/instrument referenced by a post.
+      properties:
+        code:
+          type: string
+          description: Ticker or code of the instrument (e.g. BTC).
+        title:
+          type: string
+          description: Full name of the instrument.
+        slug:
+          type: string
+          description: URL-friendly identifier.
+        url:
+          type: string
+          format: uri
+          description: Link to the instrument's page on CryptoPanic.
+        market_cap_usd:
+          type: number
+          format: double
+          nullable: true
+          description: Market capitalization in USD.
+        price_in_usd:
+          type: number
+          format: double
+          nullable: true
+          description: Current price in USD.
+        price_in_btc:
+          type: number
+          format: double
+          nullable: true
+          description: Current price in BTC.
+        price_in_eth:
+          type: number
+          format: double
+          nullable: true
+          description: Current price in ETH.
+        price_in_eur:
+          type: number
+          format: double
+          nullable: true
+          description: Current price in EUR.
+        market_rank:
+          type: integer
+          nullable: true
+          description: Global market rank of the instrument.
+      required: [code, title]
+    NewsSource:
+      type: object
+      description: The publisher of a post.
+      properties:
+        title:
+          type: string
+          description: Publisher name.
+        region:
+          type: string
+          description: Language code (e.g. en, fr).
+        domain:
+          type: string
+          description: Publisher's domain.
+        type:
+          type: string
+          description: Source type (undocumented free-form string).
+      required: [title]
+    Votes:
+      type: object
+      description: Community reaction counts on a post.
+      properties:
+        negative:
+          type: integer
+          description: Count of negative votes.
+        positive:
+          type: integer
+          description: Count of positive votes.
+        important:
+          type: integer
+          description: Count of "important" votes.
+        liked:
+          type: integer
+          description: Count of "like" votes.
+        disliked:
+          type: integer
+          description: Count of "dislike" votes.
+        lol:
+          type: integer
+          description: Count of "lol" reactions.
+        toxic:
+          type: integer
+          description: Count of "toxic" reactions.
+        saved:
+          type: integer
+          description: Count of times the post was saved.
+        comments:
+          type: integer
+          description: Count of comments on the post.
+    ArticleContent:
+      type: object
+      description: Full article content (Enterprise plans).
+      properties:
+        original:
+          type: string
+          nullable: true
+          description: Raw HTML/markup of the original article, if available.
+        clean:
+          type: string
+          nullable: true
+          description: Sanitized text-only version of the content.
+    ApiUsage:
+      type: object
+      description: Plan validity and quota usage for the API key.
+      properties:
+        plan:
+          type: string
+          description: Current API plan name (e.g. GROWTH).
+        plan_valid_to:
+          type: string
+          format: date
+          description: Date the plan is valid until.
+        is_expired:
+          type: boolean
+          description: Whether the plan has expired.
+        monthly_period_limit:
+          type: integer
+          description: Request limit for the current monthly period.
+        current_call_count:
+          type: integer
+          description: Requests used in the current period.
+        quota_used:
+          type: number
+          format: double
+          description: Fraction of the monthly quota used.
+      required: [plan, is_expired]

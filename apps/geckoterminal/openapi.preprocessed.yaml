@@ -1,0 +1,2418 @@
+openapi: 3.0.1
+info:
+  title: GeckoTerminal API V2
+  description: "GeckoTerminal Public API endpoints.\n\n## Beta Release\nThe API is in its Beta release, and is subject to frequent changes.\nHowever, we aim to provide minimal disruption, and setting the request version would help avoid unexpected issues.\n\n**Please subscribe via [this form](https://forms.gle/jSMu4jLQBXeiVD1U9) to be notified of important API updates.**\n\n## Base URL\nAll endpoints below use the base URL: `https://api.geckoterminal.com/api/v2`\n\n## Versioning\nIt is recommended to set the API version via the `Accept` header.\nThe current version is **20230203**.\n\nFor example, to specify the current version, set header `Accept: application/json;version=20230203`.\n\n_If no version is specified, the latest version will be used._\n\n## Data Freshness\nAll endpoints listed below are cached for **1 minute**\n\nAll data is updated **as fast as 2-3 seconds** after a transaction is confirmed on the blockchain, subject to the network's availability.\n\n## Rate Limit\nThis Public API is limited to approximately 10 calls/minute, which may fluctuate based on network traffic.\nFor higher and more stable rate limits please subscribe to any CoinGecko API paid plan to access higher rate limit for GeckoTerminal endpoints (known as /onchain endpoints) or learn more at [CoinGecko](https://www.coingecko.com/en/api/pricing). \n\nTo share with us your feedback about the public API, let us know [here](https://forms.gle/jSMu4jLQBXeiVD1U9)!\n"
+  version: v2-beta
+servers:
+- url: /api/v2
+paths:
+  /networks/{network}/pools/{pool_address}/ohlcv/{timeframe}:
+    get:
+      tags:
+      - OHLCV
+      summary: Pool OHLCV chart by Pool Address
+      description: This endpoint allows you to **get the OHLCV chart (Open, High, Low, Close, Volume) of a pool based on the provided pool address on a network**
+      operationId: getnetworks_network_pools_pooladdress_ohlcv_timeframe
+      parameters:
+      - in: path
+        name: network
+        description: network ID<br>*refers to [/networks](/api/v2/networks)
+        required: true
+        schema:
+          example: eth
+          type: string
+        style: simple
+      - in: path
+        name: pool_address
+        description: pool contract address
+        required: true
+        schema:
+          example: 0x60594a405d53811d3bc4766596efd80fd545a270
+          type: string
+        style: simple
+      - in: path
+        name: timeframe
+        description: timeframe of the OHLCV chart
+        required: true
+        schema:
+          type: string
+          enum:
+          - day
+          - hour
+          - minute
+        style: simple
+      - in: query
+        name: aggregate
+        description: time period to aggregate for each OHLCV<br><br><b>Available values (day):</b> `1`<br><br><b>Available values (hour):</b> `1`, `4`, `12`<br><br><b>Available values (minute):</b> `1`, `5`, `15`
+        schema:
+          default: '1'
+          type: string
+        style: form
+      - in: query
+        name: before_timestamp
+        description: return OHLCV data before this timestamp (integer seconds since epoch)
+        schema:
+          example: '1679414400'
+          type: string
+        style: form
+      - in: query
+        name: limit
+        description: number of OHLCV results to return, maximum 1000
+        schema:
+          default: 100
+          type: integer
+          maximum: 1000
+        style: form
+      - in: query
+        name: currency
+        description: return OHLCV in USD or quote token
+        schema:
+          default: usd
+          type: string
+          enum:
+          - usd
+          - token
+        style: form
+      - in: query
+        name: include_empty_intervals
+        description: include empty intervals with no trade data
+        schema:
+          default: false
+          type: boolean
+        style: form
+      - in: query
+        name: token
+        description: 'return OHLCV for token<br>use this to invert the chart<br>Available values: ''base'', ''quote'', or token address'
+        schema:
+          default: base
+          type: string
+        examples:
+          base:
+            value: base
+          quote:
+            value: quote
+          base_token_address:
+            value: 0x6b175474e89094c44da98b954eedeac495271d0f
+          quote_token_address:
+            value: 0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2
+        style: form
+      responses:
+        '200':
+          description: Get OHLCV data of a pool
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ohlcv'
+  /networks/{network}/dexes:
+    get:
+      tags:
+      - Dexes
+      summary: Supported Dexes List by Network (ID Map)
+      description: This endpoint allows you to **query all the supported decentralized exchanges (DEXs) based on the provided network on GeckoTerminal**
+      operationId: getnetworks_network_dexes
+      parameters:
+      - in: path
+        name: network
+        description: network ID<br>*refers to [/networks](/api/v2/networks)
+        required: true
+        schema:
+          example: eth
+          type: string
+        style: simple
+      - in: query
+        name: page
+        description: page through results
+        schema:
+          type: integer
+        style: form
+      responses:
+        '200':
+          description: Get list of supported DEXs on a network
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/dexes_list'
+  /networks:
+    get:
+      tags:
+      - Networks
+      summary: Supported Networks List (ID Map)
+      description: This endpoint allows you to **query all the supported networks on GeckoTerminal**
+      operationId: getnetworks
+      parameters:
+      - in: query
+        name: page
+        description: 'page through results (maximum: 10)'
+        schema:
+          type: integer
+          maximum: 10
+        style: form
+      responses:
+        '200':
+          description: Get list of supported networks
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/networks_list'
+  /networks/trending_pools:
+    get:
+      tags:
+      - Pools
+      summary: Trending Pools List
+      description: This endpoint allows you to **query all the trending pools across all networks on GeckoTerminal**
+      operationId: getnetworks_trendingpools
+      parameters:
+      - in: query
+        name: include
+        description: attributes to include, comma-separated if more than one to include<br><br><b>Available values:</b> `base_token`, `quote_token`, `dex`, `network`
+        schema:
+          type: string
+        examples:
+          one value:
+            value: base_token
+          multiple values:
+            value: base_token,quote_token
+        style: form
+      - in: query
+        name: include_gt_community_data
+        description: include GT community data
+        schema:
+          default: false
+          type: boolean
+        style: form
+      - in: query
+        name: page
+        description: 'page through results (maximum: 10)'
+        schema:
+          type: integer
+          maximum: 10
+        style: form
+      - in: query
+        name: duration
+        description: duration to sort trending list by
+        schema:
+          type: string
+          enum:
+          - 5m
+          - 1h
+          - 6h
+          - 24h
+        style: form
+      responses:
+        '200':
+          description: Get trending pools across all networks
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pool'
+  /networks/{network}/trending_pools:
+    get:
+      tags:
+      - Pools
+      summary: Trending Pools by Network
+      description: This endpoint allows you to **query the trending pools based on the provided network**
+      operationId: getnetworks_network_trendingpools
+      parameters:
+      - in: path
+        name: network
+        description: network ID<br>*refers to [/networks](/api/v2/networks)
+        required: true
+        schema:
+          example: eth
+          type: string
+        style: simple
+      - in: query
+        name: include
+        description: attributes to include, comma-separated if more than one to include<br><br><b>Available values:</b> `base_token`, `quote_token`, `dex`
+        schema:
+          type: string
+        examples:
+          one value:
+            value: base_token
+          multiple values:
+            value: base_token,quote_token
+        style: form
+      - in: query
+        name: include_gt_community_data
+        description: include GT community data
+        schema:
+          default: false
+          type: boolean
+        style: form
+      - in: query
+        name: page
+        description: 'page through results (maximum: 10)'
+        schema:
+          type: integer
+          maximum: 10
+        style: form
+      - in: query
+        name: duration
+        description: duration to sort trending list by
+        schema:
+          type: string
+          enum:
+          - 5m
+          - 1h
+          - 6h
+          - 24h
+        style: form
+      responses:
+        '200':
+          description: Get trending pools on a network
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pool'
+  /networks/{network}/pools/{address}:
+    get:
+      tags:
+      - Pools
+      summary: Specific Pool Data by Pool Address
+      description: This endpoint allows you to **query the specific pool based on the provided network and pool address**
+      operationId: getnetworks_network_pools_address
+      parameters:
+      - in: path
+        name: network
+        description: network ID<br>*refers to [/networks](/api/v2/networks)
+        required: true
+        schema:
+          example: eth
+          type: string
+        style: simple
+      - in: path
+        name: address
+        description: pool address
+        required: true
+        schema:
+          example: 0x60594a405d53811d3bc4766596efd80fd545a270
+          type: string
+        style: simple
+      - in: query
+        name: include
+        description: attributes to include, comma-separated if more than one to include<br><br><b>Available values:</b> `base_token`, `quote_token`, `dex`
+        schema:
+          type: string
+        examples:
+          one value:
+            value: base_token
+          multiple values:
+            value: base_token,quote_token
+        style: form
+      - in: query
+        name: include_volume_breakdown
+        description: include volume breakdown
+        schema:
+          default: false
+          type: boolean
+        style: form
+      - in: query
+        name: include_composition
+        description: include pool composition
+        schema:
+          default: false
+          type: boolean
+        style: form
+      responses:
+        '200':
+          description: Get specific pool on a network
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/single_pool_detail'
+  /networks/{network}/pools/multi/{addresses}:
+    get:
+      tags:
+      - Pools
+      summary: Multiple Pools Data by Pool Addresses
+      description: This endpoint allows you to **query multiple pools based on the provided network and pool address**
+      operationId: getnetworks_network_pools_multi_addresses
+      parameters:
+      - in: path
+        name: network
+        description: network ID<br>*refers to [/networks](/api/v2/networks)
+        required: true
+        schema:
+          example: eth
+          type: string
+        style: simple
+      - in: path
+        name: addresses
+        description: pool contract address, comma-separated if more than one pool contract address (up to 30 addresses)
+        required: true
+        schema:
+          type: string
+        examples:
+          one value:
+            value: 0x60594a405d53811d3bc4766596efd80fd545a270
+          multiple values:
+            value: 0x60594a405d53811d3bc4766596efd80fd545a270,0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640
+        style: simple
+      - in: query
+        name: include
+        description: attributes to include, comma-separated if more than one to include<br><br><b>Available values:</b> `base_token`, `quote_token`, `dex`
+        schema:
+          type: string
+        examples:
+          one value:
+            value: base_token
+          multiple values:
+            value: base_token,quote_token
+        style: form
+      - in: query
+        name: include_volume_breakdown
+        description: include volume breakdown
+        schema:
+          default: false
+          type: boolean
+        style: form
+      - in: query
+        name: include_composition
+        description: include pool composition
+        schema:
+          default: false
+          type: boolean
+        style: form
+      responses:
+        '200':
+          description: Get multiple pools on a network
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/multi_pool_details'
+  /networks/{network}/pools:
+    get:
+      tags:
+      - Pools
+      summary: Top Pools by Network
+      description: This endpoint allows you to **query all the top pools based on the provided network**
+      operationId: getnetworks_network_pools
+      parameters:
+      - in: path
+        name: network
+        description: network ID<br>*refers to [/networks](/api/v2/networks)
+        required: true
+        schema:
+          example: eth
+          type: string
+        style: simple
+      - in: query
+        name: include
+        description: attributes to include, comma-separated if more than one to include<br><br><b>Available values:</b> `base_token`, `quote_token`, `dex`
+        schema:
+          type: string
+        examples:
+          one value:
+            value: base_token
+          multiple values:
+            value: base_token,quote_token
+        style: form
+      - in: query
+        name: include_gt_community_data
+        description: include GT community data
+        schema:
+          default: false
+          type: boolean
+        style: form
+      - in: query
+        name: page
+        description: 'page through results (maximum: 10)'
+        schema:
+          type: integer
+          maximum: 10
+        style: form
+      - in: query
+        name: sort
+        description: sort the pools by field
+        schema:
+          type: string
+          enum:
+          - h24_volume_usd_desc
+          - h24_tx_count_desc
+        style: form
+      responses:
+        '200':
+          description: Get top pools on a network
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pool'
+  /networks/{network}/dexes/{dex}/pools:
+    get:
+      tags:
+      - Pools
+      summary: Top Pools by Dex
+      description: This endpoint allows you to **query all the top pools based on the provided network and decentralized exchange (DEX)**
+      operationId: getnetworks_network_dexes_dex_pools
+      parameters:
+      - in: path
+        name: network
+        description: network ID<br>*refers to [/networks](/api/v2/networks)
+        required: true
+        schema:
+          example: eth
+          type: string
+        style: simple
+      - in: path
+        name: dex
+        description: DEX ID<br>*refers to [/networks/{network}/dexes](/api/v2/networks/eth/dexes)
+        required: true
+        schema:
+          example: sushiswap
+          type: string
+        style: simple
+      - in: query
+        name: include
+        description: attributes to include, comma-separated if more than one to include<br><br><b>Available values:</b> `base_token`, `quote_token`, `dex`
+        schema:
+          type: string
+        examples:
+          one value:
+            value: base_token
+          multiple values:
+            value: base_token,quote_token
+        style: form
+      - in: query
+        name: include_gt_community_data
+        description: include GT community data
+        schema:
+          default: false
+          type: boolean
+        style: form
+      - in: query
+        name: page
+        description: 'page through results (maximum: 10)'
+        schema:
+          type: integer
+          maximum: 10
+        style: form
+      - in: query
+        name: sort
+        description: sort the pools by field
+        schema:
+          type: string
+          enum:
+          - h24_volume_usd_desc
+          - h24_tx_count_desc
+        style: form
+      responses:
+        '200':
+          description: Get top pools on a network's dex
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pool'
+  /networks/{network}/tokens/{token_address}/pools:
+    get:
+      tags:
+      - Tokens
+      summary: Top Pools by Token Address
+      description: This endpoint allows you to **query top pools based on the provided token contract address on a network**
+      operationId: getnetworks_network_tokens_tokenaddress_pools
+      parameters:
+      - in: path
+        name: network
+        description: network ID<br>*refers to [/networks](/api/v2/networks)
+        required: true
+        schema:
+          example: eth
+          type: string
+        style: simple
+      - in: path
+        name: token_address
+        description: token contract address
+        required: true
+        schema:
+          example: 0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48
+          type: string
+        style: simple
+      - in: query
+        name: include
+        description: attributes to include, comma-separated if more than one to include<br><br><b>Available values:</b> `base_token`, `quote_token`, `dex`
+        schema:
+          type: string
+        examples:
+          one value:
+            value: base_token
+          multiple values:
+            value: base_token,quote_token
+        style: form
+      - in: query
+        name: include_inactive_source
+        description: include inactive pools when sourcing for token's top pool
+        schema:
+          default: false
+          type: boolean
+        style: form
+      - in: query
+        name: page
+        description: 'page through results (maximum: 10)'
+        schema:
+          type: integer
+          maximum: 10
+        style: form
+      - in: query
+        name: sort
+        description: sort the pools by field
+        schema:
+          type: string
+          enum:
+          - h24_volume_usd_desc
+          - h24_tx_count_desc
+          - h24_volume_usd_liquidity_desc
+        style: form
+      responses:
+        '200':
+          description: Get top pools for a token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pool'
+  /networks/{network}/new_pools:
+    get:
+      tags:
+      - Pools
+      summary: New Pools by Network
+      description: This endpoint allows you to **query all the latest pools based on provided network**
+      operationId: getnetworks_network_newpools
+      parameters:
+      - in: path
+        name: network
+        description: network ID<br>*refers to [/networks](/api/v2/networks)
+        required: true
+        schema:
+          example: eth
+          type: string
+        style: simple
+      - in: query
+        name: include
+        description: attributes to include, comma-separated if more than one to include<br><br><b>Available values:</b> `base_token`, `quote_token`, `dex`
+        schema:
+          type: string
+        examples:
+          one value:
+            value: base_token
+          multiple values:
+            value: base_token,quote_token
+        style: form
+      - in: query
+        name: include_gt_community_data
+        description: include GT community data
+        schema:
+          default: false
+          type: boolean
+        style: form
+      - in: query
+        name: page
+        description: 'page through results (maximum: 10)'
+        schema:
+          type: integer
+          maximum: 10
+        style: form
+      responses:
+        '200':
+          description: Get latest pools on a network
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pool'
+  /networks/new_pools:
+    get:
+      tags:
+      - Pools
+      summary: New Pools List
+      description: This endpoint allows you to **query all the latest pools across all networks on GeckoTerminal**
+      operationId: getnetworks_newpools
+      parameters:
+      - in: query
+        name: include
+        description: attributes to include, comma-separated if more than one to include<br><br><b>Available values:</b> `base_token`, `quote_token`, `dex`, `network`
+        schema:
+          type: string
+        examples:
+          one value:
+            value: base_token
+          multiple values:
+            value: base_token,quote_token
+        style: form
+      - in: query
+        name: include_gt_community_data
+        description: include GT community data
+        schema:
+          default: false
+          type: boolean
+        style: form
+      - in: query
+        name: page
+        description: 'page through results (maximum: 10)'
+        schema:
+          type: integer
+          maximum: 10
+        style: form
+      responses:
+        '200':
+          description: Get latest pools across all networks
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pool'
+  /search/pools:
+    get:
+      tags:
+      - Pools
+      summary: Search Pools
+      description: This endpoint allows you to **search for pools on a network**
+      operationId: getsearch_pools
+      parameters:
+      - in: query
+        name: query
+        description: search query
+        schema:
+          example: weth
+          type: string
+        style: form
+      - in: query
+        name: network
+        description: network ID<br>*refers to [/networks](/api/v2/networks)
+        schema:
+          example: eth
+          type: string
+        style: form
+      - in: query
+        name: include
+        description: attributes to include, comma-separated if more than one to include<br><br><b>Available values:</b> `base_token`, `quote_token`, `dex`
+        schema:
+          type: string
+        examples:
+          one value:
+            value: base_token
+          multiple values:
+            value: base_token,quote_token
+        style: form
+      - in: query
+        name: page
+        description: 'page through results (maximum: 10)'
+        schema:
+          type: integer
+          maximum: 10
+        style: form
+      responses:
+        '200':
+          description: Search for pools on a network
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pool'
+  /networks/{network}/pools/{pool_address}/trades:
+    get:
+      tags:
+      - Trades
+      summary: Past 24 Hour Trades by Pool Address
+      description: This endpoint allows you to **query the last 300 trades in the past 24 hours based on the provided pool address**
+      operationId: getnetworks_network_pools_pooladdress_trades
+      parameters:
+      - in: path
+        name: network
+        description: network ID<br>*refers to [/networks](/api/v2/networks)
+        required: true
+        schema:
+          example: eth
+          type: string
+        style: simple
+      - in: path
+        name: pool_address
+        description: pool contract address
+        required: true
+        schema:
+          example: 0x60594a405d53811d3bc4766596efd80fd545a270
+          type: string
+        style: simple
+      - in: query
+        name: trade_volume_in_usd_greater_than
+        description: filter trades by trade volume in USD greater than this value
+        schema:
+          example: 100000
+          default: 0
+          type: number
+        style: form
+      - in: query
+        name: token
+        description: 'return trades for token<br>use this to invert the data<br>Available values: ''base'', ''quote'', or token address'
+        schema:
+          default: base
+          type: string
+        examples:
+          base:
+            value: base
+          quote:
+            value: quote
+          base_token_address:
+            value: 0x6b175474e89094c44da98b954eedeac495271d0f
+          quote_token_address:
+            value: 0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2
+        style: form
+      responses:
+        '200':
+          description: Get last 300 trades in past 24 hours from a pool
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/trade'
+  /networks/{network}/tokens/{address}:
+    get:
+      tags:
+      - Tokens
+      summary: Token Data by Token Address
+      description: This endpoint allows you to **query specific token data based on the provided token contract address on a network**
+      operationId: getnetworks_network_tokens_address
+      parameters:
+      - in: path
+        name: network
+        description: network ID<br>*refers to [/networks](/api/v2/networks)
+        required: true
+        schema:
+          example: eth
+          type: string
+        style: simple
+      - in: path
+        name: address
+        description: token contract address
+        required: true
+        schema:
+          example: 0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2
+          type: string
+        style: simple
+      - in: query
+        name: include
+        description: attributes to include, comma-separated if more than one to include<br><br><b>Available values:</b> `top_pools`
+        schema:
+          type: string
+        examples:
+          one value:
+            value: top_pools
+        style: form
+      - in: query
+        name: include_composition
+        description: include pool composition
+        schema:
+          default: false
+          type: boolean
+        style: form
+      - in: query
+        name: include_inactive_source
+        description: include inactive pools when sourcing for token's top pool
+        schema:
+          default: false
+          type: boolean
+        style: form
+      responses:
+        '200':
+          description: Get specific token on a network
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/token_detail'
+  /networks/{network}/tokens/multi/{addresses}:
+    get:
+      tags:
+      - Tokens
+      summary: Tokens Data by Token Addresses
+      description: This endpoint allows you to **query multiple tokens data based on the provided token contract addresses on a network**
+      operationId: getnetworks_network_tokens_multi_addresses
+      parameters:
+      - in: path
+        name: network
+        description: network ID<br>*refers to [/networks](/api/v2/networks)
+        required: true
+        schema:
+          example: eth
+          type: string
+        style: simple
+      - in: path
+        name: addresses
+        description: token contract address, comma-separated if more than one token contract address (up to 30 addresses)
+        required: true
+        schema:
+          type: string
+        examples:
+          one value:
+            value: 0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2
+          multiple values:
+            value: 0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2,0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48
+        style: simple
+      - in: query
+        name: include_inactive_source
+        description: include inactive pools when sourcing for token's top pool
+        schema:
+          default: false
+          type: boolean
+        style: form
+      - in: query
+        name: include
+        description: attributes to include, comma-separated if more than one to include<br><br><b>Available values:</b> `top_pools`
+        schema:
+          type: string
+        examples:
+          one value:
+            value: top_pools
+        style: form
+      - in: query
+        name: include_composition
+        description: include pool composition
+        schema:
+          default: false
+          type: boolean
+        style: form
+      responses:
+        '200':
+          description: Get multiple tokens on a network
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/multi_token_detail'
+  /networks/{network}/tokens/{address}/info:
+    get:
+      tags:
+      - Tokens
+      summary: Token Info by Token Address
+      description: This endpoint allows you to **query token metadata (name, symbol,  CoinGecko ID, image, socials, websites, description, etc.) based on a provided token contract address on a network**
+      operationId: getnetworks_network_tokens_address_info
+      parameters:
+      - in: path
+        name: network
+        description: network ID<br>*refers to [/networks](/api/v2/networks)
+        required: true
+        schema:
+          example: eth
+          type: string
+        style: simple
+      - in: path
+        name: address
+        description: token contract address
+        required: true
+        schema:
+          example: 0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2
+          type: string
+        style: simple
+      responses:
+        '200':
+          description: Get specific token info on a network. Data may be sourced on-chain and is not vetted by the CoinGecko team.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/token_info'
+  /networks/{network}/pools/{pool_address}/info:
+    get:
+      tags:
+      - Tokens
+      summary: Pool Tokens Info by Pool Address
+      description: This endpoint allows you to **query pool metadata (base and quote token details, image, socials, websites, description, contract address, etc.) based on a provided pool contract address on a network**
+      operationId: getnetworks_network_pools_pooladdress_info
+      parameters:
+      - in: path
+        name: network
+        description: network ID<br>*refers to [/networks](/api/v2/networks)
+        required: true
+        schema:
+          example: eth
+          type: string
+        style: simple
+      - in: path
+        name: pool_address
+        description: pool contract address
+        required: true
+        schema:
+          example: 0x60594a405d53811d3bc4766596efd80fd545a270
+          type: string
+        style: simple
+      - in: query
+        name: include
+        description: attributes to include, comma-separated if more than one to include<br><br><b>Available values:</b> `pool`
+        schema:
+          type: string
+        examples:
+          one value:
+            value: pool
+        style: form
+      responses:
+        '200':
+          description: Get pool tokens info on a network. Data may be sourced on-chain and is not vetted by the CoinGecko team.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/pool_tokens_info'
+  /tokens/info_recently_updated:
+    get:
+      tags:
+      - Tokens
+      summary: Most Recently Updated Tokens List
+      description: This endpoint allows you to **query 100 most recently updated tokens info of a specific network or across all networks on GeckoTerminal**
+      operationId: gettokens_inforecentlyupdated
+      parameters:
+      - in: query
+        name: include
+        description: attributes to include, comma-separated if more than one to include<br><br><b>Available values:</b> `network`
+        schema:
+          type: string
+        examples:
+          one value:
+            value: network
+        style: form
+      - in: query
+        name: network
+        description: network ID<br>*refers to [/networks](/api/v2/networks)
+        schema:
+          example: eth
+          type: string
+        style: form
+      responses:
+        '200':
+          description: Get 100 tokens info across all networks ordered by most recently updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/token_info_recently_updated'
+  /simple/networks/{network}/token_price/{addresses}:
+    get:
+      tags:
+      - Simple
+      summary: Token Price by Token Addresses
+      description: This endpoint allows you to **get token price based on the provided token contract address on a network**
+      operationId: getsimple_networks_network_tokenprice_addresses
+      parameters:
+      - in: path
+        name: network
+        description: network ID<br>*refers to [/networks](/api/v2/networks)
+        required: true
+        schema:
+          example: eth
+          type: string
+        style: simple
+      - in: path
+        name: addresses
+        description: token contract address, comma-separated if more than one token contract address (up to 30 addresses)
+        required: true
+        schema:
+          type: string
+        examples:
+          one value:
+            value: 0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2
+          multiple values:
+            value: 0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2,0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48
+        style: simple
+      - in: query
+        name: include_market_cap
+        description: include market capitalization
+        schema:
+          default: false
+          type: boolean
+        style: form
+      - in: query
+        name: mcap_fdv_fallback
+        description: return FDV if market cap is not available
+        schema:
+          default: false
+          type: boolean
+        style: form
+      - in: query
+        name: include_24hr_vol
+        description: include 24hr volume
+        schema:
+          default: false
+          type: boolean
+        style: form
+      - in: query
+        name: include_24hr_price_change
+        description: include 24hr price change
+        schema:
+          default: false
+          type: boolean
+        style: form
+      - in: query
+        name: include_total_reserve_in_usd
+        description: include total reserve in USD
+        schema:
+          default: false
+          type: boolean
+        style: form
+      - in: query
+        name: include_inactive_source
+        description: include inactive pools when sourcing for token's top pool
+        schema:
+          default: false
+          type: boolean
+        style: form
+      responses:
+        '200':
+          description: Get current USD prices of multiple tokens on a network
+          content:
+            application/json:
+              schema:
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/simple_token_price'
+components:
+  schemas:
+    errors_object:
+      type: object
+      properties:
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              status:
+                type: string
+              title:
+                type: string
+    relationships:
+      type: object
+    pools_included:
+      type: array
+      items:
+        type: object
+        properties:
+          id:
+            type: string
+          type:
+            type: string
+          attributes:
+            type: object
+            properties:
+              address:
+                type: string
+              name:
+                type: string
+              symbol:
+                nullable: true
+                type: string
+              decimals:
+                nullable: true
+                type: integer
+              coingecko_coin_id:
+                nullable: true
+                type: string
+    dexes_list:
+      example:
+        data:
+        - attributes:
+            name: Uniswap V2
+          id: uniswap_v2
+          type: dex
+        - attributes:
+            name: SushiSwap
+          id: sushiswap
+          type: dex
+        - attributes:
+            name: Uniswap V3
+          id: uniswap_v3
+          type: dex
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              type:
+                type: string
+              attributes:
+                type: object
+                properties:
+                  name:
+                    type: string
+    networks_list:
+      example:
+        data:
+        - attributes:
+            coingecko_asset_platform_id: ethereum
+            name: Ethereum
+          id: eth
+          type: network
+        - attributes:
+            coingecko_asset_platform_id: binance-smart-chain
+            name: BNB Chain
+          id: bsc
+          type: network
+        - attributes:
+            coingecko_asset_platform_id: polygon-pos
+            name: Polygon POS
+          id: polygon_pos
+          type: network
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              type:
+                type: string
+              attributes:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  coingecko_asset_platform_id:
+                    type: string
+    simple_token_price:
+      example:
+        data:
+          attributes:
+            h24_price_change_percentage:
+              0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2: '3.3870290336'
+            h24_volume_usd:
+              0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2: '965988358.733808'
+            market_cap_usd:
+              0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2: '6692452895.779648'
+            token_prices:
+              0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2: '2289.33'
+            total_reserve_in_usd:
+              0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2: '1576179559.94669772339136684208'
+          id: 1ba898f0-eda2-4291-9491-9a5b323f66ef
+          type: simple_token_price
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            id:
+              type: string
+            type:
+              type: string
+            attributes:
+              type: object
+              properties:
+                token_prices:
+                  type: object
+                  additionalProperties:
+                    type: string
+    token:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum:
+          - token
+        attributes:
+          type: object
+          properties:
+            name:
+              type: string
+            address:
+              type: string
+            symbol:
+              type: string
+            decimals:
+              type: integer
+            total_supply:
+              nullable: true
+              type: string
+            normalized_total_supply:
+              nullable: true
+              type: string
+            coingecko_coin_id:
+              nullable: true
+              type: string
+            price_usd:
+              nullable: true
+              type: string
+            fdv_usd:
+              nullable: true
+              type: string
+            total_reserve_in_usd:
+              nullable: true
+              type: string
+            volume_usd:
+              nullable: true
+              type: object
+            market_cap_usd:
+              nullable: true
+              type: string
+        relationships:
+          type: object
+          properties:
+            top_pools:
+              type: object
+              properties:
+                data:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                      type:
+                        type: string
+      required:
+      - id
+      - type
+      - attributes
+    token_detail:
+      example:
+        data:
+          attributes:
+            address: 0xdac17f958d2ee523a2206206994597c13d831ec7
+            banner_image_url: null
+            coingecko_coin_id: tether
+            decimals: 6
+            fdv_usd: '91700939859.6687'
+            image_url: https://coin-images.coingecko.com/coins/images/325/large/Tether.png?1696501661
+            market_cap_usd: '171798403974.784'
+            name: Tether USD
+            normalized_total_supply: '91775654692.2505'
+            price_usd: '0.999188255'
+            symbol: USDT
+            total_reserve_in_usd: '405089394.14192413773442554227'
+            total_supply: '91775654692250534.0'
+            volume_usd:
+              h24: '1142454033.37436'
+          id: eth_0xdac17f958d2ee523a2206206994597c13d831ec7
+          relationships:
+            top_pools:
+              data:
+              - id: eth_0x667701e51b4d1ca244f17c78f7ab8744b4c99f9b
+                type: pool
+              - id: eth_0xf063bd202e45d6b2843102cb4ece339026645d4a
+                type: pool
+              - id: eth_0x8aa4e11cbdf30eedc92100f4c8a31ff748e201d44712cc8c90d189edaa8e4e47
+                type: pool
+          type: token
+        included:
+        - attributes:
+            address: 0x667701e51b4d1ca244f17c78f7ab8744b4c99f9b
+            base_token_balance: '74198606.301554'
+            base_token_liquidity_usd: '74194892.50738515'
+            base_token_price_native_currency: '0.000223341206041575'
+            base_token_price_quote_token: '1.0007623117'
+            base_token_price_usd: '0.999949947925521'
+            fdv_usd: '91700939859.6687'
+            market_cap_usd: '171798403975.064'
+            name: USDC / USDT
+            pool_created_at: 2025-09-18T08:28:30Z
+            price_change_percentage:
+              h1: '0'
+              h24: '-0.5'
+              h6: '-0.18'
+              m15: '-0.65'
+              m30: '-0.01'
+              m5: '-0.02'
+            quote_token_balance: '29771050.29628'
+            quote_token_liquidity_usd: '29746883.795105774'
+            quote_token_price_base_token: '0.9992382689'
+            quote_token_price_native_currency: '0.000223171080110164'
+            quote_token_price_usd: '0.99918825500163'
+            reserve_in_usd: '103939687.035'
+            token_price_usd: '0.99918825500163'
+            transactions:
+              h1:
+                buyers: 16
+                buys: 39
+                sellers: 15
+                sells: 48
+              h24:
+                buyers: 55
+                buys: 870
+                sellers: 59
+                sells: 1109
+              h6:
+                buyers: 31
+                buys: 180
+                sellers: 35
+                sells: 271
+              m15:
+                buyers: 3
+                buys: 4
+                sellers: 5
+                sells: 7
+              m30:
+                buyers: 7
+                buys: 12
+                sellers: 9
+                sells: 19
+              m5:
+                buyers: 0
+                buys: 0
+                sellers: 2
+                sells: 2
+            volume_usd:
+              h1: '9434171.29930675'
+              h24: '388004708.962186'
+              h6: '84784863.3965608'
+              m15: '1857835.95996426'
+              m30: '3190909.49729904'
+              m5: '988.7572917698'
+          id: eth_0x667701e51b4d1ca244f17c78f7ab8744b4c99f9b
+          relationships:
+            base_token:
+              data:
+                id: eth_0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48
+                type: token
+            dex:
+              data:
+                id: fluid-ethereum
+                type: dex
+            quote_token:
+              data:
+                id: eth_0xdac17f958d2ee523a2206206994597c13d831ec7
+                type: token
+          type: pool
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/token'
+        included:
+          type: array
+          items:
+            $ref: '#/components/schemas/pool'
+    multi_token_detail:
+      example:
+        data:
+        - attributes:
+            address: 0x44ff8620b8ca30902395a7bd3f2407e1a091bf73
+            banner_image_url: null
+            coingecko_coin_id: virtual-protocol
+            decimals: 18
+            fdv_usd: '1236049062.71205'
+            image_url: https://coin-images.coingecko.com/coins/images/34057/large/LOGOMARK.png?1708356054
+            market_cap_usd: '810357802.002085'
+            name: Virtual Protocol
+            normalized_total_supply: '1000000000.0'
+            price_usd: '1.2360509143'
+            symbol: VIRTUAL
+            total_reserve_in_usd: '1057431.7464185216625800287534040469'
+            total_supply: '1000000000000000000000000000.0'
+            volume_usd:
+              h24: '38713.9260903249'
+          id: eth_0x44ff8620b8ca30902395a7bd3f2407e1a091bf73
+          relationships:
+            top_pools:
+              data:
+              - id: eth_0x95a45a87dd4d3a1803039072f37e075f37b23d75
+                type: pool
+          type: token
+        included:
+        - attributes:
+            address: 0x95a45a87dd4d3a1803039072f37e075f37b23d75
+            base_token_balance: '632455.064963526'
+            base_token_liquidity_usd: '781765.7043993239'
+            base_token_price_native_currency: '0.000276634218716478'
+            base_token_price_quote_token: '0.0002766342187'
+            base_token_price_usd: '1.23605091431632'
+            fdv_usd: '1236049062.69573'
+            market_cap_usd: '810357802.002085'
+            name: VIRTUAL / WETH 1%
+            pool_created_at: 2023-12-24T15:16:59Z
+            price_change_percentage:
+              h1: '-0.033'
+              h24: '-3.945'
+              h6: '-1.177'
+              m15: '0'
+              m30: '-0.01'
+              m5: '0'
+            quote_token_balance: '47.9170335228147'
+            quote_token_liquidity_usd: '214107.04772415984'
+            quote_token_price_base_token: '3614.881790979'
+            quote_token_price_native_currency: '1.0'
+            quote_token_price_usd: '4468.28678620552'
+            reserve_in_usd: '995880.9039'
+            transactions:
+              h1:
+                buyers: 0
+                buys: 0
+                sellers: 8
+                sells: 12
+              h24:
+                buyers: 13
+                buys: 17
+                sellers: 44
+                sells: 68
+              h6:
+                buyers: 4
+                buys: 5
+                sellers: 26
+                sells: 39
+              m15:
+                buyers: 0
+                buys: 0
+                sellers: 0
+                sells: 0
+              m30:
+                buyers: 0
+                buys: 0
+                sellers: 4
+                sells: 4
+              m5:
+                buyers: 0
+                buys: 0
+                sellers: 0
+                sells: 0
+            volume_usd:
+              h1: '349.000957995'
+              h24: '21703.1874601209'
+              h6: '15478.0378042767'
+              m15: '0.0'
+              m30: '124.147451535'
+              m5: '0.0'
+          id: eth_0x95a45a87dd4d3a1803039072f37e075f37b23d75
+          relationships:
+            base_token:
+              data:
+                id: eth_0x44ff8620b8ca30902395a7bd3f2407e1a091bf73
+                type: token
+            dex:
+              data:
+                id: uniswap_v3
+                type: dex
+            quote_token:
+              data:
+                id: eth_0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2
+                type: token
+          type: pool
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/token'
+        included:
+          type: array
+          items:
+            $ref: '#/components/schemas/pool'
+    token_info_recently_updated:
+      example:
+        data:
+        - attributes:
+            address: 8kgMCX7ezivU472eXaiGRu8xzNetpdxKDvNQBwKRipxi
+            banner_image_url: null
+            coingecko_coin_id: null
+            decimals: 6
+            description: Our mission is to help the IRL Wizards of Doge go viral in support of Elon’s DOGE initiative and to propagate wizards throughout the realm
+            discord_url: null
+            gt_score: 62.50770642201834
+            image_url: https://assets.geckoterminal.com/23fwhe56einulc0vqgs6bhkfusfr
+            metadata_updated_at: 2025-05-26T07:47:20Z
+            name: WIZARDS OF DOGE
+            symbol: WOD
+            telegram_handle: null
+            twitter_handle: wizzoordofwod
+            websites:
+            - https://wizzoordofwod.com
+          id: solana_8kgMCX7ezivU472eXaiGRu8xzNetpdxKDvNQBwKRipxi
+          relationships:
+            network:
+              data:
+                id: solana
+                type: network
+          type: token
+      type: object
+      properties:
+        data:
+          type: array
+          properties:
+            id:
+              type: string
+            type:
+              type: string
+            attributes:
+              type: object
+              properties:
+                name:
+                  type: string
+                address:
+                  type: string
+                symbol:
+                  type: string
+                decimals:
+                  type: integer
+                coingecko_coin_id:
+                  nullable: true
+                  type: string
+                image_url:
+                  nullable: true
+                  type: string
+                banner_image_url:
+                  nullable: true
+                  type: string
+                websites:
+                  type: array
+                  items:
+                    type: string
+                description:
+                  nullable: true
+                  type: string
+                discord_url:
+                  nullable: true
+                  type: string
+                telegram_handle:
+                  nullable: true
+                  type: string
+                twitter_handle:
+                  nullable: true
+                  type: string
+                categories:
+                  nullable: true
+                  type: array
+                  items:
+                    type: string
+                gt_category_ids:
+                  nullable: true
+                  type: array
+                  items:
+                    type: string
+                gt_score:
+                  nullable: true
+                  type: number
+                  format: float
+                metadata_updated_at:
+                  nullable: true
+                  type: string
+                  format: datetime
+              required:
+              - name
+              - address
+              - symbol
+              - coingecko_coin_id
+              - image_url
+              - websites
+              - description
+              - discord_url
+              - telegram_handle
+              - twitter_handle
+              - gt_score
+        relationships:
+          $ref: '#/components/schemas/relationships'
+    token_info:
+      example:
+        data:
+          attributes:
+            address: 0xdac17f958d2ee523a2206206994597c13d831ec7
+            banner_image_url: https://assets.geckoterminal.com/vgvwashzmsg7qt9iamrclayfplde
+            categories: []
+            coingecko_coin_id: tether
+            description: Tether (USDT) is a cryptocurrency with a value meant to mirror the value of the U.S. dollar...
+            developer_address: null
+            developer_holding_percentage: null
+            discord_url: null
+            freeze_authority: null
+            gt_categories_id: []
+            gt_score: 92.6605504587156
+            gt_score_details:
+              creation: 100
+              holders: 0
+              info: 100
+              pool: 87.5
+              transaction: 0
+            holders:
+              count: 7041203
+              distribution_percentage:
+                11_30: '13.4293'
+                31_50: '3.9681'
+                rest: '37.0244'
+                top_10: '45.5782'
+              last_updated: 2025-03-12T05:28:50Z
+            image:
+              large: https://assets.coingecko.com/coins/images/325/large/Tether.png?1696501661
+              small: https://assets.coingecko.com/coins/images/325/small/Tether.png?1696501661
+              thumb: https://assets.coingecko.com/coins/images/325/thumb/Tether.png?1696501661
+            image_url: https://assets.coingecko.com/coins/images/325/small/Tether.png?1696501661
+            is_honeypot: false
+            mint_authority: null
+            name: Tether USD
+            symbol: USDT
+            telegram_handle: null
+            twitter_handle: Tether_to
+            websites:
+            - https://tether.to/
+          id: eth_0xdac17f958d2ee523a2206206994597c13d831ec7
+          type: token
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            id:
+              type: string
+            type:
+              type: string
+            attributes:
+              type: object
+              properties:
+                address:
+                  type: string
+                name:
+                  type: string
+                symbol:
+                  type: string
+                coingecko_coin_id:
+                  nullable: true
+                  type: string
+                websites:
+                  type: array
+                  items:
+                    type: string
+                description:
+                  nullable: true
+                  type: string
+                gt_score:
+                  nullable: true
+                  type: number
+                gt_score_details:
+                  type: object
+                discord_url:
+                  nullable: true
+                  type: string
+                telegram_handle:
+                  nullable: true
+                  type: string
+                twitter_handle:
+                  nullable: true
+                  type: string
+                categories:
+                  nullable: true
+                  type: array
+                  items:
+                    type: string
+                holders:
+                  type: object
+                mint_authority:
+                  nullable: true
+                  type: string
+                freeze_authority:
+                  nullable: true
+                  type: string
+                is_honeypot:
+                  oneOf:
+                  - type: boolean
+                  - type: string
+                developer_address:
+                  nullable: true
+                  type: string
+                developer_holding_percentage:
+                  nullable: true
+                  type: number
+    pool_tokens_info:
+      example:
+        data:
+        - attributes:
+            address: 0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2
+            banner_image_url: https://assets.geckoterminal.com/vgvwashzmsg7qt9iamrclayfplde
+            categories: []
+            coingecko_coin_id: weth
+            description: WETH is the tokenized/packaged form of ETH that you use to pay for items when you interact with Ethereum dApps...
+            developer_address: null
+            developer_holding_percentage: null
+            discord_url: null
+            freeze_authority: null
+            gt_categories_id: []
+            gt_score: 92.6605504587156
+            gt_score_details:
+              creation: 100
+              holders: 100
+              info: 100
+              pool: 87.5
+              transaction: 0
+            holders:
+              count: 1385496
+              distribution_percentage:
+                11_30: '13.5825'
+                31_50: '4.7971'
+                rest: '26.502'
+                top_10: '55.1184'
+              last_updated: 2025-03-12T13:07:47Z
+            image:
+              large: https://assets.coingecko.com/coins/images/2518/large/weth.png?1696503332
+              small: https://assets.coingecko.com/coins/images/2518/small/weth.png?1696503332
+              thumb: https://assets.coingecko.com/coins/images/2518/thumb/weth.png?1696503332
+            image_url: https://assets.coingecko.com/coins/images/2518/small/weth.png?1696503332
+            is_honeypot: false
+            mint_authority: null
+            name: Wrapped Ether
+            symbol: WETH
+            telegram_handle: null
+            twitter_handle: null
+            websites:
+            - https://weth.io/
+          id: eth_0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2
+          type: token
+        - attributes:
+            address: 0xdac17f958d2ee523a2206206994597c13d831ec7
+            categories: []
+            coingecko_coin_id: tether
+            description: Tether (USDT) is a cryptocurrency with a value meant to mirror the value of the U.S. dollar. ...
+            developer_address: null
+            developer_holding_percentage: null
+            discord_url: null
+            freeze_authority: null
+            gt_categories_id: []
+            gt_score: 92.6605504587156
+            gt_score_details:
+              creation: 100
+              holders: 0
+              info: 100
+              pool: 87.5
+              transaction: 0
+            holders:
+              count: 7041203
+              distribution_percentage:
+                11_30: '13.4293'
+                31_50: '3.9681'
+                rest: '37.0244'
+                top_10: '45.5782'
+              last_updated: 2025-03-12T05:28:50Z
+            image_url: https://assets.coingecko.com/coins/images/325/small/Tether.png?1696501661
+            is_honeypot: false
+            mint_authority: null
+            name: Tether USD
+            symbol: USDT
+            telegram_handle: null
+            twitter_handle: Tether_to
+            websites:
+            - https://tether.to/
+          id: eth_0xdac17f958d2ee523a2206206994597c13d831ec7
+          type: token
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/token_info'
+    pool_resource:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        attributes:
+          type: object
+          properties:
+            name:
+              type: string
+            address:
+              type: string
+            base_token_price_usd:
+              nullable: true
+              type: string
+            base_token_price_native_currency:
+              nullable: true
+              type: string
+            quote_token_price_usd:
+              nullable: true
+              type: string
+            quote_token_price_native_currency:
+              nullable: true
+              type: string
+            base_token_price_quote_token:
+              nullable: true
+              type: string
+            quote_token_price_base_token:
+              nullable: true
+              type: string
+            pool_created_at:
+              nullable: true
+              type: string
+            fdv_usd:
+              nullable: true
+              type: string
+            market_cap_usd:
+              nullable: true
+              type: string
+            price_change_percentage:
+              type: object
+            transactions:
+              type: object
+            volume_usd:
+              type: object
+            reserve_in_usd:
+              nullable: true
+              type: string
+        relationships:
+          type: object
+          properties:
+            base_token:
+              type: object
+              properties:
+                data:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                    type:
+                      type: string
+            quote_token:
+              type: object
+              properties:
+                data:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                    type:
+                      type: string
+            dex:
+              type: object
+              properties:
+                data:
+                  type: object
+                  properties:
+                    id:
+                      type: string
+                    type:
+                      type: string
+    pool:
+      example:
+        data:
+        - attributes:
+            address: 0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640
+            base_token_price_native_currency: '1.0'
+            base_token_price_quote_token: '3662.46'
+            base_token_price_usd: '3653.12491645176'
+            fdv_usd: '11007041041'
+            market_cap_usd: '11007041041'
+            name: WETH / USDC 0.05%
+            pool_created_at: 2021-12-29T12:35:14Z
+            price_change_percentage:
+              h1: '0.51'
+              h24: '7.71'
+              h6: '0.86'
+              m15: '0.21'
+              m30: '0.31'
+              m5: '0'
+            quote_token_price_base_token: '0.00027304'
+            quote_token_price_native_currency: '0.000273040545093221'
+            quote_token_price_usd: '0.998343707926245'
+            reserve_in_usd: '163988541.3812'
+            transactions:
+              h1:
+                buyers: 83
+                buys: 97
+                sellers: 124
+                sells: 144
+              h24:
+                buyers: 1625
+                buys: 2966
+                sellers: 2399
+                sells: 3847
+              m15:
+                buyers: 19
+                buys: 19
+                sellers: 27
+                sells: 27
+              m30:
+                buyers: 45
+                buys: 49
+                sellers: 57
+                sells: 61
+              m5:
+                buyers: 7
+                buys: 7
+                sellers: 2
+                sells: 2
+            volume_usd:
+              h1: '16798158.0138526'
+              h24: '536545444.904535'
+              h6: '164054610.850188'
+              m15: '2056262.885098'
+              m30: '4081230.098456'
+              m5: '868581.7348314'
+          id: eth_0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640
+          relationships:
+            base_token:
+              data:
+                id: eth_0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2
+                type: token
+            dex:
+              data:
+                id: uniswap_v3
+                type: dex
+            quote_token:
+              data:
+                id: eth_0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48
+                type: token
+          type: pool
+        included:
+        - attributes:
+            address: 0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2
+            coingecko_coin_id: weth
+            decimals: 18
+            image_url: https://assets.coingecko.com/coins/images/2518/small/weth.png?1696503332
+            name: Wrapped Ether
+            symbol: WETH
+          id: eth_0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2
+          type: token
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/pool_resource'
+        included:
+          $ref: '#/components/schemas/pools_included'
+    pool_details:
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        attributes:
+          type: object
+          properties:
+            name:
+              type: string
+            pool_name:
+              type: string
+            pool_fee_percentage:
+              nullable: true
+              type: string
+            address:
+              type: string
+            base_token_price_usd:
+              nullable: true
+              type: string
+            base_token_price_native_currency:
+              nullable: true
+              type: string
+            base_token_balance:
+              nullable: true
+              type: string
+            base_token_liquidity_usd:
+              nullable: true
+              type: string
+            quote_token_price_usd:
+              nullable: true
+              type: string
+            quote_token_price_native_currency:
+              nullable: true
+              type: string
+            quote_token_balance:
+              nullable: true
+              type: string
+            quote_token_liquidity_usd:
+              nullable: true
+              type: string
+            base_token_price_quote_token:
+              nullable: true
+              type: string
+            quote_token_price_base_token:
+              nullable: true
+              type: string
+            pool_created_at:
+              nullable: true
+              type: string
+            fdv_usd:
+              nullable: true
+              type: string
+            market_cap_usd:
+              nullable: true
+              type: string
+            price_change_percentage:
+              type: object
+            transactions:
+              type: object
+            volume_usd:
+              type: object
+            net_buy_volume_usd:
+              type: object
+            buy_volume_usd:
+              type: object
+            sell_volume_usd:
+              type: object
+            reserve_in_usd:
+              nullable: true
+              type: string
+            locked_liquidity_percentage:
+              nullable: true
+              type: string
+            launchpad_details:
+              nullable: true
+              type: object
+    multi_pool_details:
+      example:
+        data:
+        - attributes:
+            address: 0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640
+            base_token_balance: '5783.57638014946'
+            base_token_liquidity_usd: '25794285.689214855'
+            base_token_price_native_currency: '1.0'
+            base_token_price_quote_token: '4467.038132299'
+            base_token_price_usd: '4459.91960575582'
+            buy_volume_usd:
+              h1: '1433790.04000455'
+              h24: '8012516.79734659'
+              h6: '2569275.25209895'
+              m15: '90542.361944655'
+              m30: '166769.501005617'
+              m5: '0.0'
+            fdv_usd: '11160006028.1758'
+            locked_liquidity_percentage: '0.0'
+            market_cap_usd: '11166433701.589'
+            name: WETH / USDC 0.05%
+            net_buy_volume_usd:
+              h1: '66459.25132413'
+              h24: '-165843.81722825'
+              h6: '-336894.73878909'
+              m15: '-106958.58061148'
+              m30: '-32014.899699526'
+              m5: '-37399.6069733459'
+            pool_created_at: 2021-12-29T12:35:14Z
+            pool_fee_percentage: '0.05'
+            pool_name: WETH / USDC
+            price_change_percentage:
+              h1: '0.039'
+              h24: '-0.221'
+              h6: '-0.435'
+              m15: '0.027'
+              m30: '0.028'
+              m5: '0'
+            quote_token_balance: '64655288.355199'
+            quote_token_liquidity_usd: '64552255.7925259'
+            quote_token_price_base_token: '0.0002238619798'
+            quote_token_price_native_currency: '0.000223861979768972'
+            quote_token_price_usd: '0.998614899014123'
+            reserve_in_usd: '90346541.3306'
+            sell_volume_usd:
+              h1: '1367330.78868042'
+              h24: '8178360.61457484'
+              h6: '2906169.99088804'
+              m15: '197500.942556135'
+              m30: '198784.400705143'
+              m5: '37399.6069733459'
+            transactions:
+              h1:
+                buyers: 56
+                buys: 86
+                sellers: 79
+                sells: 104
+              h24:
+                buyers: 740
+                buys: 1517
+                sellers: 1302
+                sells: 1828
+              h6:
+                buyers: 212
+                buys: 383
+                sellers: 388
+                sells: 524
+              m15:
+                buyers: 9
+                buys: 9
+                sellers: 23
+                sells: 27
+              m30:
+                buyers: 18
+                buys: 23
+                sellers: 37
+                sells: 43
+              m5:
+                buyers: 0
+                buys: 0
+                sellers: 4
+                sells: 4
+            volume_usd:
+              h1: '2801120.82868497'
+              h24: '16190877.4119214'
+              h6: '5475445.24298699'
+              m15: '288043.30450079'
+              m30: '365553.90171076'
+              m5: '37399.6069733459'
+          id: eth_0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640
+          relationships:
+            base_token:
+              data:
+                id: eth_0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2
+                type: token
+            dex:
+              data:
+                id: uniswap_v3
+                type: dex
+            quote_token:
+              data:
+                id: eth_0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48
+                type: token
+          type: pool
+        included:
+        - attributes:
+            address: 0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2
+            coingecko_coin_id: weth
+            decimals: 18
+            image_url: https://coin-images.coingecko.com/coins/images/2518/large/weth.png?1696503332
+            name: Wrapped Ether
+            symbol: WETH
+          id: eth_0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2
+          type: token
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/pool_details'
+        included:
+          $ref: '#/components/schemas/pools_included'
+    single_pool_detail:
+      example:
+        data:
+          attributes:
+            address: 0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640
+            base_token_balance: '5713.28147604894'
+            base_token_liquidity_usd: '25559474.76756355'
+            base_token_price_native_currency: '1.0'
+            base_token_price_quote_token: '4483.543371561'
+            base_token_price_usd: '4473.69429892668'
+            buy_volume_usd:
+              h1: '305597.110959759'
+              h24: '7260323.6767418'
+              h6: '1331928.64807714'
+              m15: '58659.5847657773'
+              m30: '164918.943968904'
+              m5: '0.0'
+            fdv_usd: '11190873336.847'
+            locked_liquidity_percentage: '0.0'
+            market_cap_usd: '11195941219.2312'
+            name: WETH / USDC 0.05%
+            net_buy_volume_usd:
+              h1: '213181.8440453441'
+              h24: '-3562.19491886'
+              h6: '39055.74647786'
+              m15: '20088.5420905036'
+              m30: '112265.1687880188'
+              m5: '-14474.0609971508'
+            pool_created_at: 2021-12-29T12:35:14Z
+            pool_fee_percentage: '0.05'
+            pool_name: WETH / USDC
+            price_change_percentage:
+              h1: '0'
+              h24: '0.06'
+              h6: '-0.31'
+              m15: '0.01'
+              m30: '0'
+              m5: '0'
+            quote_token_balance: '64636039.082111'
+            quote_token_liquidity_usd: '64494052.04397222'
+            quote_token_price_base_token: '0.0002230378781'
+            quote_token_price_native_currency: '0.000223037878108427'
+            quote_token_price_usd: '0.997996963545633'
+            reserve_in_usd: '90053526.8909'
+            sell_volume_usd:
+              h1: '92415.2669144149'
+              h24: '7263885.87166066'
+              h6: '1292872.90159928'
+              m15: '38571.0426752737'
+              m30: '52653.7751808852'
+              m5: '14474.0609971508'
+            transactions:
+              h1:
+                buyers: 52
+                buys: 72
+                sellers: 55
+                sells: 66
+              h24:
+                buyers: 720
+                buys: 1405
+                sellers: 1312
+                sells: 1769
+              h6:
+                buyers: 270
+                buys: 394
+                sellers: 306
+                sells: 374
+              m15:
+                buyers: 7
+                buys: 7
+                sellers: 13
+                sells: 14
+              m30:
+                buyers: 30
+                buys: 36
+                sellers: 31
+                sells: 36
+              m5:
+                buyers: 0
+                buys: 0
+                sellers: 4
+                sells: 4
+            volume_usd:
+              h1: '398012.377874174'
+              h24: '14524209.5484025'
+              h6: '2624801.54967643'
+              m15: '97230.627441051'
+              m30: '217572.719149789'
+              m5: '14474.0609971508'
+          id: eth_0x88e6a0c2ddd26feeb64f039a2c41296fcb3f5640
+          relationships:
+            base_token:
+              data:
+                id: eth_0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2
+                type: token
+            dex:
+              data:
+                id: uniswap_v3
+                type: dex
+            quote_token:
+              data:
+                id: eth_0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48
+                type: token
+          type: pool
+        included:
+        - attributes:
+            address: 0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2
+            coingecko_coin_id: weth
+            decimals: 18
+            image_url: https://coin-images.coingecko.com/coins/images/2518/large/weth.png?1696503332
+            name: Wrapped Ether
+            symbol: WETH
+          id: eth_0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2
+          type: token
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/pool_details'
+        included:
+          $ref: '#/components/schemas/pools_included'
+    ohlcv:
+      example:
+        data:
+          attributes:
+            ohlcv_list:
+            - - 1712534400
+              - 3454.61590249189
+              - 3660.85954963415
+              - 3417.91885296256
+              - 3660.85954963415
+              - 306823.277031161
+            - - 1712448000
+              - 3362.60273217873
+              - 3455.28884490954
+              - 3352.95305060685
+              - 3454.61590249189
+              - 242144.864784184
+            - - 1712361600
+              - 3323.05578706056
+              - 3391.19811016133
+              - 3317.73497182435
+              - 3362.60273217873
+              - 273323.661682931
+          id: bc786a99-7205-4c80-aaa1-b9634d97c926
+          type: ohlcv_request_response
+        meta:
+          base:
+            address: 0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2
+            coingecko_coin_id: weth
+            name: Wrapped Ether
+            symbol: WETH
+          quote:
+            address: 0xdac17f958d2ee523a2206206994597c13d831ec7
+            coingecko_coin_id: tether
+            name: Tether USD
+            symbol: USDT
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            id:
+              type: string
+            type:
+              type: string
+            attributes:
+              type: object
+              properties:
+                ohlcv_list:
+                  type: array
+                  items:
+                    type: array
+                    items:
+                      type: number
+        meta:
+          type: object
+          properties:
+            base:
+              type: object
+              properties:
+                address:
+                  type: string
+                name:
+                  type: string
+                symbol:
+                  type: string
+                coingecko_coin_id:
+                  nullable: true
+                  type: string
+            quote:
+              type: object
+              properties:
+                address:
+                  type: string
+                name:
+                  type: string
+                symbol:
+                  type: string
+                coingecko_coin_id:
+                  nullable: true
+                  type: string
+    trade:
+      example:
+        data:
+        - attributes:
+            block_number: 19612255
+            block_timestamp: 2024-04-08T16:52:35Z
+            from_token_address: 0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2
+            from_token_amount: '1.51717616246451'
+            kind: buy
+            price_from_in_currency_token: '1.0'
+            price_from_in_usd: '3656.8970003075'
+            price_to_in_currency_token: '0.000274100995437363'
+            price_to_in_usd: '1.00235910799619'
+            to_token_address: 0xdac17f958d2ee523a2206206994597c13d831ec7
+            to_token_amount: '5535.099061'
+            tx_from_address: 0x42c037c594eefeca741e9dd66af91e7ffd930872
+            tx_hash: 0x0b8ac5a16c291832c1b4d5f0d8ef2d9d58e207cd8132c32392295617daa4d422
+            volume_in_usd: '5548.15695745452'
+          id: eth_19612255_0x0b8ac5a16c291832c1b4d5f0d8ef2d9d58e207cd8132c32392295617daa4d422_158_1712595165
+          type: trade
+      type: object
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        attributes:
+          properties:
+            block_number:
+              type: integer
+            block_timestamp:
+              type: string
+              format: datetime
+            tx_hash:
+              type: string
+            tx_from_address:
+              type: string
+            from_token_amount:
+              type: string
+            to_token_amount:
+              type: string
+            price_from_in_currency_token:
+              type: string
+            price_to_in_currency_token:
+              type: string
+            price_from_in_usd:
+              type: string
+            price_to_in_usd:
+              type: string
+            kind:
+              type: string
+            volume_in_usd:
+              type: string
+            from_token_address:
+              type: string
+            to_token_address:
+              type: string

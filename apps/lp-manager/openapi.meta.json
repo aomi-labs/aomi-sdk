@@ -1,0 +1,13 @@
+{
+  "platform": "cryptopanic",
+  "source": "skill",
+  "source_url": "https://cryptopanic.com/developers/api/",
+  "fetched_at": "2026-07-07T03:56:22Z",
+  "upstream_version": "v2",
+  "completeness": {
+    "endpoints_specced": 2,
+    "endpoints_skipped": 2,
+    "auth_described": true,
+    "notes": "Docs are client-rendered; reference extracted from CryptoPanic's own JS app bundle (static.cryptopanic.com cryptopanic.min.5fc73219ae0a.js embedded Vue doc templates). Specced GET /posts/ and GET /status/. Skipped /portfolio/ (Growth/Enterprise, not needed for lp-manager market context) and the RSS format=rss variant. Source.type field values are undocumented (kept plain string). Nullability of price/market fields on Instrument is inferred, not documented. Base URL embeds the API plan segment (developer|growth|enterprise); free developer plan is discontinued April 1st, 2026."
+  }
+}

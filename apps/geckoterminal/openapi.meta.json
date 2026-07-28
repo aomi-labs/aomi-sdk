@@ -1,0 +1,7 @@
+{
+  "platform": "geckoterminal",
+  "source": "well-known",
+  "source_url": "https://api.geckoterminal.com/docs/v2/swagger.json",
+  "fetched_at": "2026-07-06T01:32:53.367875Z",
+  "upstream_version": null
+}
