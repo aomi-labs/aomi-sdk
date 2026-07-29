@@ -1,0 +1,18 @@
+[package]
+name = "aomi-wasm-parity"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "aomi-wasm-parity-native"
+path = "src/main.rs"
+
+[dependencies]
+aomi-sdk.workspace = true
+schemars.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true

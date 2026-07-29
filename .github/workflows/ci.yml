@@ -40,8 +40,16 @@ jobs:
         with:
           toolchain: "1.91"
           components: clippy, rustfmt
+          targets: wasm32-unknown-unknown
 
       - uses: Swatinem/rust-cache@v2
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: bindings/typescript/package-lock.json
 
       - name: Format
         run: cargo fmt --all -- --check
@@ -52,6 +60,11 @@ jobs:
       - name: Test SDK
         run: cargo test -p aomi-sdk
 
+      - name: Test TypeScript WebAssembly parity
+        working-directory: bindings/typescript
+        run: |
+          npm ci
+          npm test
 
       - name: Dry-run SDK publish
         if: steps.sdk-version.outputs.publish_sdk == 'true'
