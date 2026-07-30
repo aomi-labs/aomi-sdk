@@ -1,0 +1,18 @@
+{
+  "id": "world-markets/trading",
+  "evm": {
+    "contracts": {
+      "ROUTER": "0x7a2088a1bfc9d81c55368ae168c2c02570cb814f"
+    },
+    "selectors": {
+      "BUY_OUTCOME": "0xa9059c5b"
+    },
+    "allowed_contracts": ["ROUTER"],
+    "allowed_selectors": ["BUY_OUTCOME"],
+    "chain_ids": [1]
+  },
+  "limits": {
+    "max_notional_usd": 10000,
+    "confirm_above_usd": 1000
+  }
+}
