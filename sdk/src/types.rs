@@ -144,6 +144,12 @@ pub struct DynManifest {
     /// [`BroadcastConfig`]). Absent → the host default (`wallet`-only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub broadcast: Option<BroadcastConfig>,
+    /// App-scoped skill: structured instruction sections, an optional guard
+    /// table, and host hook bindings, activated by app binding (see
+    /// [`crate::AppSkillManifest`]). Absent → the app has only its plain
+    /// `preamble`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill: Option<crate::AppSkillManifest>,
 }
 
 /// Operator-declared broadcast policy: who submits this app's signed SVM
@@ -476,6 +482,12 @@ pub trait DynAomiApp: Clone + Default + Send + Sync + 'static {
         None
     }
 
+    /// App-scoped skill block. Default: none. Typically set via the
+    /// `skill = { ... }` arm of `dyn_aomi_app!`.
+    fn skill(&self) -> Option<crate::AppSkillManifest> {
+        None
+    }
+
     /// Build the full [`DynManifest`] for host consumption.
     fn manifest(&self) -> DynManifest {
         DynManifest {
@@ -487,6 +499,7 @@ pub trait DynAomiApp: Clone + Default + Send + Sync + 'static {
             namespaces: self.namespaces(),
             secrets: self.secrets(),
             broadcast: self.broadcast(),
+            skill: self.skill(),
         }
     }
 }

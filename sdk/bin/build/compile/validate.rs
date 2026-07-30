@@ -180,6 +180,19 @@ fn validate_manifest(manifest: &DynManifest) -> Vec<String> {
         }
     }
 
+    // App-skill block: structural validation (id scoping, sections, token
+    // budget, guard-table bytes and allowlist references, digest). Shares the
+    // validator with the host's app loader — a build that passes here loads.
+    if let Some(ref skill) = manifest.skill
+        && let Err(skill_errors) = skill.validate(&manifest.name)
+    {
+        errors.extend(
+            skill_errors
+                .into_iter()
+                .map(|error| format!("{}: {error}", manifest.name)),
+        );
+    }
+
     errors
 }
 
@@ -205,12 +218,38 @@ mod tests {
             namespaces: Some(vec!["database".to_string()]),
             secrets: None,
             broadcast: None,
+            skill: None,
         };
 
         let errors = super::validate_manifest(&manifest);
 
         assert_eq!(errors.len(), 1);
         assert!(errors[0].contains("namespace 'database' is private"));
+    }
+
+    #[test]
+    fn validate_rejects_a_misscoped_skill() {
+        let manifest = DynManifest {
+            sdk_version: AOMI_SDK_VERSION.to_string(),
+            name: "good-app".to_string(),
+            version: "0.1.0".to_string(),
+            preamble: "x".to_string(),
+            tools: vec![],
+            namespaces: None,
+            secrets: None,
+            broadcast: None,
+            skill: Some(aomi_sdk::AppSkillManifest::from_parts(
+                "other-app/trading",
+                vec![("instructions", "content")],
+                None,
+                vec![],
+            )),
+        };
+
+        let errors = super::validate_manifest(&manifest);
+
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].contains("must be `good-app/"), "got: {}", errors[0]);
     }
 }
 
