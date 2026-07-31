@@ -224,11 +224,9 @@ impl AppSkillManifest {
             Some((app, slug))
                 if app == app_name
                     && !slug.is_empty()
-                    && slug
-                        .chars()
-                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "-_".contains(c)) =>
-            {
-            }
+                    && slug.chars().all(|c| {
+                        c.is_ascii_lowercase() || c.is_ascii_digit() || "-_".contains(c)
+                    }) => {}
             _ => errors.push(format!(
                 "skill id `{}` must be `{app_name}/<slug>` with a lowercase slug",
                 self.id
@@ -269,7 +267,10 @@ impl AppSkillManifest {
             }
             for name in binding.pre_call.iter().chain(binding.post_call.iter()) {
                 if name.trim().is_empty() {
-                    errors.push(format!("hook binding for `{}` has an empty hook name", binding.tool));
+                    errors.push(format!(
+                        "hook binding for `{}` has an empty hook name",
+                        binding.tool
+                    ));
                 }
             }
         }
@@ -294,7 +295,11 @@ impl AppSkillManifest {
             ));
         }
 
-        if errors.is_empty() { Ok(()) } else { Err(errors) }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors)
+        }
     }
 }
 
@@ -465,7 +470,9 @@ fn digest(id: &str, sections: &[AppSkillSection], guard: Option<&GuardTable>) ->
         hasher.update([0u8]);
     }
     if let Some(guard) = guard {
-        let canonical = serde_json::to_value(guard).unwrap_or(Value::Null).to_string();
+        let canonical = serde_json::to_value(guard)
+            .unwrap_or(Value::Null)
+            .to_string();
         hasher.update(canonical.as_bytes());
     }
     let mut out = String::with_capacity(64);
@@ -557,7 +564,11 @@ mod tests {
             .push("UNDECLARED".to_string());
         s.content_digest = digest(&s.id, &s.sections, s.guard.as_ref());
         let errors = s.validate("world-markets").expect_err("must fail");
-        assert!(errors.iter().any(|e| e.contains("undeclared contract `UNDECLARED`")));
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("undeclared contract `UNDECLARED`"))
+        );
     }
 
     #[test]
@@ -565,8 +576,7 @@ mod tests {
         let mut s = skill();
         {
             let evm = s.guard.as_mut().unwrap().evm.as_mut().unwrap();
-            evm.selectors
-                .insert("BAD".to_string(), "0x123".to_string());
+            evm.selectors.insert("BAD".to_string(), "0x123".to_string());
             let svm = s.guard.as_mut().unwrap().svm.as_mut().unwrap();
             svm.program_ids
                 .insert("BAD".to_string(), "not-base58!!".to_string());
@@ -633,7 +643,9 @@ mod tests {
             Some(guard),
             vec![],
         );
-        skill.validate("world-markets").expect("minimal guard is valid");
+        skill
+            .validate("world-markets")
+            .expect("minimal guard is valid");
         assert_eq!(
             skill.guard.as_ref().unwrap().id,
             "world-markets/trading",
@@ -663,7 +675,8 @@ mod tests {
         assert!(empty.validate("a").is_err());
 
         let big = "x".repeat((APP_SKILL_TOKEN_BUDGET + 1) * 4);
-        let over = AppSkillManifest::from_parts("a/b", vec![("instructions", big.as_str())], None, vec![]);
+        let over =
+            AppSkillManifest::from_parts("a/b", vec![("instructions", big.as_str())], None, vec![]);
         let errors = over.validate("a").expect_err("over budget must fail");
         assert!(errors.iter().any(|e| e.contains("over the")));
     }

@@ -36,9 +36,16 @@ pub(crate) fn render_permissions(manifest: &DynManifest) -> Option<String> {
             evm.allowed_selectors.iter().collect()
         };
         for contract in &allowed {
-            let address = evm.contracts.get(*contract).map(String::as_str).unwrap_or("?");
+            let address = evm
+                .contracts
+                .get(*contract)
+                .map(String::as_str)
+                .unwrap_or("?");
             if selectors.is_empty() {
-                let _ = writeln!(out, "    evm[{chains}]: {contract} ({address}) — any selector");
+                let _ = writeln!(
+                    out,
+                    "    evm[{chains}]: {contract} ({address}) — any selector"
+                );
             }
             for name in &selectors {
                 let authored = evm.selectors.get(*name).map(String::as_str).unwrap_or("?");
@@ -57,7 +64,11 @@ pub(crate) fn render_permissions(manifest: &DynManifest) -> Option<String> {
             }
         }
         if !evm.approve_spenders.is_empty() {
-            let _ = writeln!(out, "    evm approve spenders: {}", evm.approve_spenders.join(", "));
+            let _ = writeln!(
+                out,
+                "    evm approve spenders: {}",
+                evm.approve_spenders.join(", ")
+            );
         }
     }
 
@@ -78,7 +89,11 @@ pub(crate) fn render_permissions(manifest: &DynManifest) -> Option<String> {
             svm.allowed_discriminators.iter().collect()
         };
         for program in &programs {
-            let pubkey = svm.program_ids.get(*program).map(String::as_str).unwrap_or("?");
+            let pubkey = svm
+                .program_ids
+                .get(*program)
+                .map(String::as_str)
+                .unwrap_or("?");
             let calls = if discriminators.is_empty() {
                 "any instruction".to_string()
             } else {
@@ -346,7 +361,11 @@ mod tests {
         let errors = super::validate_manifest(&manifest);
 
         assert_eq!(errors.len(), 1);
-        assert!(errors[0].contains("must be `good-app/"), "got: {}", errors[0]);
+        assert!(
+            errors[0].contains("must be `good-app/"),
+            "got: {}",
+            errors[0]
+        );
     }
 }
 
