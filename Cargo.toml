@@ -26,6 +26,7 @@ exclude = [
     "apps/manifold",
     "apps/marinade",
     "apps/svm-transfer",
+    "apps/world-markets",
     "apps/molinar",
     "apps/morpho",
     "apps/neynar",
