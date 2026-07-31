@@ -72,8 +72,7 @@ impl DynAomiTool for PreviewWorldTrade {
     type App = WorldMarketsApp;
     type Args = PreviewArgs;
     const NAME: &'static str = "world_preview_trade";
-    const DESCRIPTION: &'static str =
-        "Preview a trade: shares bought, max payout, and the safety-limit verdict. \
+    const DESCRIPTION: &'static str = "Preview a trade: shares bought, max payout, and the safety-limit verdict. \
          Always call this before world_build_trade.";
 
     fn run(
@@ -115,8 +114,7 @@ impl DynAomiTool for BuildWorldTrade {
     type App = WorldMarketsApp;
     type Args = BuildArgs;
     const NAME: &'static str = "world_build_trade";
-    const DESCRIPTION: &'static str =
-        "Build router calldata for a previewed trade. Stage the returned transaction with \
+    const DESCRIPTION: &'static str = "Build router calldata for a previewed trade. Stage the returned transaction with \
          stage_tx exactly as given; the app's guard table vets the staged target, selector, \
          chain, and `usd_amount` against hard_cap / confirm_cap.";
 

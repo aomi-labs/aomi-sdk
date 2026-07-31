@@ -63,7 +63,11 @@ pub fn market(id: u64) -> Option<&'static Market> {
 
 /// Price of one outcome share in USD micro-units (USDC base units).
 pub fn share_price_usdc(market: &Market, yes: bool) -> u64 {
-    let bps = if yes { market.yes_bps } else { 10_000 - market.yes_bps };
+    let bps = if yes {
+        market.yes_bps
+    } else {
+        10_000 - market.yes_bps
+    };
     // 1 share pays out 1 USDC; price = probability.
     bps * 10u64.pow(USDC_DECIMALS) / 10_000
 }
@@ -92,7 +96,10 @@ mod tests {
         let selector = aomi_sdk::resolve_selector(BUY_SIGNATURE).unwrap();
         let selector_hex = format!(
             "0x{}",
-            selector.iter().map(|b| format!("{b:02x}")).collect::<String>()
+            selector
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect::<String>()
         );
         assert!(data.starts_with(&selector_hex));
         assert_eq!(data.len(), 10 + 3 * 64);
