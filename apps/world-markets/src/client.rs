@@ -13,11 +13,15 @@ use serde::Serialize;
 /// vetted against the guard table, not against this constant.
 pub const ROUTER: &str = "0x7a2088a1bfc9d81c55368ae168c2c02570cb814f";
 
-/// `buyOutcome(uint256 marketId, uint256 outcome, uint256 usdcAmount)`.
-/// Mirrors `selectors.BUY_OUTCOME` in `skill/guard.json`.
-pub const BUY_SELECTOR: &str = "0xa9059c5b";
+/// Canonical signature of the router's buy call. The SAME string appears as
+/// `selectors.BUY_OUTCOME` in `skill/guard.json` — both the calldata below
+/// and the guard's allowlist derive the 4-byte selector from it
+/// (`aomi_sdk::resolve_selector`), so the app cannot drift from its own
+/// containment envelope.
+pub const BUY_SIGNATURE: &str = "buyOutcome(uint256,uint256,uint256)";
 
-/// USDC has 6 decimals; notional caps in the guard table are whole USD.
+/// USDC has 6 decimals. Guard `hard_cap` / `confirm_cap` limit `usd_amount`
+/// in whole dollars (the same unit the tools take as an arg).
 pub const USDC_DECIMALS: u32 = 6;
 
 #[derive(Clone, Default)]
@@ -66,7 +70,12 @@ pub fn share_price_usdc(market: &Market, yes: bool) -> u64 {
 
 /// ABI-encode `buyOutcome(marketId, outcome, usdcAmount)` calldata.
 pub fn buy_calldata(market_id: u64, yes: bool, usdc_amount: u64) -> String {
-    let mut data = String::from(BUY_SELECTOR);
+    let selector = aomi_sdk::resolve_selector(BUY_SIGNATURE)
+        .expect("BUY_SIGNATURE is a canonical function signature");
+    let mut data = String::from("0x");
+    for byte in selector {
+        data.push_str(&format!("{byte:02x}"));
+    }
     for word in [market_id, u64::from(yes), usdc_amount] {
         data.push_str(&format!("{word:064x}"));
     }
@@ -78,10 +87,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn calldata_is_selector_plus_three_words() {
+    fn calldata_is_derived_selector_plus_three_words() {
         let data = buy_calldata(2, true, 25_000_000);
-        assert!(data.starts_with(BUY_SELECTOR));
-        assert_eq!(data.len(), BUY_SELECTOR.len() + 3 * 64);
+        let selector = aomi_sdk::resolve_selector(BUY_SIGNATURE).unwrap();
+        let selector_hex = format!(
+            "0x{}",
+            selector.iter().map(|b| format!("{b:02x}")).collect::<String>()
+        );
+        assert!(data.starts_with(&selector_hex));
+        assert_eq!(data.len(), 10 + 3 * 64);
         assert!(data.ends_with(&format!("{:064x}", 25_000_000u64)));
     }
 

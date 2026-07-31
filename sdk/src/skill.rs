@@ -29,14 +29,17 @@ pub const CLUSTERS: [&str; 4] = ["mainnet-beta", "devnet", "testnet", "localnet"
 /// One guard table. Host skills and app skills produce the same shape; the
 /// host's compiled interpreter hooks enforce it at dispatch.
 ///
-/// Allowlist semantics: an **empty** allowlist leaves that axis
-/// unconstrained; a **non-empty** allowlist is strict (anything outside it is
-/// vetoed). Tables only ever narrow — a table can never permit what another
-/// table or a compiled host guard vetoed.
+/// Allowlist semantics — **declared implies allowed**: an omitted/empty
+/// allowlist with a non-empty declaration map means *every declared name*;
+/// a non-empty allowlist is a strict subset. An axis with nothing declared
+/// is unconstrained. Tables only ever narrow — a table can never permit
+/// what another table or a compiled host guard vetoed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GuardTable {
     /// Owning skill id — `"<app>/<slug>"` for app skills, the bare skill id
-    /// for host skills.
+    /// for host skills. Optional in authored `guard.json`:
+    /// [`AppSkillManifest::from_parts`] defaults it to the skill id.
+    #[serde(default)]
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evm: Option<EvmGuard>,
@@ -51,12 +54,21 @@ pub struct EvmGuard {
     /// Named contracts: `"ROUTER" -> "0x…"` (20-byte hex address).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub contracts: BTreeMap<String, String>,
-    /// Named 4-byte selectors: `"DEPOSIT" -> "0xd0e30db0"`.
+    /// Named selectors. The value is either a 4-byte hex selector
+    /// (`"0xd0e30db0"`) or a canonical Solidity function signature
+    /// (`"deposit()"`, `"buy(uint256,address)"`) derived via
+    /// `keccak256(sig)[..4]` — see [`resolve_selector`]. The wire keeps the
+    /// authored form; derivation happens at validation and enforcement.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub selectors: BTreeMap<String, String>,
-    /// Allowlists reference the named keys above.
+    /// Allowlists reference the named keys above. Omitted = every declared
+    /// name (see [`GuardTable`] semantics).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_contracts: Vec<String>,
+    /// Extra narrowing axis, NOT an allowlist: empty = `approve()` spender
+    /// unrestricted (the approve call itself still needs an allowed
+    /// target + selector). Non-empty = only these named contracts may be
+    /// approved as spenders.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub approve_spenders: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -72,9 +84,14 @@ pub struct SvmGuard {
     /// Named programs: `"ROUTER" -> base58 pubkey` (32 bytes).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub program_ids: BTreeMap<String, String>,
-    /// Named 8-byte Anchor discriminators: `"ROUTE" -> "0xe517cb977ae3ad2a"`.
+    /// Named discriminators. The value is either an 8-byte hex value
+    /// (`"0xe517cb977ae3ad2a"`) or an Anchor instruction name (`"route"`)
+    /// derived via `sha256("global:<name>")[..8]` — see
+    /// [`resolve_discriminator`]. The wire keeps the authored form.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub discriminators: BTreeMap<String, String>,
+    /// Allowlists reference the named keys above. Omitted = every declared
+    /// name (see [`GuardTable`] semantics).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub allowed_programs: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -85,14 +102,21 @@ pub struct SvmGuard {
     pub clusters: Vec<String>,
 }
 
+/// Numeric caps on a tool-call argument the host compares at dispatch.
+///
+/// Units are app-defined: the value is whatever number the limited arg
+/// carries (USD whole dollars, token base units, share count, …). The
+/// guard does not interpret currency — it only compares the arg to these
+/// thresholds.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LimitGuard {
-    /// Hard cap: block staged actions whose declared notional exceeds this.
+    /// Reject the call when the limited numeric arg exceeds this.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub max_notional_usd: Option<u64>,
-    /// Soft cap: require explicit user confirmation above this.
+    pub hard_cap: Option<u64>,
+    /// Require explicit user confirmation when the limited numeric arg
+    /// exceeds this (must be ≤ `hard_cap` when both are set).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub confirm_above_usd: Option<u64>,
+    pub confirm_cap: Option<u64>,
 }
 
 /// One named markdown section of an app skill (e.g. `instructions`,
@@ -152,9 +176,15 @@ impl AppSkillManifest {
         hooks: Vec<DynToolHookBinding>,
     ) -> Self {
         let guard = guard_json.map(|json| {
-            serde_json::from_str::<GuardTable>(json).unwrap_or_else(|err| {
+            let mut guard = serde_json::from_str::<GuardTable>(json).unwrap_or_else(|err| {
                 panic!("app skill `{id}`: guard.json is not a valid GuardTable: {err}")
-            })
+            });
+            // Authored guard.json may omit `id` — it defaults to the skill
+            // id (filled before the digest, so the artifact carries it).
+            if guard.id.is_empty() {
+                guard.id = id.to_string();
+            }
+            guard
         });
         let sections: Vec<AppSkillSection> = sections
             .into_iter()
@@ -245,7 +275,9 @@ impl AppSkillManifest {
         }
 
         if let Some(guard) = &self.guard {
-            if guard.id != self.id {
+            // Empty = defaulted by `from_parts`; only an explicit id can
+            // mismatch.
+            if !guard.id.is_empty() && guard.id != self.id {
                 errors.push(format!(
                     "guard table id `{}` must match skill id `{}`",
                     guard.id, self.id
@@ -266,6 +298,68 @@ impl AppSkillManifest {
     }
 }
 
+/// Resolve a selector value to its 4 bytes: exact `0x` hex, or a canonical
+/// Solidity function signature (`"buy(uint256,address)"` — no spaces, full
+/// type names) derived via `keccak256(sig)[..4]`. The single source of the
+/// resolution rule — the host's guard resolver calls this too, so validation
+/// and enforcement can never drift.
+pub fn resolve_selector(value: &str) -> Result<[u8; 4], String> {
+    if value.starts_with("0x") {
+        return parse_hex_bytes(value)
+            .ok_or_else(|| format!("`{value}` is not a 4-byte 0x-hex selector"));
+    }
+    if !value.ends_with(')') || !value.contains('(') || value.contains(char::is_whitespace) {
+        return Err(format!(
+            "`{value}` is neither 4-byte 0x-hex nor a canonical function signature \
+             like `buy(uint256,address)` (no spaces, full type names)"
+        ));
+    }
+    use tiny_keccak::{Hasher, Keccak};
+    let mut hasher = Keccak::v256();
+    hasher.update(value.as_bytes());
+    let mut out = [0u8; 32];
+    hasher.finalize(&mut out);
+    Ok([out[0], out[1], out[2], out[3]])
+}
+
+/// Resolve a discriminator value to its 8 bytes: exact `0x` hex, or an
+/// Anchor instruction name (`"route"`) derived via
+/// `sha256("global:<name>")[..8]` — the same convention the host interpreter
+/// applies to `encode` specs at dispatch.
+pub fn resolve_discriminator(value: &str) -> Result<[u8; 8], String> {
+    if value.starts_with("0x") {
+        return parse_hex_bytes(value)
+            .ok_or_else(|| format!("`{value}` is not an 8-byte 0x-hex discriminator"));
+    }
+    let is_anchor_name = !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+    if !is_anchor_name {
+        return Err(format!(
+            "`{value}` is neither 8-byte 0x-hex nor an Anchor instruction name \
+             like `route` (lowercase snake_case)"
+        ));
+    }
+    use sha2::{Digest, Sha256};
+    let hash = Sha256::digest(format!("global:{value}").as_bytes());
+    let mut out = [0u8; 8];
+    out.copy_from_slice(&hash[..8]);
+    Ok(out)
+}
+
+fn parse_hex_bytes<const N: usize>(value: &str) -> Option<[u8; N]> {
+    let hex = value.strip_prefix("0x")?;
+    if hex.len() != N * 2 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let mut out = [0u8; N];
+    for (i, byte) in out.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).ok()?;
+    }
+    Some(out)
+}
+
 fn validate_guard(guard: &GuardTable, errors: &mut Vec<String>) {
     if let Some(evm) = &guard.evm {
         for (name, address) in &evm.contracts {
@@ -276,10 +370,8 @@ fn validate_guard(guard: &GuardTable, errors: &mut Vec<String>) {
             }
         }
         for (name, selector) in &evm.selectors {
-            if !is_hex_bytes(selector, 4) {
-                errors.push(format!(
-                    "evm selector `{name}` is not a 4-byte 0x-hex value: `{selector}`"
-                ));
+            if let Err(error) = resolve_selector(selector) {
+                errors.push(format!("evm selector `{name}`: {error}"));
             }
         }
         for (list, keys, table) in [
@@ -314,10 +406,8 @@ fn validate_guard(guard: &GuardTable, errors: &mut Vec<String>) {
             }
         }
         for (name, discriminator) in &svm.discriminators {
-            if !is_hex_bytes(discriminator, 8) {
-                errors.push(format!(
-                    "svm discriminator `{name}` is not an 8-byte 0x-hex value: `{discriminator}`"
-                ));
+            if let Err(error) = resolve_discriminator(discriminator) {
+                errors.push(format!("svm discriminator `{name}`: {error}"));
             }
         }
         for key in &svm.allowed_programs {
@@ -344,11 +434,11 @@ fn validate_guard(guard: &GuardTable, errors: &mut Vec<String>) {
     }
 
     if let Some(limits) = &guard.limits
-        && let (Some(max), Some(confirm)) = (limits.max_notional_usd, limits.confirm_above_usd)
-        && confirm > max
+        && let (Some(hard), Some(confirm)) = (limits.hard_cap, limits.confirm_cap)
+        && confirm > hard
     {
         errors.push(format!(
-            "limits confirm_above_usd ({confirm}) exceeds max_notional_usd ({max})"
+            "limits confirm_cap ({confirm}) exceeds hard_cap ({hard})"
         ));
     }
 }
@@ -406,7 +496,7 @@ mod tests {
                 "allowed_discriminators": ["ROUTE"],
                 "clusters": ["mainnet-beta"]
             },
-            "limits": { "max_notional_usd": 10000, "confirm_above_usd": 1000 }
+            "limits": { "hard_cap": 10000, "confirm_cap": 1000 }
         }"#
     }
 
@@ -487,6 +577,76 @@ mod tests {
         assert!(errors.iter().any(|e| e.contains("selector `BAD`")));
         assert!(errors.iter().any(|e| e.contains("program `BAD`")));
         assert!(errors.iter().any(|e| e.contains("cluster `mainnet`")));
+    }
+
+    #[test]
+    fn selector_values_resolve_from_hex_or_signature() {
+        // Known vectors: keccak256("transfer(address,uint256)")[..4] and
+        // keccak256("approve(address,uint256)")[..4].
+        assert_eq!(
+            resolve_selector("transfer(address,uint256)").unwrap(),
+            [0xa9, 0x05, 0x9c, 0xbb]
+        );
+        assert_eq!(
+            resolve_selector("approve(address,uint256)").unwrap(),
+            [0x09, 0x5e, 0xa7, 0xb3]
+        );
+        assert_eq!(
+            resolve_selector("0xa9059cbb").unwrap(),
+            resolve_selector("transfer(address,uint256)").unwrap()
+        );
+        assert!(resolve_selector("0x123").is_err(), "short hex");
+        assert!(
+            resolve_selector("transfer (address)").is_err(),
+            "spaces are not canonical"
+        );
+        assert!(resolve_selector("not a signature").is_err());
+    }
+
+    #[test]
+    fn discriminator_values_resolve_from_hex_or_anchor_name() {
+        use sha2::{Digest, Sha256};
+        let expected: [u8; 8] = Sha256::digest(b"global:route")[..8].try_into().unwrap();
+        assert_eq!(resolve_discriminator("route").unwrap(), expected);
+        assert_eq!(
+            resolve_discriminator("0xe517cb977ae3ad2a").unwrap(),
+            [0xe5, 0x17, 0xcb, 0x97, 0x7a, 0xe3, 0xad, 0x2a]
+        );
+        assert!(resolve_discriminator("Route").is_err(), "not snake_case");
+        assert!(resolve_discriminator("0x12").is_err(), "short hex");
+    }
+
+    #[test]
+    fn minimal_authored_guard_validates_with_defaults() {
+        // What a developer actually writes: no id, no allowlists, signature
+        // selectors. Declared ⇒ allowed; id defaults to the skill id.
+        let guard = r#"{
+            "evm": {
+                "contracts": { "ROUTER": "0x1111111111111111111111111111111111111111" },
+                "selectors": { "BUY": "buy(uint256,address)" },
+                "chain_ids": [1]
+            }
+        }"#;
+        let skill = AppSkillManifest::from_parts(
+            "world-markets/trading",
+            vec![("instructions", "Trade.")],
+            Some(guard),
+            vec![],
+        );
+        skill.validate("world-markets").expect("minimal guard is valid");
+        assert_eq!(
+            skill.guard.as_ref().unwrap().id,
+            "world-markets/trading",
+            "id defaults to the skill id before the digest"
+        );
+        // Deterministic digest over the filled form.
+        let again = AppSkillManifest::from_parts(
+            "world-markets/trading",
+            vec![("instructions", "Trade.")],
+            Some(guard),
+            vec![],
+        );
+        assert_eq!(skill.content_digest, again.content_digest);
     }
 
     #[test]

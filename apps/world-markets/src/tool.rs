@@ -118,7 +118,7 @@ impl DynAomiTool for BuildWorldTrade {
     const DESCRIPTION: &'static str =
         "Build router calldata for a previewed trade. Stage the returned transaction with \
          stage_tx exactly as given; the app's guard table vets the staged target, selector, \
-         chain, and notional.";
+         chain, and `usd_amount` against hard_cap / confirm_cap.";
 
     fn run(_app: &WorldMarketsApp, args: BuildArgs, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let market = client::market(args.market_id)
@@ -131,7 +131,7 @@ impl DynAomiTool for BuildWorldTrade {
                 "value": "0",
                 "chain_id": market.chain_id,
             },
-            "notional_usd": args.usd_amount,
+            "usd_amount": args.usd_amount,
             "next_step": "stage this transaction with stage_tx, then commit_txs after user confirmation",
         }))
     }

@@ -58,9 +58,11 @@ schemars = "1.0.4"
 eyre.workspace = true
 libloading = "0.8"
 tracing.workspace = true
-# App-skill support: content digests + guard-table pubkey validation.
+# App-skill support: content digests + guard-table pubkey validation +
+# selector derivation from function signatures.
 sha2.workspace = true
 bs58 = "0.5"
+tiny-keccak = { version = "2.0", features = ["keccak"] }
 
 # Optional deps — pulled in only when the `cli` feature is enabled.
 anyhow = { version = "1", optional = true }

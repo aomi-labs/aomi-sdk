@@ -3,9 +3,106 @@
 //! namespaces the plugin declares.
 
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 use std::path::Path;
 
 use aomi_sdk::{AOMI_SDK_VERSION, DynFnHandle, DynManifest};
+
+/// Render the app's resolved permission manifest — the human-readable form
+/// of its guard table with selectors/discriminators derived and the
+/// declared⇒allowed defaults expanded. Printed at compile so guard drift is
+/// caught at release review; `None` when the app ships no guard.
+pub(crate) fn render_permissions(manifest: &DynManifest) -> Option<String> {
+    let skill = manifest.skill.as_ref()?;
+    let guard = skill.guard.as_ref()?;
+    let mut out = String::new();
+    let _ = writeln!(out, "  permissions ({}):", guard.id);
+
+    if let Some(evm) = &guard.evm {
+        let chains = evm
+            .chain_ids
+            .iter()
+            .map(u64::to_string)
+            .collect::<Vec<_>>()
+            .join(", ");
+        let allowed: Vec<&String> = if evm.allowed_contracts.is_empty() {
+            evm.contracts.keys().collect()
+        } else {
+            evm.allowed_contracts.iter().collect()
+        };
+        let selectors: Vec<&String> = if evm.allowed_selectors.is_empty() {
+            evm.selectors.keys().collect()
+        } else {
+            evm.allowed_selectors.iter().collect()
+        };
+        for contract in &allowed {
+            let address = evm.contracts.get(*contract).map(String::as_str).unwrap_or("?");
+            if selectors.is_empty() {
+                let _ = writeln!(out, "    evm[{chains}]: {contract} ({address}) — any selector");
+            }
+            for name in &selectors {
+                let authored = evm.selectors.get(*name).map(String::as_str).unwrap_or("?");
+                let derived = aomi_sdk::resolve_selector(authored)
+                    .map(|bytes| {
+                        format!(
+                            "0x{}",
+                            bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()
+                        )
+                    })
+                    .unwrap_or_else(|_| "<invalid>".to_string());
+                let _ = writeln!(
+                    out,
+                    "    evm[{chains}]: {contract}.{authored} [{derived}] ({address})"
+                );
+            }
+        }
+        if !evm.approve_spenders.is_empty() {
+            let _ = writeln!(out, "    evm approve spenders: {}", evm.approve_spenders.join(", "));
+        }
+    }
+
+    if let Some(svm) = &guard.svm {
+        let clusters = if svm.clusters.is_empty() {
+            "any".to_string()
+        } else {
+            svm.clusters.join(", ")
+        };
+        let programs: Vec<&String> = if svm.allowed_programs.is_empty() {
+            svm.program_ids.keys().collect()
+        } else {
+            svm.allowed_programs.iter().collect()
+        };
+        let discriminators: Vec<&String> = if svm.allowed_discriminators.is_empty() {
+            svm.discriminators.keys().collect()
+        } else {
+            svm.allowed_discriminators.iter().collect()
+        };
+        for program in &programs {
+            let pubkey = svm.program_ids.get(*program).map(String::as_str).unwrap_or("?");
+            let calls = if discriminators.is_empty() {
+                "any instruction".to_string()
+            } else {
+                discriminators
+                    .iter()
+                    .filter_map(|name| svm.discriminators.get(*name).map(String::as_str))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            let _ = writeln!(out, "    svm[{clusters}]: {program} ({pubkey}) — {calls}");
+        }
+    }
+
+    if let Some(limits) = &guard.limits {
+        if let Some(hard) = limits.hard_cap {
+            let _ = writeln!(out, "    limit: hard_cap {hard}");
+        }
+        if let Some(confirm) = limits.confirm_cap {
+            let _ = writeln!(out, "    limit: confirm_cap {confirm}");
+        }
+    }
+
+    Some(out.trim_end().to_string())
+}
 
 // ── Known host-side namespace tools ──────────────────────────────────────────
 

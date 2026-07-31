@@ -11,7 +11,7 @@
 //! app exists to exercise the construct end-to-end — sectioned instructions
 //! baked into the composed preamble, `world_build_trade` emitting router
 //! calldata, and the guard table vetting the staged transaction (allowed
-//! contract, allowed selector, chain scope, notional caps).
+//! contract, allowed selector, chain scope, numeric caps on `usd_amount`).
 
 use aomi_sdk::*;
 
