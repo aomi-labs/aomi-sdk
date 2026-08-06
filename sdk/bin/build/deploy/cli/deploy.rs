@@ -104,8 +104,8 @@ pub(crate) async fn run_activate_step(args: ActivateArgs) -> Result<()> {
 
 #[derive(Debug, Args, Clone, Default)]
 pub struct DeployStepArgs {
-    /// Platform tag (`aomi.toml [app].platform`). Defaults to aomi.toml, then
-    /// saved config, then `community`.
+    /// Platform used to create or address the Project. Defaults to saved
+    /// config, then `community`.
     #[arg(long, value_name = "NAME")]
     pub platform: Option<Platform>,
 
@@ -206,8 +206,8 @@ impl DeployStepArgs {
     /// work: a source commit the backend can't fetch, or an SDK pin that isn't
     /// in the commit being shipped.
     async fn prepare(&self, announce: bool) -> Result<Prepared> {
-        let (git_root, start_dir) = git_context(&self.path)?;
-        let (platform, platform_origin) = self.platform_with_origin(&git_root, &start_dir)?;
+        let (git_root, _) = git_context(&self.path)?;
+        let (platform, platform_origin) = self.platform_with_origin();
         let backend_url = resolve_backend(&self.backend);
         let sdk =
             crate::sdk_guard::ensure_project_sdk(&git_root, backend_url.as_deref(), self.fix_sdk)
@@ -246,18 +246,6 @@ impl DeployStepArgs {
             println!("  SDK        {sdk_line}");
         }
 
-        // `--platform` (or the wizard's answer) overrides what the repo itself
-        // declares. That can be deliberate, but silently ignoring the manifest
-        // is how a typo'd destination survives to a backend error.
-        if platform_origin == super::inputs::PlatformOrigin::Flag
-            && let Ok(Some(declared)) = self.manifest_platform(&git_root)
-            && declared != platform
-        {
-            eprintln!(
-                "  ! aomi.toml declares platform `{declared}` but this deploy targets \
-                 `{platform}` — deploying to `{platform}`."
-            );
-        }
         if dirty == Some(true) {
             eprintln!(
                 "  ! the working tree has uncommitted changes — the deploy ships commit \

@@ -1,5 +1,4 @@
-//! Resolving a deploy's inputs from the working tree: source commit, the
-//! `aomi.toml` set, and the destination platform.
+//! Resolving a deploy's source commit, Project manifest set, and platform.
 
 use super::*;
 
@@ -86,110 +85,39 @@ fn project_config_rejects_missing_and_unsafe_manifests() {
 // ── deploy: platform resolution ─────────────────────────────────────────────
 
 #[test]
-fn platform_defaults_from_aomi_toml_then_community() {
-    let repo = TestRepo::new();
-    repo.write("aomi.toml", "[app]\nname = \"x\"\nplatform = \"krexa\"\n");
-    repo.write_project_config(&["aomi.toml"]);
-    repo.commit("init");
-    assert_eq!(
-        deploy_args(repo.root())
-            .platform(repo.root(), repo.root())
-            .unwrap()
-            .as_str(),
-        "krexa"
-    );
-
-    let bare = TestRepo::new();
-    bare.write("README.md", "no aomi.toml\n");
-    bare.commit("init");
-    let expected = crate::deploy::config::AomiConfig::load()
-        .platform
-        .map(Platform::new)
-        .unwrap_or_else(Platform::community);
-    assert_eq!(
-        deploy_args(bare.root())
-            .platform(bare.root(), bare.root())
-            .unwrap(),
-        expected
-    );
-}
-
-#[test]
-fn platform_prefers_project_manifest_over_saved_config() {
-    let repo = TestRepo::new();
-    repo.write(
-        "apps/gecko/aomi.toml",
-        "[app]\nname = \"gecko\"\nplatform = \"krexa\"\n",
-    );
-    repo.write_project_config(&["apps/gecko/aomi.toml"]);
-    repo.commit("init");
-
-    let platform = deploy_args(repo.root())
-        .resolve_platform(repo.root(), repo.root(), Some("somm.finance".into()))
-        .unwrap();
-    assert_eq!(platform.as_str(), "krexa");
-}
-
-#[test]
-fn platform_flag_wins_over_manifest() {
+fn platform_ignores_retired_manifest_field() {
     let repo = TestRepo::new();
     repo.write("aomi.toml", "[app]\nname = \"x\"\nplatform = \"krexa\"\n");
     repo.write_project_config(&["aomi.toml"]);
     repo.commit("init");
 
+    let app = crate::deploy::app::AomiAppFiles::discover(repo.root(), repo.root()).unwrap();
+    assert_eq!(app.name, "x");
+    assert_eq!(
+        deploy_args(repo.root()).resolve_platform(Some("somm.finance".into())),
+        Platform::new("somm.finance")
+    );
+    assert_eq!(
+        deploy_args(repo.root()).resolve_platform(None),
+        Platform::community()
+    );
+}
+
+#[test]
+fn platform_flag_wins_over_saved_config() {
+    let repo = TestRepo::new();
     let mut args = deploy_args(repo.root());
     args.platform = Some(Platform::new("somm.finance"));
-    let platform = args
-        .resolve_platform(repo.root(), repo.root(), Some("other".into()))
-        .unwrap();
+    let platform = args.resolve_platform(Some("other".into()));
     assert_eq!(platform.as_str(), "somm.finance");
 }
 
 #[test]
-fn platform_falls_back_to_saved_config_when_manifests_are_silent() {
+fn platform_falls_back_to_saved_config_then_community() {
     let repo = TestRepo::new();
-    repo.write("aomi.toml", "[app]\nname = \"x\"\n");
-    repo.write_project_config(&["aomi.toml"]);
-    repo.commit("init");
-
-    let platform = deploy_args(repo.root())
-        .resolve_platform(repo.root(), repo.root(), Some("somm.finance".into()))
-        .unwrap();
+    let platform = deploy_args(repo.root()).resolve_platform(Some("somm.finance".into()));
     assert_eq!(platform.as_str(), "somm.finance");
 
-    let platform = deploy_args(repo.root())
-        .resolve_platform(repo.root(), repo.root(), None)
-        .unwrap();
-    assert_eq!(platform, Platform::community());
-}
-
-#[test]
-fn platform_conflicting_manifests_error_unless_scoped_or_flagged() {
-    let repo = TestRepo::new();
-    repo.write(
-        "apps/a/aomi.toml",
-        "[app]\nname = \"a\"\nplatform = \"krexa\"\n",
-    );
-    repo.write_project_config(&["apps/a/aomi.toml", "apps/b/aomi.toml"]);
-    repo.write(
-        "apps/b/aomi.toml",
-        "[app]\nname = \"b\"\nplatform = \"somm.finance\"\n",
-    );
-    repo.commit("init");
-
-    let err = deploy_args(repo.root())
-        .resolve_platform(repo.root(), repo.root(), None)
-        .unwrap_err()
-        .to_string();
-    assert!(err.contains("conflicting platforms"), "{err}");
-    assert!(err.contains("apps/a/aomi.toml -> krexa"), "{err}");
-    assert!(err.contains("apps/b/aomi.toml -> somm.finance"), "{err}");
-
-    // An explicit platform overrides manifest hints for an already-bound Project.
-    let mut flagged = deploy_args(repo.root());
-    flagged.platform = Some(Platform::new("community"));
-    let platform = flagged
-        .resolve_platform(repo.root(), repo.root(), None)
-        .unwrap();
+    let platform = deploy_args(repo.root()).resolve_platform(None);
     assert_eq!(platform, Platform::community());
 }

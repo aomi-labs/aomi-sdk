@@ -24,7 +24,7 @@ pub struct RequestArgs {
     #[arg(long, value_name = "NAME")]
     pub app: Option<String>,
 
-    /// Platform tag. Falls back to aomi.toml, then `community`.
+    /// Platform tag. Defaults to `community`.
     #[arg(long, value_name = "NAME")]
     pub platform: Option<Platform>,
 
@@ -75,7 +75,6 @@ impl RequestArgs {
             .platform
             .as_ref()
             .map(|p| p.to_string())
-            .or_else(|| app_cfg.as_ref().and_then(|a| a.platform.clone()))
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| "community".to_string());
 

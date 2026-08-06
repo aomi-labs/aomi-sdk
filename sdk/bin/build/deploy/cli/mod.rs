@@ -10,7 +10,7 @@
 //!
 //! ```text
 //! deploy                     # lifecycle: preflight → run → activate → status
-//!   --platform <NAME>        # aomi.toml [app].platform (default community)
+//!   --platform <NAME>        # Project platform (saved config, then community)
 //!   --repo <OWNER/REPO>      # create a Project when project_id is not known
 //!   --project-id <ID>        # platform-bound Project (AOMI_PROJECT_ID)
 //!   --commit <SHA>           # deploy this source commit (default: HEAD)

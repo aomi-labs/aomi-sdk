@@ -1,9 +1,9 @@
 //! How a deploy step reads its inputs from the working tree.
 //!
-//! Everything here answers "what exactly are we deploying?" from git and
-//! `aomi.toml` — the source commit, the manifest set, the destination platform,
-//! and the platform-bound Project id — with no network involved. Split from the
-//! lifecycle in `deploy.rs`, which consumes the answers.
+//! Everything here answers "what exactly are we deploying?" from git, the root
+//! Project configuration, and saved CLI state: the source commit, manifest set,
+//! destination platform, and platform-bound Project id. Split from the lifecycle
+//! in `deploy.rs`, which consumes the answers.
 
 use std::collections::HashSet;
 use std::fs;
@@ -14,7 +14,6 @@ use serde::Deserialize;
 
 use super::DeployStepArgs;
 use super::shared::{PROJECT_ID_ENV, env_value, head_commit, remote_origin};
-use crate::deploy::app::AomiAppFiles;
 use crate::deploy::config::AomiConfig;
 use crate::deploy::platform::{Platform, normalize_github_repo};
 use crate::deploy::state::LocalDeployment;
@@ -33,7 +32,6 @@ struct ProjectConfig {
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum PlatformOrigin {
     Flag,
-    Manifest,
     SavedConfig,
     Default,
 }
@@ -42,7 +40,6 @@ impl PlatformOrigin {
     pub(crate) fn describe(self) -> &'static str {
         match self {
             Self::Flag => "requested",
-            Self::Manifest => "from aomi.toml",
             Self::SavedConfig => "from saved config",
             Self::Default => "default",
         }
@@ -68,96 +65,30 @@ impl DeployStepArgs {
         })
     }
 
-    /// Documented precedence: `--platform` flag, then the platform declared by
-    /// the deployed `aomi.toml` manifests, then saved config, then `community`.
-    #[cfg(test)]
-    pub(crate) fn platform(&self, git_root: &Path, start_dir: &Path) -> Result<Platform> {
-        self.resolve_platform(git_root, start_dir, AomiConfig::load().platform)
-    }
-
+    /// Documented precedence: `--platform`, saved config, then `community`.
     /// `platform` plus where the answer came from, for the deploy summary.
-    pub(crate) fn platform_with_origin(
-        &self,
-        git_root: &Path,
-        start_dir: &Path,
-    ) -> Result<(Platform, PlatformOrigin)> {
-        self.resolve_platform_with_origin(git_root, start_dir, AomiConfig::load().platform)
+    pub(crate) fn platform_with_origin(&self) -> (Platform, PlatformOrigin) {
+        self.resolve_platform_with_origin(AomiConfig::load().platform)
     }
 
     /// `platform` with the saved-config value injected so tests don't depend
     /// on the machine's `~/.config/aomi/config.toml`.
     #[cfg(test)]
-    pub(crate) fn resolve_platform(
-        &self,
-        git_root: &Path,
-        start_dir: &Path,
-        saved_platform: Option<String>,
-    ) -> Result<Platform> {
-        Ok(self
-            .resolve_platform_with_origin(git_root, start_dir, saved_platform)?
-            .0)
+    pub(crate) fn resolve_platform(&self, saved_platform: Option<String>) -> Platform {
+        self.resolve_platform_with_origin(saved_platform).0
     }
 
     pub(crate) fn resolve_platform_with_origin(
         &self,
-        git_root: &Path,
-        start_dir: &Path,
         saved_platform: Option<String>,
-    ) -> Result<(Platform, PlatformOrigin)> {
+    ) -> (Platform, PlatformOrigin) {
         if let Some(p) = &self.platform {
-            return Ok((p.clone(), PlatformOrigin::Flag));
+            return (p.clone(), PlatformOrigin::Flag);
         }
-        if let Some(platform) = self.manifest_platform(git_root)? {
-            return Ok((platform, PlatformOrigin::Manifest));
-        }
-        if let Some(platform) = AomiAppFiles::discover(start_dir, git_root)
-            .ok()
-            .and_then(|a| a.platform)
-            .map(|name| name.trim().to_string())
-            .filter(|name| !name.is_empty())
-        {
-            return Ok((Platform::new(platform), PlatformOrigin::Manifest));
-        }
-        Ok(match saved_platform {
+        match saved_platform {
             Some(saved) => (Platform::new(saved), PlatformOrigin::SavedConfig),
             None => (Platform::community(), PlatformOrigin::Default),
-        })
-    }
-
-    /// Platform declared by the manifests in the root Project configuration.
-    /// `None` when no manifest in the set declares one; an error when the set
-    /// disagrees, since one deploy targets exactly one platform.
-    pub(crate) fn manifest_platform(&self, git_root: &Path) -> Result<Option<Platform>> {
-        let Ok(paths) = self.project_applications(git_root) else {
-            // No deployable manifest set (e.g. nothing tracked yet); the deploy
-            // steps surface that error where it matters.
-            return Ok(None);
-        };
-        let mut declared: Vec<(String, Platform)> = Vec::new();
-        for path in paths {
-            let Some(platform) = AomiAppFiles::from_aomi_toml(&git_root.join(&path), git_root)
-                .ok()
-                .and_then(|app| app.platform)
-                .map(Platform::new)
-            else {
-                continue;
-            };
-            if !declared.iter().any(|(_, seen)| *seen == platform) {
-                declared.push((path, platform));
-            }
         }
-        if declared.len() > 1 {
-            let listing = declared
-                .iter()
-                .map(|(path, platform)| format!("  {path} -> {platform}"))
-                .collect::<Vec<_>>()
-                .join("\n");
-            bail!(
-                "the aomi.toml manifests in this deploy declare conflicting platforms:\n{listing}\n\
-                 A Project targets one platform; align `[app].platform` or pass --platform."
-            );
-        }
-        Ok(declared.pop().map(|(_, platform)| platform))
     }
 
     pub(crate) fn source_ref(&self, git_root: &Path) -> Result<String> {
