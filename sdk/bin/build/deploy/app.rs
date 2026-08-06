@@ -9,9 +9,6 @@ pub struct AomiAppFiles {
     pub name: String,
     #[serde(default)]
     pub display_name: String,
-    /// Platform tier label — must match a row in the backend `platforms` table.
-    #[serde(default)]
-    pub platform: Option<String>,
     /// Legacy deployment-state field. New aomi.toml files should not set it.
     #[serde(default)]
     pub git: Option<String>,
@@ -78,10 +75,16 @@ impl AomiAppFiles {
             .with_context(|| format!("failed to read app config {}", path.display()))?;
         let file: toml::Table = toml::from_str(&content)
             .with_context(|| format!("failed to parse app config {}", path.display()))?;
-        let raw: AomiAppConfig = file
+        let mut app_value = file
             .get("app")
             .ok_or_else(|| anyhow!("{} must define an [app] table", path.display()))?
-            .clone()
+            .clone();
+        // Platform belongs to the Project. Old manifests may keep the field,
+        // but it must never influence deployment selection.
+        if let Some(app) = app_value.as_table_mut() {
+            app.remove("platform");
+        }
+        let raw: AomiAppConfig = app_value
             .try_into()
             .with_context(|| format!("failed to parse [app] in {}", path.display()))?;
 
@@ -96,8 +99,6 @@ impl AomiAppFiles {
         } else {
             app.display_name = app.display_name.trim().to_string();
         }
-        // Trim string optionals; empty → None.
-        app.platform = trim_opt(app.platform);
         app.server_tags = normalize_tags(app.server_tags, "server_tags", path)?;
         if app.server_tags.is_empty() {
             app.server_tags = vec![DEFAULT_SERVER_TAG.to_string()];
@@ -165,9 +166,6 @@ struct AomiAppConfig {
     pub name: String,
     #[serde(default)]
     pub display_name: String,
-    /// Platform tier label — must match a row in the backend `platforms` table.
-    #[serde(default)]
-    pub platform: Option<String>,
     /// Visibility intent — replaces the per-call `--visibility` flag.
     #[serde(default)]
     pub public: Option<bool>,
@@ -185,7 +183,6 @@ impl AomiAppConfig {
         AomiAppFiles {
             name: self.name,
             display_name: self.display_name,
-            platform: self.platform,
             public: self.public,
             server_tags: self.server_tags,
             ..AomiAppFiles::default()
@@ -227,12 +224,6 @@ fn source_dir_for_config(config_path: &Path) -> Result<&Path> {
             .ok_or_else(|| anyhow!("app config has no app root: {}", config_path.display()));
     }
     Ok(parent)
-}
-
-fn trim_opt(value: Option<String>) -> Option<String> {
-    value
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
 }
 
 fn normalize_tags(values: Vec<String>, field: &str, source: &Path) -> Result<Vec<String>> {

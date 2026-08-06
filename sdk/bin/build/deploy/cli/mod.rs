@@ -10,14 +10,15 @@
 //!
 //! ```text
 //! deploy                     # lifecycle: preflight → run → activate → status
-//!   --platform <NAME>        # aomi.toml [app].platform (default community)
-//!   --repo <OWNER/REPO>      # create a Project when project_id is not known
-//!   --project-id <ID>        # platform-bound Project (AOMI_PROJECT_ID)
+//!   --repo <OWNER/REPO>      # resolve the existing Project (default: git origin)
 //!   --commit <SHA>           # deploy this source commit (default: HEAD)
 //!   --backend <URL>          # AOMI_BACKEND_URL
 //!   --activation-token <T>   # AOMI_APP_ACTIVATION_TOKEN
 //!   --preflight              # resolve + print the plan without opening a PR
 //!   --json
+//!
+//! project create --repo <OWNER/REPO> --platform <NAME>
+//!                            # writes .aomi/config.json, then creates Project
 //!
 //! activate [APP]...          # activate release tags (default: deployment.json tags)
 //!   --platform <NAME>        # default: deployment.json platform

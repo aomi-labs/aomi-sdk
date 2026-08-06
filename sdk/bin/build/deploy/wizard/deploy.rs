@@ -140,7 +140,6 @@ async fn deploy_then_activate(
     // a retry instead of unwinding the whole wizard.
     loop {
         let result = DeployStepArgs {
-            platform: Some(Platform::new(platform)),
             repo: Some(repo.to_string()),
             backend: session.backend_url().map(str::to_string),
             build_url: Some(session.build_url().to_string()),

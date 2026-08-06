@@ -11,8 +11,6 @@ fn deploy_subcommands_parse_lifecycle_steps() {
         "aomi-build",
         "deploy",
         "preflight",
-        "--platform",
-        "community",
         "--repo",
         "aomi-labs/playground-example",
     ])
@@ -20,7 +18,6 @@ fn deploy_subcommands_parse_lifecycle_steps() {
     match cli.cmd {
         Some(crate::Cmd::Deploy(args)) => match args.cmd {
             Some(crate::deploy::cli::deploy::DeployCmd::Preflight(step)) => {
-                assert_eq!(step.platform.unwrap().as_str(), "community");
                 assert_eq!(step.repo.as_deref(), Some("aomi-labs/playground-example"));
             }
             _ => panic!("expected deploy preflight"),
@@ -50,8 +47,6 @@ fn deploy_prerequisite_flags_parse_on_lifecycle_steps() {
         "https://build.aomi.dev",
         "--activation-token",
         "aat_live",
-        "--project-id",
-        "626",
     ])
     .expect("parse deploy flags");
     match cli.cmd {
@@ -62,7 +57,6 @@ fn deploy_prerequisite_flags_parse_on_lifecycle_steps() {
                 Some("https://build.aomi.dev")
             );
             assert_eq!(args.step.activation_token.as_deref(), Some("aat_live"));
-            assert_eq!(args.step.project_id, Some(626));
         }
         _ => panic!("expected deploy"),
     }
@@ -214,7 +208,6 @@ fn login_parses_build_environment() {
 #[test]
 fn build_deploy_input_uses_bff_camel_case_contract() {
     let request = BuildDeployInput {
-        platform: "somm.finance".into(),
         repo: "peggyjv/somm-agent".into(),
         source_ref: "abc1234".into(),
         project_id: Some(1065),
@@ -222,7 +215,6 @@ fn build_deploy_input_uses_bff_camel_case_contract() {
     assert_eq!(
         serde_json::to_value(request).unwrap(),
         json!({
-            "platform": "somm.finance",
             "repo": "peggyjv/somm-agent",
             "sourceRef": "abc1234",
             "projectId": 1065

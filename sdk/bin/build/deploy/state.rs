@@ -114,21 +114,6 @@ impl LocalDeployment {
             .collect()
     }
 
-    /// The source repo this deployment was created from, as the backend
-    /// reported it — its own `owner/name` slug when present, else the raw
-    /// repository link. Callers normalize before comparing.
-    pub fn source_repo_hint(&self) -> Option<&str> {
-        let source = &self.deployment.source;
-        [source.owner_repo_name.trim(), source.repository_link.trim()]
-            .into_iter()
-            .find(|value| !value.is_empty())
-    }
-
-    /// Record the canonical Project id after an explicit `project create`.
-    pub fn set_project_id(&mut self, project_id: i64) {
-        self.project_id = project_id;
-    }
-
     /// The recorded release tag for an app from the last deploy.
     pub fn release_tag_for(&self, app: &str) -> Option<&str> {
         self.deployment

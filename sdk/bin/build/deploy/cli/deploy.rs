@@ -104,19 +104,9 @@ pub(crate) async fn run_activate_step(args: ActivateArgs) -> Result<()> {
 
 #[derive(Debug, Args, Clone, Default)]
 pub struct DeployStepArgs {
-    /// Platform tag (`aomi.toml [app].platform`). Defaults to aomi.toml, then
-    /// saved config, then `community`.
-    #[arg(long, value_name = "NAME")]
-    pub platform: Option<Platform>,
-
-    /// Source repository used to create a Project when no project id is known.
+    /// Source repository used to resolve its existing Project.
     #[arg(long, value_name = "OWNER/REPO")]
     pub repo: Option<String>,
-
-    /// Existing platform-bound Project. Falls back to `AOMI_PROJECT_ID`, then
-    /// `.aomi/deployment.json`.
-    #[arg(long = "project-id", value_name = "ID")]
-    pub project_id: Option<i64>,
 
     /// Deploy this exact source commit. Defaults to local HEAD.
     #[arg(long, value_name = "SHA")]
@@ -158,14 +148,13 @@ pub struct DeployStepArgs {
     pub fix_sdk: bool,
 }
 
-/// A deploy step with everything resolved: where the repo is, which platform it
-/// targets, an authenticated session, and the request body to send.
+/// A deploy step with the local source and authenticated request resolved.
+/// The preflight response supplies the persisted Project and platform.
 ///
 /// Both entry points below resolved this same set of five values in the same
 /// order before they could do anything, so it is built once and passed whole.
 struct Prepared {
     git_root: PathBuf,
-    platform: Platform,
     session: Session,
     request: BuildDeployInput,
 }
@@ -188,12 +177,10 @@ impl Prepared {
         anyhow!(
             "{message}\n\n\
              Deploy authorization needs a verified Builder login that owns this GitHub source.\n\
-             Platform: `{}`\n\
              Source: commit `{}`\n\
              Log in again with:\n\
                aomi-build login --build-url {}\n\
              Headless automation may set {BUILD_TOKEN_ENV}.",
-            self.platform,
             self.request.source_ref,
             self.session.build_url()
         )
@@ -201,19 +188,21 @@ impl Prepared {
 }
 
 impl DeployStepArgs {
-    /// Resolve the git root, platform, SDK pin, session, and request body, then
+    /// Resolve the git root, SDK pin, session, and request body, then
     /// show what is about to be deployed and block the deploys that cannot
     /// work: a source commit the backend can't fetch, or an SDK pin that isn't
     /// in the commit being shipped.
     async fn prepare(&self, announce: bool) -> Result<Prepared> {
-        let (git_root, start_dir) = git_context(&self.path)?;
-        let (platform, platform_origin) = self.platform_with_origin(&git_root, &start_dir)?;
+        let (git_root, _) = git_context(&self.path)?;
         let backend_url = resolve_backend(&self.backend);
         let sdk =
             crate::sdk_guard::ensure_project_sdk(&git_root, backend_url.as_deref(), self.fix_sdk)
                 .await?;
         let session = Session::open(&self.backend, &self.build_url).await?;
-        let request = self.build_request(&git_root, &platform)?;
+        let request = self.build_request(&git_root)?;
+        let configured_platform = crate::deploy::project_config::ProjectConfig::load(&git_root)?
+            .platform()
+            .clone();
 
         let branch = head_branch(&git_root);
         let dirty = worktree_dirty(&git_root);
@@ -221,7 +210,10 @@ impl DeployStepArgs {
 
         if announce {
             let short = &request.source_ref[..request.source_ref.len().min(7)];
-            println!("  Platform   {platform} ({})", platform_origin.describe());
+            println!(
+                "  Project    {} (platform `{configured_platform}`)",
+                request.repo
+            );
             let mut source = format!("{} @ {short}", request.repo);
             source.push_str(&format!(" · {}", branch.as_deref().unwrap_or("detached")));
             match pushed {
@@ -246,18 +238,6 @@ impl DeployStepArgs {
             println!("  SDK        {sdk_line}");
         }
 
-        // `--platform` (or the wizard's answer) overrides what the repo itself
-        // declares. That can be deliberate, but silently ignoring the manifest
-        // is how a typo'd destination survives to a backend error.
-        if platform_origin == super::inputs::PlatformOrigin::Flag
-            && let Ok(Some(declared)) = self.manifest_platform(&git_root)
-            && declared != platform
-        {
-            eprintln!(
-                "  ! aomi.toml declares platform `{declared}` but this deploy targets \
-                 `{platform}` — deploying to `{platform}`."
-            );
-        }
         if dirty == Some(true) {
             eprintln!(
                 "  ! the working tree has uncommitted changes — the deploy ships commit \
@@ -276,7 +256,6 @@ impl DeployStepArgs {
 
         Ok(Prepared {
             git_root,
-            platform,
             session,
             request,
         })
@@ -287,12 +266,13 @@ impl DeployStepArgs {
         let quiet = self.json;
 
         let preflight = prepared.deploy(true).await?;
+        let platform = Platform::new(&preflight.deployment.platform.platform);
         if !quiet {
             println!();
             println!(
                 "[1/4] Preflight       ✓ {} app(s) on `{}`",
                 preflight.deployment.platform.apps.len(),
-                prepared.platform
+                platform
             );
             for app in &preflight.deployment.platform.apps {
                 println!("        {} → {}", app.name, app.release_tag);
@@ -322,7 +302,7 @@ impl DeployStepArgs {
 
         release::wait_via_build(
             &prepared.session.client,
-            &prepared.platform,
+            &platform,
             &state,
             "[3/4] Release build",
             format!(
@@ -337,7 +317,7 @@ impl DeployStepArgs {
             println!("[4/4] Activate        …");
         }
         let activate_args = ActivateArgs {
-            platform: Some(prepared.platform.clone()),
+            platform: Some(platform.clone()),
             backend: prepared.session.backend_url().map(str::to_string),
             build_url: Some(prepared.session.build_url().to_string()),
             activation_token: self.activation_token.clone(),
@@ -362,7 +342,7 @@ impl DeployStepArgs {
             println!();
             println!(
                 "✓ {apps} {live} on {} ({})",
-                prepared.platform,
+                platform,
                 prepared.session.env_label()
             );
             for app in &state.deployment.platform.apps {
@@ -405,7 +385,7 @@ impl DeployStepArgs {
         };
 
         let git_root = prepared.git_root;
-        let platform = prepared.platform;
+        let platform = Platform::new(&response.deployment.platform.platform);
         let state = LocalDeployment::from_build_deploy(response);
         let path = state.write(&git_root)?;
 

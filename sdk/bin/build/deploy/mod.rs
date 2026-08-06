@@ -7,6 +7,7 @@ pub(crate) mod config;
 pub(crate) mod discord;
 pub(crate) mod flow;
 pub(crate) mod platform;
+pub(crate) mod project_config;
 pub(crate) mod session;
 pub(crate) mod state;
 pub(crate) mod status;

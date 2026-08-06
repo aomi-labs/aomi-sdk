@@ -113,16 +113,17 @@ for repeated runs:
 |---|---|---|---|
 | Backend URL | `--backend <url>` | `AOMI_BACKEND_URL` | deploy group, project creation, token commands, apps list, sdk check/fix |
 | Activation token | `--activation-token <token>` | `AOMI_APP_ACTIVATION_TOKEN` | deploy group, project creation, token list/revoke, apps list |
-| Project id | `--project-id <id>` | `AOMI_PROJECT_ID` | deploy, deploy preflight, deploy run |
 | Admin signing key | `--admin-key <pkcs8-pem-or-path>` | `AOMI_ADMIN_KEY` | token mint |
 | Admin key id | `--admin-kid <kid>` | `AOMI_ADMIN_KID` | token mint |
 
 ```sh
-aomi-build deploy \
+aomi-build project create \
   --platform community \
   --repo owner/repo \
   --backend https://api.aomi.dev \
   --activation-token <platform-or-app-token>
+git add .aomi/config.json && git commit && git push
+aomi-build deploy
 ```
 
 That is enough for the happy path when the repo is committed, the Aomi GitHub
@@ -132,8 +133,7 @@ SDK version. A developer receiving only the `aomi-build` binary still needs:
 - a committed and pushed source repo containing `.aomi/config.json` and its referenced manifests
 - the Aomi GitHub App installed on that repo
 - backend URL and a valid platform/app activation token
-- either `--project-id <id>` or `--repo owner/repo` so the backend can resolve
-  or create the Project
+- an explicitly created Project for that repository
 
 They do not need a GitHub PAT, platform repo write access, database access, or
 an admin private key.
@@ -158,9 +158,8 @@ Resolution order:
 | Input | Resolution |
 |---|---|
 | backend | `--backend` → `AOMI_BACKEND_URL` → saved config |
-| platform | `--platform` → `aomi.toml` → saved config → `community` |
 | token | `--activation-token` → `AOMI_APP_ACTIVATION_TOKEN` → saved config |
-| project | `--project-id` → `AOMI_PROJECT_ID` → `.aomi/deployment.json` → `--repo owner/repo` project creation |
+| project | repository origin → existing backend Project |
 | commit | `--commit` → local `HEAD`; branches are rejected |
 
 ### `deploy preflight`
@@ -169,10 +168,11 @@ Resolution order:
 writes:
 
 ```sh
-aomi-build deploy preflight --platform community --repo owner/repo
+aomi-build deploy preflight --repo owner/repo
 ```
 
-It sends `preflight: true` to `POST /api/platforms/:platform/deploy`. If a
+It resolves the repository's existing Project and sends `preflight: true` to
+`POST /api/projects/:project_id/deploy`. If a
 required input is missing, the CLI stops with the next command to run instead of
 falling into documentation.
 
@@ -183,7 +183,6 @@ falling into documentation.
 
 ```json
 {
-  "project_id": 123,
   "source_ref": "<commit-sha>",
   "preflight": false
 }

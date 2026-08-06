@@ -1,16 +1,16 @@
 //! `project` — connect a GitHub repository to one Aomi platform.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::{Args, Subcommand};
 
 use super::login::verified_builder_github_user_id;
-use super::shared::{PROJECT_ID_ENV, git_context, resolve_activation};
+use super::shared::{git_context, remote_origin, resolve_activation};
 use crate::deploy::backend::BackendClient;
 use crate::deploy::platform::{Platform, normalize_github_repo};
+use crate::deploy::project_config::ProjectConfig;
 use crate::deploy::session::Session;
-use crate::deploy::state::LocalDeployment;
 use crate::deploy::types::{CreateProjectInput, ProjectResult};
 
 #[derive(Debug, Args, Clone)]
@@ -47,7 +47,7 @@ pub struct ProjectCreateArgs {
     pub build_url: Option<String>,
     #[arg(long, value_name = "TOKEN")]
     pub activation_token: Option<String>,
-    /// Source repo path for `.aomi/deployment.json` persistence.
+    /// Source repo path where `.aomi/config.json` is created.
     #[arg(long, default_value = ".")]
     pub path: PathBuf,
     #[arg(long)]
@@ -57,6 +57,12 @@ pub struct ProjectCreateArgs {
 impl ProjectCreateArgs {
     pub async fn run(self) -> Result<()> {
         let repo = normalize_github_repo(&self.repo)?;
+        let (repo_root, _) = git_context(&self.path)?;
+        let local_repo = normalize_github_repo(&remote_origin(&repo_root)?)?;
+        if repo != local_repo {
+            anyhow::bail!("--repo `{repo}` does not match this checkout's origin `{local_repo}`");
+        }
+        let (config, config_path) = ProjectConfig::create(&repo_root, &self.platform)?;
         let (url, token) =
             resolve_activation("project create", &self.backend, &self.activation_token)?;
         let session = Session::open(&self.backend, &self.build_url).await?;
@@ -70,13 +76,22 @@ impl ProjectCreateArgs {
                 },
             )
             .await?;
-        report_project(&result, &self.path, self.json)
+        report_project(
+            &result,
+            &config_path,
+            config.applications().len(),
+            self.json,
+        )
     }
 }
 
-fn report_project(result: &ProjectResult, path: &Path, json: bool) -> Result<()> {
+fn report_project(
+    result: &ProjectResult,
+    config_path: &std::path::Path,
+    application_count: usize,
+    json: bool,
+) -> Result<()> {
     let id = result.project.id;
-    let persisted = persist_project_id(path, id);
     if json {
         println!(
             "{}",
@@ -85,7 +100,8 @@ fn report_project(result: &ProjectResult, path: &Path, json: bool) -> Result<()>
                 "repository_link": result.project.repository_link,
                 "installation_id": result.project.installation_id,
                 "platform_id": result.project.platform_id,
-                "persisted": persisted.is_some(),
+                "config_path": config_path,
+                "applications": application_count,
             }))?
         );
     } else {
@@ -94,28 +110,9 @@ fn report_project(result: &ProjectResult, path: &Path, json: bool) -> Result<()>
             result.project.repository_link, result.project.installation_id
         );
         println!("  project_id: {id}");
-        match persisted {
-            Some(p) => println!(
-                "  recorded in {} — deploy will auto-resolve it",
-                p.display()
-            ),
-            None => {
-                println!("  no .aomi/deployment.json yet; pass it to the first deploy:");
-                println!(
-                    "    aomi-build deploy --project-id {id}   (or export {PROJECT_ID_ENV}={id})"
-                );
-            }
-        }
+        println!("  config: {}", config_path.display());
+        println!("  applications: {application_count}");
+        println!("  commit and push the config before deploying");
     }
     Ok(())
-}
-
-/// Record a resolved Project id into an existing `.aomi/deployment.json`.
-fn persist_project_id(path: &Path, project_id: i64) -> Option<PathBuf> {
-    let repo_root = git_context(path)
-        .map(|(root, _)| root)
-        .unwrap_or_else(|_| path.to_path_buf());
-    let mut state = LocalDeployment::read(&repo_root).ok().flatten()?;
-    state.set_project_id(project_id);
-    state.write(&repo_root).ok()
 }

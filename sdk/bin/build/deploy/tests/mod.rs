@@ -13,6 +13,7 @@ use tempfile::TempDir;
 
 use super::cli::{ActivateArgs, DeployStepArgs, StatusArgs};
 use super::platform::Platform;
+use super::project_config::ProjectConfig;
 use super::state::LocalDeployment;
 use super::types::{
     ActivateInput, ActivateResult, BuildDeployInput, DeployInput, DeployResult, ReleaseTags,
@@ -117,6 +118,7 @@ impl TestRepo {
             ".aomi/config.json",
             &serde_json::to_string_pretty(&json!({
                 "version": 1,
+                "platform": "community",
                 "applications": applications,
             }))
             .unwrap(),
@@ -128,6 +130,7 @@ impl TestRepo {
             ".aomi/config.json",
             &serde_json::to_string_pretty(&json!({
                 "version": 1,
+                "platform": "community",
                 "applications": applications,
             }))
             .unwrap(),

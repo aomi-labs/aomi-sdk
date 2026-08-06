@@ -12,7 +12,6 @@ pub(crate) const ACTIVATION_TOKEN_ENV: &str = "AOMI_APP_ACTIVATION_TOKEN";
 pub(crate) const BACKEND_URL_ENV: &str = "AOMI_BACKEND_URL";
 pub(crate) const BUILD_URL_ENV: &str = "AOMI_BUILD_URL";
 pub(crate) const BUILD_TOKEN_ENV: &str = "AOMI_BUILD_TOKEN";
-pub(crate) const PROJECT_ID_ENV: &str = "AOMI_PROJECT_ID";
 pub(crate) const ADMIN_KEY_ENV: &str = "AOMI_ADMIN_KEY";
 pub(crate) const ADMIN_KID_ENV: &str = "AOMI_ADMIN_KID";
 

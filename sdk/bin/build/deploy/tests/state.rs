@@ -53,65 +53,6 @@ fn deploy_records_project_id_and_round_trips() {
             .project_id,
         219
     );
-
-    // `project create` patch path: set + persist on an existing record.
-    let mut patched = LocalDeployment::read(repo.root()).unwrap().unwrap();
-    patched.set_project_id(321);
-    patched.write(repo.root()).unwrap();
-    assert_eq!(
-        LocalDeployment::read(repo.root())
-            .unwrap()
-            .unwrap()
-            .project_id,
-        321
-    );
-}
-
-#[test]
-fn deploy_reads_recorded_project_id_from_repo_root_state() {
-    let repo = TestRepo::new();
-    repo.write_aomi_toml("apps/bot", "bot");
-    repo.commit("init");
-
-    let mut state = sample_state();
-    state.set_project_id(777);
-    state.write(repo.root()).unwrap();
-
-    let app_dir = repo.path("apps/bot");
-    assert!(
-        LocalDeployment::read(&app_dir).unwrap().is_none(),
-        "deployment state is intentionally rooted at the source repo"
-    );
-
-    let args = deploy_args(&app_dir);
-    // `sample_state` records repository_link https://github.com/a/b.git.
-    assert_eq!(args.resolve_project_id(repo.root(), "a/b"), Some(777));
-}
-
-#[test]
-fn recorded_project_id_is_dropped_when_it_belongs_to_another_repo() {
-    // The backend resolves the source repo from project_id, so reusing a
-    // recorded id for a different repo would silently override the repo the
-    // caller asked for (in the wizard, the answer to "Source repo (owner/name)").
-    let repo = TestRepo::new();
-    repo.write_aomi_toml("apps/bot", "bot");
-    repo.commit("init");
-
-    let mut state = sample_state();
-    state.set_project_id(777);
-    state.write(repo.root()).unwrap();
-
-    let args = deploy_args(&repo.path("apps/bot"));
-    assert_eq!(
-        args.resolve_project_id(repo.root(), "a/b"),
-        Some(777),
-        "same repo still reuses the recorded id"
-    );
-    assert_eq!(
-        args.resolve_project_id(repo.root(), "someone-else/other"),
-        None,
-        "a mismatched repo must re-resolve instead of deploying the recorded source"
-    );
 }
 
 #[tokio::test]
