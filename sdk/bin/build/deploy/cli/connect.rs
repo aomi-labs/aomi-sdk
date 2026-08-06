@@ -1,17 +1,16 @@
 //! `connect` — install the Aomi GitHub App and save your activation token.
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use clap::Args;
 
-use super::login::verified_builder_github_user_id;
+use super::login::saved_builder_github_identity;
 use super::shared::{
-    BUILD_URL_ENV, missing_backend, resolve_activation_token, resolve_backend, resolve_build_url,
+    missing_backend, resolve_activation_token, resolve_backend, resolve_build_url,
 };
 use crate::deploy::backend::BackendClient;
 use crate::deploy::config::AomiConfig;
 use crate::deploy::flow::{TokenCheck, oauth_install_url, validate_activation_token};
 use crate::deploy::platform::{Platform, normalize_github_repo};
-use crate::deploy::session::Session;
 use crate::deploy::types::CreateProjectInput;
 
 #[derive(Debug, Args, Clone)]
@@ -33,7 +32,8 @@ pub struct ConnectArgs {
     #[arg(long, value_name = "URL")]
     pub backend: Option<String>,
 
-    /// Aomi Build URL used to authenticate the Builder who owns `--repo`.
+    /// Aomi Build URL to save alongside the connection for later Build
+    /// commands. Inferred from known backends when omitted.
     #[arg(long = "build-url", value_name = "URL")]
     pub build_url: Option<String>,
 
@@ -68,16 +68,7 @@ impl ConnectArgs {
             Some(r) => Some(normalize_github_repo(r)?),
             None => None,
         };
-        let build_url = repo
-            .as_ref()
-            .map(|_| {
-                resolve_build_url(&self.build_url, Some(&backend_url)).ok_or_else(|| {
-                    anyhow!(
-                        "connect --repo needs an Aomi Build URL to verify ownership; set --build-url or {BUILD_URL_ENV}"
-                    )
-                })
-            })
-            .transpose()?;
+        let build_url = resolve_build_url(&self.build_url, Some(&backend_url));
 
         // 1. GitHub App install URL. After the user installs, GitHub redirects
         //    *their browser* (not this CLI) to the App's configured callback,
@@ -138,26 +129,32 @@ impl ConnectArgs {
             }
         }
 
-        // 4. Claim the selected source with the verified Builder identity.
-        let claimed = match (repo.as_ref(), build_url.as_deref()) {
-            (Some(repo), Some(build_url)) => {
-                let session =
-                    Session::at_with_options(build_url, Some(backend_url.clone()), self.no_browser)
-                        .await?;
-                let github_user_id =
-                    verified_builder_github_user_id(&session.identity.github_user_id)?;
+        // 4. Connect the selected source, claiming it when a Builder identity
+        //    was saved by an earlier `aomi-build login`. The claim is
+        //    opportunistic — with no login the project is still created,
+        //    keyed off the activation token alone.
+        let claimed = match repo.as_ref() {
+            Some(repo) => {
+                let identity = saved_builder_github_identity();
+                if identity.is_none() {
+                    println!(
+                        "  no Builder login found — creating the project on the activation \
+                         token alone (run `aomi-build login` first to claim it for your \
+                         GitHub account)"
+                    );
+                }
                 let project = BackendClient::new(backend_url.clone(), token.clone())?
                     .create_project(
                         &self.platform,
                         &CreateProjectInput {
                             repo: repo.clone(),
-                            github_user_id,
+                            github_user_id: identity.as_ref().map(|(id, _)| id.clone()),
                         },
                     )
                     .await?;
-                Some((session.identity, project))
+                Some((identity.and_then(|(_, login)| login), project))
             }
-            _ => None,
+            None => None,
         };
 
         // 5. Merge the platform credentials onto any identity saved above.
@@ -174,10 +171,12 @@ impl ConnectArgs {
         println!();
         println!("Connected. Saved to {}", path.display());
         println!("  installation_id: {installation_id}");
-        if let Some((builder, project)) = claimed {
-            println!("  Builder: @{}", builder.github_login);
+        if let Some((builder_login, project)) = claimed {
+            if let Some(login) = builder_login {
+                println!("  Builder: @{login}");
+            }
             println!(
-                "  claimed project: {} (project_id {})",
+                "  project: {} (project_id {})",
                 project.project.repository_link, project.project.id
             );
         }

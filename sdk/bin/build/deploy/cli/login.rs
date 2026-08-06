@@ -63,12 +63,19 @@ pub struct Authenticated {
     pub identity: CliStatusResult,
 }
 
-pub(crate) fn verified_builder_github_user_id(github_user_id: &str) -> Result<String> {
-    let github_user_id = github_user_id.trim();
+/// The Builder GitHub identity saved by a previous `aomi-build login`:
+/// `(github_user_id, github_login)`. Project claiming uses it
+/// opportunistically; no command requires it, so a token-only environment
+/// (CI, a contributor holding just an activation token) is never forced
+/// through a browser login. The backend re-verifies installation ownership
+/// whenever an identity is sent, so a stale saved value fails there.
+pub(crate) fn saved_builder_github_identity() -> Option<(String, Option<String>)> {
+    let config = AomiConfig::load();
+    let github_user_id = config.github_user_id?.trim().to_string();
     if github_user_id.is_empty() {
-        bail!("a verified Builder identity is required; run `aomi-build login` first");
+        return None;
     }
-    Ok(github_user_id.to_string())
+    Some((github_user_id, config.github_login))
 }
 
 /// Prove the stored credential works, falling back to a browser login.

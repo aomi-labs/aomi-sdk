@@ -135,10 +135,21 @@ fn project_contract_is_canonical() {
     assert_eq!(
         serde_json::to_value(CreateProjectInput {
             repo: "alice/project".into(),
-            github_user_id: "12345".into(),
+            github_user_id: Some("12345".into()),
         })
         .unwrap(),
         json!({ "repo": "alice/project", "github_user_id": "12345" })
+    );
+
+    // A token-only environment (no `aomi-build login`) omits the identity
+    // entirely; the backend binds the project without a Builder claim.
+    assert_eq!(
+        serde_json::to_value(CreateProjectInput {
+            repo: "alice/project".into(),
+            github_user_id: None,
+        })
+        .unwrap(),
+        json!({ "repo": "alice/project" })
     );
 
     let current: ProjectResult = serde_json::from_value(json!({

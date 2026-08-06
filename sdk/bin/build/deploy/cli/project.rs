@@ -5,12 +5,11 @@ use std::path::PathBuf;
 use anyhow::Result;
 use clap::{Args, Subcommand};
 
-use super::login::verified_builder_github_user_id;
+use super::login::saved_builder_github_identity;
 use super::shared::{git_context, remote_origin, resolve_activation};
 use crate::deploy::backend::BackendClient;
 use crate::deploy::platform::{Platform, normalize_github_repo};
 use crate::deploy::project_config::ProjectConfig;
-use crate::deploy::session::Session;
 use crate::deploy::types::{CreateProjectInput, ProjectResult};
 
 #[derive(Debug, Args, Clone)]
@@ -42,9 +41,6 @@ pub struct ProjectCreateArgs {
     pub platform: Platform,
     #[arg(long, value_name = "URL")]
     pub backend: Option<String>,
-    /// Aomi Build URL used to verify the Builder identity that owns the source.
-    #[arg(long = "build-url", value_name = "URL")]
-    pub build_url: Option<String>,
     #[arg(long, value_name = "TOKEN")]
     pub activation_token: Option<String>,
     /// Source repo path where `.aomi/config.json` is created.
@@ -65,8 +61,19 @@ impl ProjectCreateArgs {
         let (config, config_path) = ProjectConfig::create(&repo_root, &self.platform)?;
         let (url, token) =
             resolve_activation("project create", &self.backend, &self.activation_token)?;
-        let session = Session::open(&self.backend, &self.build_url).await?;
-        let github_user_id = verified_builder_github_user_id(&session.identity.github_user_id)?;
+        let github_user_id = match saved_builder_github_identity() {
+            Some((id, _)) => Some(id),
+            None => {
+                if !self.json {
+                    println!(
+                        "  no Builder login found — creating the project on the activation \
+                         token alone (run `aomi-build login` first to claim it for your \
+                         GitHub account)"
+                    );
+                }
+                None
+            }
+        };
         let result = BackendClient::new(url, token)?
             .create_project(
                 &self.platform,
