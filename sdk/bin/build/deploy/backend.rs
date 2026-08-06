@@ -6,8 +6,8 @@ use serde::de::DeserializeOwned;
 
 use super::platform::Platform;
 use super::types::{
-    ActivateInput, ActivateResult, DeploymentStatusResult, MintTokenInput, MintTokenResult,
-    OAuthStart, PlatformAppResult, SourceResult, SyncSourceInput,
+    ActivateInput, ActivateResult, CreateProjectInput, DeploymentStatusResult, MintTokenInput,
+    MintTokenResult, OAuthStart, PlatformAppResult, ProjectResult,
 };
 
 /// GET the aomi-build GitHub App install URL for `platform`. Query params mirror
@@ -156,16 +156,16 @@ impl BackendClient {
         .await
     }
 
-    /// Resolve or create an installed source as a manager-v2 project.
-    pub async fn sync_installed(
+    /// Connect an installed GitHub repository as a platform-bound Project.
+    pub async fn create_project(
         &self,
         platform: &Platform,
-        request: &SyncSourceInput,
-    ) -> Result<SourceResult> {
+        request: &CreateProjectInput,
+    ) -> Result<ProjectResult> {
         self.post(
             &format!("/api/platforms/{}/projects", platform.as_str()),
             request,
-            "source sync",
+            "project creation",
         )
         .await
     }

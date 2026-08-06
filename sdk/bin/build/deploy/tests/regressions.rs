@@ -78,7 +78,7 @@ fn build_activate_input_carries_target_tags_and_omits_them_when_unused() {
 }
 
 #[test]
-fn build_deploy_result_accepts_snake_case_and_camel_case_envelopes() {
+fn build_deploy_result_accepts_canonical_project_envelope() {
     use crate::deploy::types::BuildDeployResult;
 
     let deployment = json!({
@@ -92,7 +92,7 @@ fn build_deploy_result_accepts_snake_case_and_camel_case_envelopes() {
         },
         "platform": {
             "platform": "somm.finance", "repository": "aomi-labs/somm-finance-apps",
-            "source_branch": "main", "deploy_branch": "publish",
+            "platformBranch": "a/b/1/abc1234", "deployBranch": "publish",
             "apps": [{
                 "name": "bot", "path": "apps/1/r0/bot",
                 "aomi_toml_path": "aomi.toml", "release_tag": "apps-1-r0-bot-abc1234"
@@ -100,23 +100,11 @@ fn build_deploy_result_accepts_snake_case_and_camel_case_envelopes() {
         }
     });
 
-    let legacy_camel: BuildDeployResult = serde_json::from_value(json!({
-        "ok": true, "appSourceId": 1065,
-        "deployment": deployment, "projectUrl": "https://build.example/p/1"
-    }))
-    .unwrap();
-    let snake: BuildDeployResult = serde_json::from_value(json!({
-        "ok": true, "app_source_id": 1065,
-        "deployment": deployment, "project_url": "https://build.example/p/1"
-    }))
-    .expect("the envelope must be as case-tolerant as the payload it wraps");
     let current: BuildDeployResult = serde_json::from_value(json!({
         "ok": true, "projectId": 1065,
         "deployment": deployment, "projectUrl": "https://build.example/p/1"
     }))
     .unwrap();
-    assert_eq!(legacy_camel, snake);
-    assert_eq!(legacy_camel, current);
     assert_eq!(current.project_id, 1065);
 }
 
@@ -141,11 +129,11 @@ fn activated_app_defaults_missing_artifact_ready_until_verification() {
 }
 
 #[test]
-fn source_project_contract_accepts_legacy_and_manager_v2() {
-    use crate::deploy::types::{SourceResult, SyncSourceInput};
+fn project_contract_is_canonical() {
+    use crate::deploy::types::{CreateProjectInput, ProjectResult};
 
     assert_eq!(
-        serde_json::to_value(SyncSourceInput {
+        serde_json::to_value(CreateProjectInput {
             repo: "alice/project".into(),
             github_user_id: "12345".into(),
         })
@@ -153,7 +141,7 @@ fn source_project_contract_accepts_legacy_and_manager_v2() {
         json!({ "repo": "alice/project", "github_user_id": "12345" })
     );
 
-    let current: SourceResult = serde_json::from_value(json!({
+    let current: ProjectResult = serde_json::from_value(json!({
         "ok": true,
         "project": {
             "id": 42,
@@ -165,31 +153,12 @@ fn source_project_contract_accepts_legacy_and_manager_v2() {
         }
     }))
     .unwrap();
-    assert_eq!(current.source.id, 42);
-    assert_eq!(current.source.bound_platform_id, Some(3));
-
-    for github_user_id in [Some(json!("12345")), None] {
-        let mut source = json!({
-            "id": 7,
-            "installation_id": 8,
-            "repository_id": 9,
-            "repository_link": "alice/project",
-            "bound_platform_id": 1
-        });
-        if let Some(github_user_id) = github_user_id {
-            source["github_user_id"] = github_user_id;
-        }
-        let legacy: SourceResult = serde_json::from_value(json!({
-            "ok": true,
-            "source": source
-        }))
-        .unwrap();
-        assert_eq!(legacy.source.id, 7);
-    }
+    assert_eq!(current.project.id, 42);
+    assert_eq!(current.project.platform_id, Some(3));
 }
 
 #[test]
-fn build_deploy_result_accepts_manager_v2_shape() {
+fn build_deploy_result_accepts_project_shape() {
     use crate::deploy::state::LocalDeployment;
     use crate::deploy::types::BuildDeployResult;
 
@@ -226,9 +195,9 @@ fn build_deploy_result_accepts_manager_v2_shape() {
     assert_eq!(result.project_id, 42);
     assert!(result.deployment.source.aomi_toml_paths.is_empty());
     assert_eq!(
-        result.deployment.platform.source_branch,
+        result.deployment.platform.platform_branch,
         "alice/project/8/abc1234"
     );
     let state = LocalDeployment::from_build_deploy(result);
-    assert_eq!(state.app_source_id(), Some(42));
+    assert_eq!(state.project_id, 42);
 }

@@ -19,6 +19,7 @@ use super::types::{ActivateResult, Activation, BuildDeployResult, DeployPayload,
 /// overlay (`state`, and per-app `AppRecord::activated`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LocalDeployment {
+    pub project_id: i64,
     #[serde(flatten)]
     pub deployment: DeployPayload,
     pub state: LocalDeploymentState,
@@ -37,16 +38,15 @@ pub struct LocalDeploymentState {
 
 impl LocalDeployment {
     /// Build local state from a fresh deploy response (deployed=true, nothing
-    /// activated yet). `app_source_id` is the connected source the CLI deployed
-    /// from; the backend omits it from the response, so we record it here for
-    /// later re-deploys / `activate` to auto-resolve.
-    pub fn from_deploy(resp: DeployResult, app_source_id: i64) -> Self {
+    /// activated yet). The Project remains stable across deployments and owns
+    /// the repository/platform binding.
+    pub fn from_deploy(resp: DeployResult, project_id: i64) -> Self {
         let mut deployment = resp.deployment;
-        deployment.source.app_source_id = Some(app_source_id);
         for app in &mut deployment.platform.apps {
             app.activated = Some(false);
         }
         Self {
+            project_id,
             deployment,
             state: LocalDeploymentState {
                 deployed: true,
@@ -114,11 +114,6 @@ impl LocalDeployment {
             .collect()
     }
 
-    /// The connected source id recorded by the last deploy, if any.
-    pub fn app_source_id(&self) -> Option<i64> {
-        self.deployment.source.app_source_id
-    }
-
     /// The source repo this deployment was created from, as the backend
     /// reported it — its own `owner/name` slug when present, else the raw
     /// repository link. Callers normalize before comparing.
@@ -129,10 +124,9 @@ impl LocalDeployment {
             .find(|value| !value.is_empty())
     }
 
-    /// Record the connected source id (used by `source sync` / `scaffold` to
-    /// patch an existing deployment record so the next deploy auto-resolves it).
-    pub fn set_app_source_id(&mut self, app_source_id: i64) {
-        self.deployment.source.app_source_id = Some(app_source_id);
+    /// Record the canonical Project id after an explicit `project create`.
+    pub fn set_project_id(&mut self, project_id: i64) {
+        self.project_id = project_id;
     }
 
     /// The recorded release tag for an app from the last deploy.
@@ -169,8 +163,7 @@ impl LocalDeployment {
                 .promoted
                 .iter()
                 .all(|promotion| promotion.ci_status == "passed");
-        // Manager v2 returns the activation request as `target`, without the
-        // legacy CI projection. A fully usable app set still proves the
+        // The activation response may contain only the request target. A fully usable app set proves the
         // release artifacts passed the activation gate.
         let all_apps_activated = !response.activation.apps.is_empty()
             && response.activation.apps.iter().all(|app| {

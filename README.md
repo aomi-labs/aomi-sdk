@@ -146,7 +146,10 @@ private key.
 
 Every deploy prerequisite that can come from env also has a flag for one-off
 runs: `AOMI_BACKEND_URL` -> `--backend`, `AOMI_APP_ACTIVATION_TOKEN` ->
-`--activation-token`, and `AOMI_APP_SOURCE_ID` -> `--app-source-id`.
+`--activation-token`, and `AOMI_PROJECT_ID` -> `--project-id`.
+
+The repository must commit one root `.aomi/config.json`; its `applications`
+array is the complete set of `aomi.toml` manifests in the Project.
 
 `deploy` writes `.aomi/deployment.json` in the source repo, waits for candidate
 CI/release readiness, activates the recorded release tags, and fails unless the

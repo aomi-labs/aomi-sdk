@@ -12,7 +12,7 @@ pub(crate) const ACTIVATION_TOKEN_ENV: &str = "AOMI_APP_ACTIVATION_TOKEN";
 pub(crate) const BACKEND_URL_ENV: &str = "AOMI_BACKEND_URL";
 pub(crate) const BUILD_URL_ENV: &str = "AOMI_BUILD_URL";
 pub(crate) const BUILD_TOKEN_ENV: &str = "AOMI_BUILD_TOKEN";
-pub(crate) const APP_SOURCE_ID_ENV: &str = "AOMI_APP_SOURCE_ID";
+pub(crate) const PROJECT_ID_ENV: &str = "AOMI_PROJECT_ID";
 pub(crate) const ADMIN_KEY_ENV: &str = "AOMI_ADMIN_KEY";
 pub(crate) const ADMIN_KID_ENV: &str = "AOMI_ADMIN_KID";
 
@@ -241,23 +241,6 @@ pub(crate) fn commit_on_remote(git_root: &Path, commit: &str) -> Option<bool> {
     git_output_at(git_root, ["branch", "-r", "--contains", commit])
         .ok()
         .map(|out| !out.trim().is_empty())
-}
-
-pub(crate) fn tracked_aomi_tomls(git_root: &Path) -> Result<Vec<String>> {
-    let raw = git_output_at(
-        git_root,
-        ["ls-files", "-z", "--", "*aomi.toml", "aomi.toml"],
-    )
-    .with_context(|| format!("failed to list tracked files in {}", git_root.display()))?;
-    let mut paths: Vec<String> = raw
-        .split('\0')
-        .filter(|entry| !entry.is_empty())
-        .filter(|entry| entry.rsplit('/').next() == Some("aomi.toml"))
-        .map(str::to_string)
-        .collect();
-    paths.sort();
-    paths.dedup();
-    Ok(paths)
 }
 
 fn normalize_start_dir(path: &Path) -> Result<PathBuf> {

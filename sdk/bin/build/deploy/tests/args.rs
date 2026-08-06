@@ -6,38 +6,6 @@ use super::*;
 // ── deploy: arg parsing ─────────────────────────────────────────────────────
 
 #[test]
-fn deploy_rejects_branch_and_commit_together() {
-    let parsed = crate::Cli::try_parse_from([
-        "aomi-build",
-        "deploy",
-        "--branch",
-        "main",
-        "--commit",
-        "abc1234",
-    ]);
-    assert!(parsed.is_err(), "--branch and --commit must conflict");
-}
-
-#[test]
-fn deploy_parses_repeated_aomi_toml() {
-    let cli = crate::Cli::try_parse_from([
-        "aomi-build",
-        "deploy",
-        "--aomi-toml",
-        "apps/a/aomi.toml",
-        "--aomi-toml",
-        "apps/b/aomi.toml",
-    ])
-    .expect("parse");
-    match cli.cmd {
-        Some(crate::Cmd::Deploy(args)) => {
-            assert_eq!(args.step.aomi_toml.len(), 2);
-        }
-        _ => panic!("expected deploy"),
-    }
-}
-
-#[test]
 fn deploy_subcommands_parse_lifecycle_steps() {
     let cli = crate::Cli::try_parse_from([
         "aomi-build",
@@ -82,7 +50,7 @@ fn deploy_prerequisite_flags_parse_on_lifecycle_steps() {
         "https://build.aomi.dev",
         "--activation-token",
         "aat_live",
-        "--app-source-id",
+        "--project-id",
         "626",
     ])
     .expect("parse deploy flags");
@@ -94,7 +62,7 @@ fn deploy_prerequisite_flags_parse_on_lifecycle_steps() {
                 Some("https://build.aomi.dev")
             );
             assert_eq!(args.step.activation_token.as_deref(), Some("aat_live"));
-            assert_eq!(args.step.app_source_id, Some(626));
+            assert_eq!(args.step.project_id, Some(626));
         }
         _ => panic!("expected deploy"),
     }
@@ -146,8 +114,8 @@ fn deploy_prerequisite_flags_parse_on_lifecycle_steps() {
 fn support_commands_parse_prerequisite_flags() {
     let cli = crate::Cli::try_parse_from([
         "aomi-build",
-        "source",
-        "sync",
+        "project",
+        "create",
         "--platform",
         "community",
         "--repo",
@@ -157,15 +125,15 @@ fn support_commands_parse_prerequisite_flags() {
         "--activation-token",
         "aat_live",
     ])
-    .expect("parse source flags");
+    .expect("parse project flags");
     match cli.cmd {
-        Some(crate::Cmd::Source(args)) => match args.cmd {
-            crate::deploy::cli::source::SourceCmd::Sync(sync) => {
-                assert_eq!(sync.backend.as_deref(), Some("https://api.aomi.dev"));
-                assert_eq!(sync.activation_token.as_deref(), Some("aat_live"));
+        Some(crate::Cmd::Project(args)) => match args.cmd {
+            crate::deploy::cli::project::ProjectCmd::Create(create) => {
+                assert_eq!(create.backend.as_deref(), Some("https://api.aomi.dev"));
+                assert_eq!(create.activation_token.as_deref(), Some("aat_live"));
             }
         },
-        _ => panic!("expected source sync"),
+        _ => panic!("expected project create"),
     }
 
     let cli = crate::Cli::try_parse_from([
@@ -249,7 +217,6 @@ fn build_deploy_input_uses_bff_camel_case_contract() {
         platform: "somm.finance".into(),
         repo: "peggyjv/somm-agent".into(),
         source_ref: "abc1234".into(),
-        aomi_toml_paths: vec!["aomi.toml".into()],
         project_id: Some(1065),
     };
     assert_eq!(
@@ -258,7 +225,6 @@ fn build_deploy_input_uses_bff_camel_case_contract() {
             "platform": "somm.finance",
             "repo": "peggyjv/somm-agent",
             "sourceRef": "abc1234",
-            "aomiTomlPaths": ["aomi.toml"],
             "projectId": 1065
         })
     );

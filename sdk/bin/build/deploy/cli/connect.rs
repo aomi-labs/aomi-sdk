@@ -12,7 +12,7 @@ use crate::deploy::config::AomiConfig;
 use crate::deploy::flow::{TokenCheck, oauth_install_url, validate_activation_token};
 use crate::deploy::platform::{Platform, normalize_github_repo};
 use crate::deploy::session::Session;
-use crate::deploy::types::SyncSourceInput;
+use crate::deploy::types::CreateProjectInput;
 
 #[derive(Debug, Args, Clone)]
 pub struct ConnectArgs {
@@ -146,16 +146,16 @@ impl ConnectArgs {
                         .await?;
                 let github_user_id =
                     verified_builder_github_user_id(&session.identity.github_user_id)?;
-                let source = BackendClient::new(backend_url.clone(), token.clone())?
-                    .sync_installed(
+                let project = BackendClient::new(backend_url.clone(), token.clone())?
+                    .create_project(
                         &self.platform,
-                        &SyncSourceInput {
+                        &CreateProjectInput {
                             repo: repo.clone(),
                             github_user_id,
                         },
                     )
                     .await?;
-                Some((session.identity, source))
+                Some((session.identity, project))
             }
             _ => None,
         };
@@ -174,24 +174,21 @@ impl ConnectArgs {
         println!();
         println!("Connected. Saved to {}", path.display());
         println!("  installation_id: {installation_id}");
-        if let Some((builder, source)) = claimed {
+        if let Some((builder, project)) = claimed {
             println!("  Builder: @{}", builder.github_login);
             println!(
                 "  claimed project: {} (project_id {})",
-                source.source.repository_link, source.source.id
+                project.project.repository_link, project.project.id
             );
         }
         println!();
         println!("Next:");
         println!(
-            "  aomi-build scaffold --repo-name <name> --installation-id {installation_id} --platform {}",
+            "  aomi-build project create --repo <owner/repo> --platform {}",
             self.platform
         );
-        println!("  # or, from an existing source repo:");
-        println!(
-            "  aomi-build source sync --repo <owner/repo> --platform {}",
-            self.platform
-        );
+        println!("  # then, from that repository with .aomi/config.json committed:");
+        println!("  aomi-build deploy --project-id <id>");
         Ok(())
     }
 }

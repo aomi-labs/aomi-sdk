@@ -1,4 +1,4 @@
-//! `source` — resolve a connected source repo to its `app_source_id`.
+//! `project` — connect a GitHub repository to one Aomi platform.
 
 use std::path::{Path, PathBuf};
 
@@ -6,35 +6,35 @@ use anyhow::Result;
 use clap::{Args, Subcommand};
 
 use super::login::verified_builder_github_user_id;
-use super::shared::{APP_SOURCE_ID_ENV, git_context, resolve_activation};
+use super::shared::{PROJECT_ID_ENV, git_context, resolve_activation};
 use crate::deploy::backend::BackendClient;
 use crate::deploy::platform::{Platform, normalize_github_repo};
 use crate::deploy::session::Session;
 use crate::deploy::state::LocalDeployment;
-use crate::deploy::types::{SourceResult, SyncSourceInput};
+use crate::deploy::types::{CreateProjectInput, ProjectResult};
 
 #[derive(Debug, Args, Clone)]
-pub struct SourceArgs {
+pub struct ProjectArgs {
     #[command(subcommand)]
-    pub cmd: SourceCmd,
+    pub cmd: ProjectCmd,
 }
 
 #[derive(Debug, Subcommand, Clone)]
-pub enum SourceCmd {
-    /// Resolve-or-bind an installed source repo and print its `app_source_id`.
-    Sync(SourceSyncArgs),
+pub enum ProjectCmd {
+    /// Connect an installed repository and print its platform-bound Project id.
+    Create(ProjectCreateArgs),
 }
 
-impl SourceArgs {
+impl ProjectArgs {
     pub async fn run(self) -> Result<()> {
         match self.cmd {
-            SourceCmd::Sync(a) => a.run().await,
+            ProjectCmd::Create(a) => a.run().await,
         }
     }
 }
 
 #[derive(Debug, Args, Clone)]
-pub struct SourceSyncArgs {
+pub struct ProjectCreateArgs {
     /// Source repo, `owner/name`.
     #[arg(long, value_name = "OWNER/REPO")]
     pub repo: String,
@@ -54,48 +54,46 @@ pub struct SourceSyncArgs {
     pub json: bool,
 }
 
-impl SourceSyncArgs {
+impl ProjectCreateArgs {
     pub async fn run(self) -> Result<()> {
         let repo = normalize_github_repo(&self.repo)?;
         let (url, token) =
-            resolve_activation("source sync", &self.backend, &self.activation_token)?;
+            resolve_activation("project create", &self.backend, &self.activation_token)?;
         let session = Session::open(&self.backend, &self.build_url).await?;
         let github_user_id = verified_builder_github_user_id(&session.identity.github_user_id)?;
         let result = BackendClient::new(url, token)?
-            .sync_installed(
+            .create_project(
                 &self.platform,
-                &SyncSourceInput {
+                &CreateProjectInput {
                     repo: repo.clone(),
                     github_user_id,
                 },
             )
             .await?;
-        report_source(&result, &self.path, self.json, "synced")
+        report_project(&result, &self.path, self.json)
     }
 }
 
-/// Shared output + persistence for `source sync` / `scaffold` — both return a
-/// resolved `app_source` whose id deploy needs.
-fn report_source(result: &SourceResult, path: &Path, json: bool, verb: &str) -> Result<()> {
-    let id = result.source.id;
-    let persisted = persist_app_source_id(path, id);
+fn report_project(result: &ProjectResult, path: &Path, json: bool) -> Result<()> {
+    let id = result.project.id;
+    let persisted = persist_project_id(path, id);
     if json {
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
-                "app_source_id": id,
-                "repository_link": result.source.repository_link,
-                "installation_id": result.source.installation_id,
-                "bound_platform_id": result.source.bound_platform_id,
+                "project_id": id,
+                "repository_link": result.project.repository_link,
+                "installation_id": result.project.installation_id,
+                "platform_id": result.project.platform_id,
                 "persisted": persisted.is_some(),
             }))?
         );
     } else {
         println!(
-            "{verb} source `{}` (installation {})",
-            result.source.repository_link, result.source.installation_id
+            "created project `{}` (installation {})",
+            result.project.repository_link, result.project.installation_id
         );
-        println!("  app_source_id: {id}");
+        println!("  project_id: {id}");
         match persisted {
             Some(p) => println!(
                 "  recorded in {} — deploy will auto-resolve it",
@@ -104,7 +102,7 @@ fn report_source(result: &SourceResult, path: &Path, json: bool, verb: &str) -> 
             None => {
                 println!("  no .aomi/deployment.json yet; pass it to the first deploy:");
                 println!(
-                    "    aomi-build deploy --app-source-id {id}   (or export {APP_SOURCE_ID_ENV}={id})"
+                    "    aomi-build deploy --project-id {id}   (or export {PROJECT_ID_ENV}={id})"
                 );
             }
         }
@@ -112,14 +110,12 @@ fn report_source(result: &SourceResult, path: &Path, json: bool, verb: &str) -> 
     Ok(())
 }
 
-/// Record a resolved `app_source_id` into an existing `.aomi/deployment.json`
-/// (if one exists) so the next deploy auto-resolves it. Returns the written
-/// path, or `None` when there's no deployment record yet.
-fn persist_app_source_id(path: &Path, app_source_id: i64) -> Option<PathBuf> {
+/// Record a resolved Project id into an existing `.aomi/deployment.json`.
+fn persist_project_id(path: &Path, project_id: i64) -> Option<PathBuf> {
     let repo_root = git_context(path)
         .map(|(root, _)| root)
         .unwrap_or_else(|_| path.to_path_buf());
     let mut state = LocalDeployment::read(&repo_root).ok().flatten()?;
-    state.set_app_source_id(app_source_id);
+    state.set_project_id(project_id);
     state.write(&repo_root).ok()
 }

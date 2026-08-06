@@ -109,28 +109,18 @@ pub struct DeployStepArgs {
     #[arg(long, value_name = "NAME")]
     pub platform: Option<Platform>,
 
-    /// Source repository to sync when no app_source_id is known, as `owner/repo`.
+    /// Source repository used to create a Project when no project id is known.
     #[arg(long, value_name = "OWNER/REPO")]
     pub repo: Option<String>,
 
-    /// The connected GitHub App install (`app_source`) to deploy from. The
-    /// backend resolves the source repo from it. Falls back to
-    /// `AOMI_APP_SOURCE_ID`.
-    #[arg(long = "app-source-id", value_name = "ID")]
-    pub app_source_id: Option<i64>,
-
-    /// Deprecated. Backend deploy accepts immutable commits only; checkout the branch locally.
-    #[arg(long, value_name = "NAME", conflicts_with = "commit")]
-    pub branch: Option<String>,
+    /// Existing platform-bound Project. Falls back to `AOMI_PROJECT_ID`, then
+    /// `.aomi/deployment.json`.
+    #[arg(long = "project-id", value_name = "ID")]
+    pub project_id: Option<i64>,
 
     /// Deploy this exact source commit. Defaults to local HEAD.
     #[arg(long, value_name = "SHA")]
     pub commit: Option<String>,
-
-    /// `aomi.toml` to deploy, repo-relative. Repeatable. Defaults to every
-    /// tracked `aomi.toml` in the repo.
-    #[arg(long = "aomi-toml", value_name = "PATH")]
-    pub aomi_toml: Vec<String>,
 
     /// Backend base URL (default: `AOMI_BACKEND_URL`).
     #[arg(long, value_name = "URL")]

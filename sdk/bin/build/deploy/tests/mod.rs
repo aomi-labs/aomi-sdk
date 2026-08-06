@@ -21,6 +21,7 @@ use super::types::{
 /// A two-app deployment record, as the backend would have produced it.
 pub(super) fn sample_state() -> LocalDeployment {
     serde_json::from_value(json!({
+        "project_id": 42,
         "id": "dep_1",
         "status": "pr_created",
         "source": {
@@ -31,7 +32,7 @@ pub(super) fn sample_state() -> LocalDeployment {
         },
         "platform": {
             "platform": "krexa", "repository": "aomi-labs/krexa-apps",
-            "source_branch": "main", "deploy_branch": "deploy/1/abc1234",
+            "platform_branch": "a/b/1/abc1234", "deploy_branch": "deploy/1/abc1234",
             "commit_hash": "def5678", "pr_number": 9,
             "pr_url": "https://github.com/aomi-labs/krexa-apps/pull/9",
             "apps": [
@@ -102,6 +103,34 @@ impl TestRepo {
         self.write(
             &rel,
             &format!("[app]\nname = \"{name}\"\nplatform = \"community\"\n"),
+        );
+        let config_path = self.path(".aomi/config.json");
+        let mut applications = fs::read(&config_path)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .and_then(|value| value["applications"].as_array().cloned())
+            .unwrap_or_default();
+        if !applications.iter().any(|value| value == &rel) {
+            applications.push(json!(rel));
+        }
+        self.write(
+            ".aomi/config.json",
+            &serde_json::to_string_pretty(&json!({
+                "version": 1,
+                "applications": applications,
+            }))
+            .unwrap(),
+        );
+    }
+
+    fn write_project_config(&self, applications: &[&str]) {
+        self.write(
+            ".aomi/config.json",
+            &serde_json::to_string_pretty(&json!({
+                "version": 1,
+                "applications": applications,
+            }))
+            .unwrap(),
         );
     }
 

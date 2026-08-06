@@ -76,7 +76,7 @@ fn release_tag_activation(apps: &[(&str, bool, bool)]) -> ActivateResult {
                 "promoted": apps.iter().map(|(name, _, _)| json!({
                     "name": name,
                     "release_tag": format!("apps-1-r00a1b2c3d4-{name}-abc1234"),
-                    "source_branch": "a/b/1/abc1234",
+                    "platformBranch": "a/b/1/abc1234",
                     "platform_commit_hash": "def5678",
                     "live_commit_hash": "fed7654",
                     "ci_status": "passed",
@@ -213,7 +213,7 @@ fn apply_target_activation_keeps_unloaded_active_row_inactive() {
 }
 
 #[test]
-fn activation_accepts_manager_v2_and_builder_shapes() {
+fn activation_accepts_canonical_shapes() {
     let mut manager: ActivateResult = serde_json::from_value(json!({
         "ok": true,
         "activation": {
