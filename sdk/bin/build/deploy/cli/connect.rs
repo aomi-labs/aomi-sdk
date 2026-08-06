@@ -188,7 +188,7 @@ impl ConnectArgs {
             self.platform
         );
         println!("  # then, from that repository with .aomi/config.json committed:");
-        println!("  aomi-build deploy --project-id <id>");
+        println!("  aomi-build deploy");
         Ok(())
     }
 }

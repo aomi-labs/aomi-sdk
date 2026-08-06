@@ -163,9 +163,10 @@ impl TokenMintArgs {
             println!();
             println!("Use it for deploy/activate:");
             println!(
-                "  aomi-build deploy --platform {} --repo <owner/repo> --backend {} --activation-token {}",
+                "  aomi-build project create --platform {} --repo <owner/repo> --backend {} --activation-token {}",
                 self.platform, backend_url, result.token
             );
+            println!("  # commit .aomi/config.json, push it, then run: aomi-build deploy");
             println!("  # or export {ACTIVATION_TOKEN_ENV}={}", result.token);
         }
         Ok(())

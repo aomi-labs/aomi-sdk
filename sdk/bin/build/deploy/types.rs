@@ -15,11 +15,10 @@ pub type DeployStatus = String;
 /// Mirrors TypeScript `CiStatus`; the backend may add more status strings.
 pub type CiStatus = String;
 
-/// Body of `POST /api/platforms/:platform/deploy`.
+/// Body of `POST /api/projects/:project_id/deploy`.
 #[cfg(test)]
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DeployInput {
-    pub project_id: i64,
     /// Resolved immutable source commit SHA. Branches are resolved before this request.
     pub source_ref: String,
     /// Preview the deployment plan; may materialize backend source metadata but opens no PR.
@@ -40,7 +39,6 @@ pub struct DeployResult {
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BuildDeployInput {
-    pub platform: String,
     pub repo: String,
     pub source_ref: String,
     #[serde(skip_serializing_if = "Option::is_none")]

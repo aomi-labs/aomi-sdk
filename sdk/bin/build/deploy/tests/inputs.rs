@@ -1,4 +1,4 @@
-//! Resolving a deploy's source commit, Project manifest set, and platform.
+//! Resolving a deploy's source commit and canonical Project configuration.
 
 use super::*;
 
@@ -33,7 +33,6 @@ fn source_ref_honors_commit_flag() {
 #[test]
 fn deploy_input_serializes_widget_contract_body() {
     let input = DeployInput {
-        project_id: 42,
         source_ref: "0badc0de".to_string(),
         preflight: true,
     };
@@ -41,7 +40,6 @@ fn deploy_input_serializes_widget_contract_body() {
     assert_eq!(
         serde_json::to_value(&input).unwrap(),
         json!({
-            "project_id": 42,
             "source_ref": "0badc0de",
             "preflight": true
         })
@@ -57,10 +55,9 @@ fn project_applications_come_only_from_root_config() {
     repo.write_aomi_toml("apps/bot", "bot");
     repo.commit("init");
 
-    let paths = deploy_args(repo.root())
-        .project_applications(repo.root())
-        .unwrap();
-    assert_eq!(paths, vec!["aomi.toml", "apps/bot/aomi.toml"]);
+    let config = ProjectConfig::load(repo.root()).unwrap();
+    assert_eq!(config.platform(), &Platform::community());
+    assert_eq!(config.applications(), ["aomi.toml", "apps/bot/aomi.toml"]);
 }
 
 #[test]
@@ -69,23 +66,15 @@ fn project_config_rejects_missing_and_unsafe_manifests() {
     repo.write_aomi_toml("", "root");
     repo.commit("init");
     repo.write_project_config(&["../escape/aomi.toml"]);
-    assert!(
-        deploy_args(repo.root())
-            .project_applications(repo.root())
-            .is_err()
-    );
+    assert!(ProjectConfig::load(repo.root()).is_err());
     repo.write_project_config(&["apps/missing/aomi.toml"]);
-    assert!(
-        deploy_args(repo.root())
-            .project_applications(repo.root())
-            .is_err()
-    );
+    assert!(ProjectConfig::load(repo.root()).is_err());
 }
 
-// ── deploy: platform resolution ─────────────────────────────────────────────
+// ── project create: singular platform config ────────────────────────────────
 
 #[test]
-fn platform_ignores_retired_manifest_field() {
+fn project_config_owns_platform_and_ignores_retired_manifest_field() {
     let repo = TestRepo::new();
     repo.write("aomi.toml", "[app]\nname = \"x\"\nplatform = \"krexa\"\n");
     repo.write_project_config(&["aomi.toml"]);
@@ -94,30 +83,20 @@ fn platform_ignores_retired_manifest_field() {
     let app = crate::deploy::app::AomiAppFiles::discover(repo.root(), repo.root()).unwrap();
     assert_eq!(app.name, "x");
     assert_eq!(
-        deploy_args(repo.root()).resolve_platform(Some("somm.finance".into())),
-        Platform::new("somm.finance")
-    );
-    assert_eq!(
-        deploy_args(repo.root()).resolve_platform(None),
-        Platform::community()
+        ProjectConfig::load(repo.root()).unwrap().platform(),
+        &Platform::community()
     );
 }
 
 #[test]
-fn platform_flag_wins_over_saved_config() {
+fn project_create_discovers_manifests_and_rejects_platform_changes() {
     let repo = TestRepo::new();
-    let mut args = deploy_args(repo.root());
-    args.platform = Some(Platform::new("somm.finance"));
-    let platform = args.resolve_platform(Some("other".into()));
-    assert_eq!(platform.as_str(), "somm.finance");
-}
-
-#[test]
-fn platform_falls_back_to_saved_config_then_community() {
-    let repo = TestRepo::new();
-    let platform = deploy_args(repo.root()).resolve_platform(Some("somm.finance".into()));
-    assert_eq!(platform.as_str(), "somm.finance");
-
-    let platform = deploy_args(repo.root()).resolve_platform(None);
-    assert_eq!(platform, Platform::community());
+    repo.write("aomi.toml", "[app]\nname = \"root\"\n");
+    repo.write("apps/bot/aomi.toml", "[app]\nname = \"bot\"\n");
+    let platform = Platform::new("somm.finance");
+    let (config, path) = ProjectConfig::create(repo.root(), &platform).unwrap();
+    assert_eq!(path, repo.path(".aomi/config.json"));
+    assert_eq!(config.platform(), &platform);
+    assert_eq!(config.applications(), ["aomi.toml", "apps/bot/aomi.toml"]);
+    assert!(ProjectConfig::create(repo.root(), &Platform::community()).is_err());
 }

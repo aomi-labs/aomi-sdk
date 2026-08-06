@@ -94,8 +94,6 @@ subdirectory and list its manifest in the root Project configuration:
 ```bash
 aomi-build sdk check --path apps/my-app --backend https://api.aomi.dev
 aomi-build deploy \
-  --platform community \
-  --repo owner/repo \
   --backend https://api.aomi.dev \
   --activation-token <community-token>
 ```
@@ -227,12 +225,8 @@ aomi-build deploy \
   --activation-token <community-token>
 ```
 
-You usually do not need to pass `--project-id`. The CLI resolves the Project in
-this order:
-
-```text
---project-id -> AOMI_PROJECT_ID -> .aomi/deployment.json -> --repo owner/repo
-```
+Deploy resolves the one existing Project from the repository origin. It never
+selects or creates a Project.
 
 All prerequisite env vars have a flag form:
 
@@ -240,7 +234,6 @@ All prerequisite env vars have a flag form:
 |---|---|---|
 | Backend URL | `--backend <url>` | `AOMI_BACKEND_URL` |
 | Activation token | `--activation-token <token>` | `AOMI_APP_ACTIVATION_TOKEN` |
-| Project id | `--project-id <id>` | `AOMI_PROJECT_ID` |
 
 The new deploy writes a new deployment record and activates the new release tag
 after the platform build is ready.
@@ -253,8 +246,6 @@ Validate inputs without opening a platform PR:
 
 ```bash
 aomi-build deploy preflight \
-  --platform community \
-  --repo owner/repo \
   --backend https://api.aomi.dev \
   --activation-token <community-token>
 ```
@@ -263,8 +254,6 @@ Create or update the platform deployment but do not activate:
 
 ```bash
 aomi-build deploy run \
-  --platform community \
-  --repo owner/repo \
   --backend https://api.aomi.dev \
   --activation-token <community-token>
 ```
