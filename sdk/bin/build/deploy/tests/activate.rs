@@ -76,7 +76,7 @@ fn release_tag_activation(apps: &[(&str, bool, bool)]) -> ActivateResult {
                 "promoted": apps.iter().map(|(name, _, _)| json!({
                     "name": name,
                     "release_tag": format!("apps-1-r00a1b2c3d4-{name}-abc1234"),
-                    "source_branch": "a/b/1/abc1234",
+                    "platformBranch": "a/b/1/abc1234",
                     "platform_commit_hash": "def5678",
                     "live_commit_hash": "fed7654",
                     "ci_status": "passed",
@@ -210,6 +210,76 @@ fn apply_target_activation_keeps_unloaded_active_row_inactive() {
         "hot-reload failure should not persist as a usable activation"
     );
     assert!(!state.state.activated);
+}
+
+#[test]
+fn activation_accepts_canonical_shapes() {
+    let mut manager: ActivateResult = serde_json::from_value(json!({
+        "ok": true,
+        "activation": {
+            "status": "activating",
+            "platform": "krexa",
+            "target": {
+                "kind": "release_tags",
+                "value": ["apps-1-r00a1b2c3d4-bot-abc1234"]
+            },
+            "apps": [{
+                "application_id": 7,
+                "name": "bot",
+                "path": "apps/1/r00a1b2c3d4/bot",
+                "release_tag": "apps-1-r00a1b2c3d4-bot-abc1234",
+                "is_active": true,
+                "loaded": true,
+                "error": null,
+                "platform_branch": "publish",
+                "activation_status": "promoted"
+            }]
+        }
+    }))
+    .unwrap();
+    assert!(!manager.activation.apps[0].artifact_ready);
+    assert_eq!(
+        manager.activation.apps[0].platform_branch.as_deref(),
+        Some("publish")
+    );
+
+    // The direct activation path verifies the live app projection before it
+    // folds the response into local state.
+    manager.activation.apps[0].artifact_ready = true;
+    let mut state = sample_state();
+    state.apply_target_activation(&manager);
+    assert_eq!(state.deployment.platform.apps[0].activated, Some(true));
+    assert!(state.state.ci_passed);
+
+    let builder: ActivateResult = serde_json::from_value(json!({
+        "ok": true,
+        "activation": {
+            "status": "activating",
+            "platform": "krexa",
+            "target": {
+                "kind": "release_tags",
+                "value": ["apps-1-r00a1b2c3d4-bot-abc1234"]
+            },
+            "apps": [{
+                "applicationId": 7,
+                "name": "bot",
+                "path": "apps/1/r00a1b2c3d4/bot",
+                "releaseTag": "apps-1-r00a1b2c3d4-bot-abc1234",
+                "isActive": true,
+                "artifactReady": true,
+                "loaded": true,
+                "error": null,
+                "platformBranch": "publish",
+                "activationStatus": "promoted"
+            }]
+        }
+    }))
+    .unwrap();
+    assert!(builder.activation.apps[0].artifact_ready);
+    assert_eq!(
+        builder.activation.apps[0].platform_branch.as_deref(),
+        Some("publish")
+    );
 }
 
 #[test]

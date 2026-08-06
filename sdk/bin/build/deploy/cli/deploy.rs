@@ -109,28 +109,18 @@ pub struct DeployStepArgs {
     #[arg(long, value_name = "NAME")]
     pub platform: Option<Platform>,
 
-    /// Source repository to sync when no app_source_id is known, as `owner/repo`.
+    /// Source repository used to create a Project when no project id is known.
     #[arg(long, value_name = "OWNER/REPO")]
     pub repo: Option<String>,
 
-    /// The connected GitHub App install (`app_source`) to deploy from. The
-    /// backend resolves the source repo from it. Falls back to
-    /// `AOMI_APP_SOURCE_ID`.
-    #[arg(long = "app-source-id", value_name = "ID")]
-    pub app_source_id: Option<i64>,
-
-    /// Deprecated. Backend deploy accepts immutable commits only; checkout the branch locally.
-    #[arg(long, value_name = "NAME", conflicts_with = "commit")]
-    pub branch: Option<String>,
+    /// Existing platform-bound Project. Falls back to `AOMI_PROJECT_ID`, then
+    /// `.aomi/deployment.json`.
+    #[arg(long = "project-id", value_name = "ID")]
+    pub project_id: Option<i64>,
 
     /// Deploy this exact source commit. Defaults to local HEAD.
     #[arg(long, value_name = "SHA")]
     pub commit: Option<String>,
-
-    /// `aomi.toml` to deploy, repo-relative. Repeatable. Defaults to every
-    /// tracked `aomi.toml` in the repo.
-    #[arg(long = "aomi-toml", value_name = "PATH")]
-    pub aomi_toml: Vec<String>,
 
     /// Backend base URL (default: `AOMI_BACKEND_URL`).
     #[arg(long, value_name = "URL")]
@@ -309,7 +299,7 @@ impl DeployStepArgs {
             }
         }
 
-        prepared.request.app_source_id = Some(preflight.app_source_id);
+        prepared.request.project_id = Some(preflight.project_id);
         let deploy = prepared.deploy(false).await?;
         let mut state = LocalDeployment::from_build_deploy(deploy);
         let path = state.write(&prepared.git_root)?;
@@ -401,14 +391,14 @@ impl DeployStepArgs {
     async fn run_step(self, preflight: bool) -> Result<()> {
         // Preflight's stdout is the JSON plan; keep the human card off it.
         let mut prepared = self.prepare(!self.json && !preflight).await?;
-        // A first deploy has no app_source_id yet; preflight resolves it.
-        let response = if preflight || prepared.request.app_source_id.is_none() {
+        // A first deploy has no project id yet; preflight resolves it.
+        let response = if preflight || prepared.request.project_id.is_none() {
             let resolved = prepared.deploy(true).await?;
             if preflight {
                 println!("{}", serde_json::to_string_pretty(&resolved)?);
                 return Ok(());
             }
-            prepared.request.app_source_id = Some(resolved.app_source_id);
+            prepared.request.project_id = Some(resolved.project_id);
             prepared.deploy(false).await?
         } else {
             prepared.deploy(false).await?

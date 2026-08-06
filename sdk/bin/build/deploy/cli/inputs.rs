@@ -2,20 +2,32 @@
 //!
 //! Everything here answers "what exactly are we deploying?" from git and
 //! `aomi.toml` — the source commit, the manifest set, the destination platform,
-//! and the connected source id — with no network involved. Split from the
+//! and the platform-bound Project id — with no network involved. Split from the
 //! lifecycle in `deploy.rs`, which consumes the answers.
 
+use std::collections::HashSet;
+use std::fs;
 use std::path::Path;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
+use serde::Deserialize;
 
 use super::DeployStepArgs;
-use super::shared::{APP_SOURCE_ID_ENV, env_value, head_commit, remote_origin, tracked_aomi_tomls};
+use super::shared::{PROJECT_ID_ENV, env_value, head_commit, remote_origin};
 use crate::deploy::app::AomiAppFiles;
 use crate::deploy::config::AomiConfig;
 use crate::deploy::platform::{Platform, normalize_github_repo};
 use crate::deploy::state::LocalDeployment;
 use crate::deploy::types::BuildDeployInput;
+
+const PROJECT_CONFIG_PATH: &str = ".aomi/config.json";
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ProjectConfig {
+    version: u8,
+    applications: Vec<String>,
+}
 
 /// Where a deploy's destination platform came from, for the summary card.
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -47,11 +59,11 @@ impl DeployStepArgs {
             Some(repo) => normalize_github_repo(repo)?,
             None => normalize_github_repo(&remote_origin(git_root)?)?,
         };
+        self.project_applications(git_root)?;
         Ok(BuildDeployInput {
             platform: platform.to_string(),
             source_ref: self.source_ref(git_root)?,
-            aomi_toml_paths: self.aomi_toml_paths(git_root)?,
-            app_source_id: self.resolve_app_source_id(git_root, &repo),
+            project_id: self.resolve_project_id(git_root, &repo),
             repo,
         })
     }
@@ -112,12 +124,11 @@ impl DeployStepArgs {
         })
     }
 
-    /// Platform declared by the manifests this deploy actually ships — the
-    /// `--aomi-toml` set, or every tracked `aomi.toml` when the flag is absent.
+    /// Platform declared by the manifests in the root Project configuration.
     /// `None` when no manifest in the set declares one; an error when the set
     /// disagrees, since one deploy targets exactly one platform.
     pub(crate) fn manifest_platform(&self, git_root: &Path) -> Result<Option<Platform>> {
-        let Ok(paths) = self.aomi_toml_paths(git_root) else {
+        let Ok(paths) = self.project_applications(git_root) else {
             // No deployable manifest set (e.g. nothing tracked yet); the deploy
             // steps surface that error where it matters.
             return Ok(None);
@@ -143,24 +154,13 @@ impl DeployStepArgs {
                 .join("\n");
             bail!(
                 "the aomi.toml manifests in this deploy declare conflicting platforms:\n{listing}\n\
-                 A deploy targets one platform; align `[app].platform`, scope the deploy with --aomi-toml, or pass --platform."
+                 A Project targets one platform; align `[app].platform` or pass --platform."
             );
         }
         Ok(declared.pop().map(|(_, platform)| platform))
     }
 
     pub(crate) fn source_ref(&self, git_root: &Path) -> Result<String> {
-        if self
-            .branch
-            .as_deref()
-            .map(str::trim)
-            .filter(|b| !b.is_empty())
-            .is_some()
-        {
-            bail!(
-                "--branch is not supported by the current backend deploy contract; checkout the branch locally or pass --commit with a resolved SHA"
-            );
-        }
         if let Some(commit) = self
             .commit
             .as_deref()
@@ -172,48 +172,53 @@ impl DeployStepArgs {
         validate_source_commit(&head_commit(git_root)?)
     }
 
-    pub(crate) fn aomi_toml_paths(&self, git_root: &Path) -> Result<Vec<String>> {
-        if !self.aomi_toml.is_empty() {
-            let mut paths: Vec<String> = self
-                .aomi_toml
-                .iter()
-                .map(|p| normalize_rel_path(p))
-                .collect::<Result<_>>()?;
-            paths.sort();
-            paths.dedup();
-            return Ok(paths);
-        }
-        let found = tracked_aomi_tomls(git_root)?;
-        if found.is_empty() {
+    pub(crate) fn project_applications(&self, git_root: &Path) -> Result<Vec<String>> {
+        let path = git_root.join(PROJECT_CONFIG_PATH);
+        let bytes =
+            fs::read(&path).with_context(|| format!("Project requires {}", path.display()))?;
+        let config: ProjectConfig = serde_json::from_slice(&bytes)
+            .with_context(|| format!("invalid {}", path.display()))?;
+        if config.version != 1 {
             bail!(
-                "no tracked aomi.toml found under {} — add and commit one, or pass --aomi-toml",
-                git_root.display()
+                "unsupported {PROJECT_CONFIG_PATH} version {}; expected 1",
+                config.version
             );
         }
-        Ok(found)
+        let mut seen = HashSet::new();
+        let mut applications = Vec::with_capacity(config.applications.len());
+        for value in config.applications {
+            let path = normalize_project_path(&value)?;
+            if !seen.insert(path.clone()) {
+                bail!("{PROJECT_CONFIG_PATH} contains duplicate application `{path}`");
+            }
+            if !git_root.join(&path).is_file() {
+                bail!("{PROJECT_CONFIG_PATH} references missing `{path}`");
+            }
+            applications.push(path);
+        }
+        Ok(applications)
     }
 
-    /// Resolution order: flag → env → the id recorded by a prior deploy /
-    /// `source sync` in `.aomi/deployment.json`. The last step is what lets a
-    /// re-deploy run with no `--app-source-id` once the source is known.
+    /// Resolution order: flag → env → the id recorded by a prior deploy or
+    /// `project create` in `.aomi/deployment.json`.
     ///
     /// `repo` is the source the caller actually asked to deploy. The backend
-    /// resolves the repo *from* `app_source_id`, so a recorded id belonging to a
+    /// resolves the repo from the Project, so a recorded id belonging to a
     /// different repo would silently win over that request — making the wizard's
     /// "Source repo (owner/name)" answer a no-op. When they disagree, the
-    /// recorded id is dropped so preflight re-resolves the source from `repo`.
-    pub(crate) fn resolve_app_source_id(&self, git_root: &Path, repo: &str) -> Option<i64> {
-        if let Some(id) = self.app_source_id.filter(|id| *id > 0) {
+    /// recorded id is dropped so preflight resolves the Project for `repo`.
+    pub(crate) fn resolve_project_id(&self, git_root: &Path, repo: &str) -> Option<i64> {
+        if let Some(id) = self.project_id.filter(|id| *id > 0) {
             return Some(id);
         }
-        if let Some(id) = env_value(APP_SOURCE_ID_ENV)
+        if let Some(id) = env_value(PROJECT_ID_ENV)
             .and_then(|value| value.parse::<i64>().ok())
             .filter(|id| *id > 0)
         {
             return Some(id);
         }
         let state = LocalDeployment::read(git_root).ok().flatten()?;
-        let id = state.app_source_id().filter(|id| *id > 0)?;
+        let id = (state.project_id > 0).then_some(state.project_id)?;
         let recorded_repo = state
             .source_repo_hint()
             .and_then(|hint| normalize_github_repo(hint).ok());
@@ -222,8 +227,8 @@ impl DeployStepArgs {
             // the wrong source under the user's nose.
             Some(recorded) if !recorded.eq_ignore_ascii_case(repo) => {
                 eprintln!(
-                    "  note: .aomi/deployment.json records app_source_id {id} for `{recorded}`, \
-                     but this deploy targets `{repo}` — re-resolving the source."
+                    "  note: .aomi/deployment.json records project_id {id} for `{recorded}`, \
+                     but this deploy targets `{repo}` — resolving its Project instead."
                 );
                 None
             }
@@ -242,15 +247,17 @@ fn validate_source_commit(value: &str) -> Result<String> {
 }
 
 /// Normalize a user-supplied path to a clean repo-relative POSIX path.
-fn normalize_rel_path(value: &str) -> Result<String> {
-    let path = value.trim().replace('\\', "/");
-    let path = path.strip_prefix("./").unwrap_or(&path);
-    let path = path.trim_matches('/');
-    if path.is_empty() {
-        bail!("empty --aomi-toml path");
-    }
-    if path.split('/').any(|seg| seg == "..") {
-        bail!("--aomi-toml path may not contain '..': `{value}`");
+fn normalize_project_path(value: &str) -> Result<String> {
+    let path = value.trim();
+    if path.is_empty()
+        || path.starts_with('/')
+        || path.contains('\\')
+        || (!path.ends_with("/aomi.toml") && path != "aomi.toml")
+        || path
+            .split('/')
+            .any(|segment| segment.is_empty() || segment == "." || segment == "..")
+    {
+        bail!("invalid application path `{value}` in {PROJECT_CONFIG_PATH}");
     }
     Ok(path.to_string())
 }

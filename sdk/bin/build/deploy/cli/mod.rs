@@ -11,11 +11,9 @@
 //! ```text
 //! deploy                     # lifecycle: preflight → run → activate → status
 //!   --platform <NAME>        # aomi.toml [app].platform (default community)
-//!   --repo <OWNER/REPO>      # sync source when app_source_id is not known
-//!   --app-source-id <ID>     # connected GitHub App install (AOMI_APP_SOURCE_ID)
-//!   --branch <NAME>          # deprecated; checkout the branch locally instead
+//!   --repo <OWNER/REPO>      # create a Project when project_id is not known
+//!   --project-id <ID>        # platform-bound Project (AOMI_PROJECT_ID)
 //!   --commit <SHA>           # deploy this source commit (default: HEAD)
-//!   --aomi-toml <PATH>       # repeatable; default: all tracked aomi.toml
 //!   --backend <URL>          # AOMI_BACKEND_URL
 //!   --activation-token <T>   # AOMI_APP_ACTIVATION_TOKEN
 //!   --preflight              # resolve + print the plan without opening a PR
@@ -49,9 +47,9 @@ pub mod connect;
 pub mod deploy;
 pub mod inputs;
 pub mod login;
+pub mod project;
 pub mod release;
 pub mod request;
-pub mod source;
 pub mod status;
 pub mod token;
 
@@ -62,7 +60,7 @@ pub use apps::AppsArgs;
 pub use connect::ConnectArgs;
 pub use deploy::{DeployArgs, DeployStepArgs};
 pub use login::LoginArgs;
+pub use project::ProjectArgs;
 pub use request::RequestArgs;
-pub use source::SourceArgs;
 pub use status::StatusArgs;
 pub use token::TokenArgs;

@@ -127,14 +127,17 @@ impl ActivateArgs {
             response
         } else {
             let session = Session::open(&self.backend, &self.build_url).await?;
-            let app_source_id = state.app_source_id().ok_or_else(|| {
-                anyhow!("deployment has no app_source_id; deploy again while logged in")
-            })?;
+            let project_id = state.project_id;
+            if project_id <= 0 {
+                return Err(anyhow!(
+                    "deployment has no valid project_id; deploy again while logged in"
+                ));
+            }
             activate_until_loaded(
                 &session.client,
                 &BuildActivateInput {
                     platform: platform.to_string(),
-                    app_source_id,
+                    project_id,
                     release_tags: request.target.value.clone(),
                     apps: request.apps.clone(),
                     // Was silently dropped here, so `--target-tag` was accepted

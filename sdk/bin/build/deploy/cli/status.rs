@@ -74,6 +74,7 @@ impl StatusArgs {
             report.deployment = DeploymentBackendStatus::Found {
                 state: status.state,
                 message: status.message,
+                ci_url: status.ci.and_then(|ci| ci.url),
             };
         }
         if self.json {

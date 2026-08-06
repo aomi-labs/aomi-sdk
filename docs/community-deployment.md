@@ -82,14 +82,20 @@ The backend deploys the pushed GitHub commit. Local uncommitted changes are not
 included.
 
 If your app lives in a subdirectory, run app-local checks against that
-subdirectory and deploy from the source repo root with an explicit manifest:
+subdirectory and list its manifest in the root Project configuration:
+
+```json
+{
+  "version": 1,
+  "applications": ["apps/my-app/aomi.toml"]
+}
+```
 
 ```bash
 aomi-build sdk check --path apps/my-app --backend https://api.aomi.dev
 aomi-build deploy \
   --platform community \
   --repo owner/repo \
-  --aomi-toml apps/my-app/aomi.toml \
   --backend https://api.aomi.dev \
   --activation-token <community-token>
 ```
@@ -140,7 +146,7 @@ aomi-build connect --platform community --repo owner/repo --authorize
 You can verify the backend can resolve your installed repo:
 
 ```bash
-aomi-build source sync \
+aomi-build project create \
   --platform community \
   --repo owner/repo \
   --backend https://api.aomi.dev \
@@ -221,11 +227,11 @@ aomi-build deploy \
   --activation-token <community-token>
 ```
 
-You usually do not need to pass `--app-source-id`. The CLI resolves source in
+You usually do not need to pass `--project-id`. The CLI resolves the Project in
 this order:
 
 ```text
---app-source-id -> AOMI_APP_SOURCE_ID -> .aomi/deployment.json -> --repo owner/repo
+--project-id -> AOMI_PROJECT_ID -> .aomi/deployment.json -> --repo owner/repo
 ```
 
 All prerequisite env vars have a flag form:
@@ -234,7 +240,7 @@ All prerequisite env vars have a flag form:
 |---|---|---|
 | Backend URL | `--backend <url>` | `AOMI_BACKEND_URL` |
 | Activation token | `--activation-token <token>` | `AOMI_APP_ACTIVATION_TOKEN` |
-| App source id | `--app-source-id <id>` | `AOMI_APP_SOURCE_ID` |
+| Project id | `--project-id <id>` | `AOMI_PROJECT_ID` |
 
 The new deploy writes a new deployment record and activates the new release tag
 after the platform build is ready.
@@ -286,7 +292,7 @@ aomi-build deploy activate \
 | Symptom | What it means | What to do |
 |---|---|---|
 | `deploy needs an activation token` | The CLI has no community token. | Pass `--activation-token <community-token>`, run `aomi-build connect --platform community --repo owner/repo`, or export `AOMI_APP_ACTIVATION_TOKEN`. |
-| `deploy needs an app source id` | The backend cannot identify your installed repo. | Pass `--repo owner/repo`, pass `--app-source-id <id>`, or run `aomi-build source sync --platform community --repo owner/repo`. |
+| `deploy needs a project id` | The backend cannot identify your platform-bound Project. | Pass `--repo owner/repo`, pass `--project-id <id>`, or run `aomi-build project create --platform community --repo owner/repo`. |
 | SDK mismatch | Your app pins a different `aomi-sdk` than the platform requires. | Run `aomi-build deploy --fix-sdk --platform community --repo owner/repo`, commit the SDK change, and deploy again. |
 | Branch rejected | Deploy accepts immutable commits. | Check out the branch locally, push it, and deploy local `HEAD`; or pass `--commit <sha>`. |
 | Final verification is not loaded | Activation completed but the runtime did not load the plugin. | Run `aomi-build deploy status --json`; if it stays false, share the deployment id and release tag with Aomi support. |

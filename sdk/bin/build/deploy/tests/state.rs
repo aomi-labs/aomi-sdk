@@ -17,9 +17,7 @@ fn local_deployment_write_then_read_round_trips() {
 }
 
 #[test]
-fn deploy_records_app_source_id_and_round_trips() {
-    // The backend deploy response omits app_source_id; the CLI stamps the id it
-    // deployed from so re-deploys / activate can auto-resolve it.
+fn deploy_records_project_id_and_round_trips() {
     let resp: DeployResult = serde_json::from_value(json!({
         "ok": true,
         "deployment": {
@@ -33,7 +31,7 @@ fn deploy_records_app_source_id_and_round_trips() {
             },
             "platform": {
                 "platform": "playground", "repository": "aomi-labs/aomi-playground",
-                "source_branch": "main", "deploy_branch": "main",
+                "platform_branch": "a/b/1/abc1234", "deploy_branch": "main",
                 "apps": [
                     { "name": "bot", "path": "apps/1/r0/bot", "aomi_toml_path": "aomi.toml", "release_tag": "apps-1-r0-bot-abc1234" }
                 ]
@@ -43,7 +41,7 @@ fn deploy_records_app_source_id_and_round_trips() {
     .unwrap();
 
     let state = LocalDeployment::from_deploy(resp, 219);
-    assert_eq!(state.app_source_id(), Some(219));
+    assert_eq!(state.project_id, 219);
 
     // Persists into .aomi/deployment.json and reads back intact.
     let repo = TestRepo::new();
@@ -52,31 +50,31 @@ fn deploy_records_app_source_id_and_round_trips() {
         LocalDeployment::read(repo.root())
             .unwrap()
             .unwrap()
-            .app_source_id(),
-        Some(219)
+            .project_id,
+        219
     );
 
-    // `source sync` / `scaffold` patch path: set + persist on an existing record.
+    // `project create` patch path: set + persist on an existing record.
     let mut patched = LocalDeployment::read(repo.root()).unwrap().unwrap();
-    patched.set_app_source_id(321);
+    patched.set_project_id(321);
     patched.write(repo.root()).unwrap();
     assert_eq!(
         LocalDeployment::read(repo.root())
             .unwrap()
             .unwrap()
-            .app_source_id(),
-        Some(321)
+            .project_id,
+        321
     );
 }
 
 #[test]
-fn deploy_reads_recorded_source_id_from_repo_root_state() {
+fn deploy_reads_recorded_project_id_from_repo_root_state() {
     let repo = TestRepo::new();
     repo.write_aomi_toml("apps/bot", "bot");
     repo.commit("init");
 
     let mut state = sample_state();
-    state.set_app_source_id(777);
+    state.set_project_id(777);
     state.write(repo.root()).unwrap();
 
     let app_dir = repo.path("apps/bot");
@@ -87,12 +85,12 @@ fn deploy_reads_recorded_source_id_from_repo_root_state() {
 
     let args = deploy_args(&app_dir);
     // `sample_state` records repository_link https://github.com/a/b.git.
-    assert_eq!(args.resolve_app_source_id(repo.root(), "a/b"), Some(777));
+    assert_eq!(args.resolve_project_id(repo.root(), "a/b"), Some(777));
 }
 
 #[test]
-fn recorded_source_id_is_dropped_when_it_belongs_to_another_repo() {
-    // The backend resolves the source repo from app_source_id, so reusing a
+fn recorded_project_id_is_dropped_when_it_belongs_to_another_repo() {
+    // The backend resolves the source repo from project_id, so reusing a
     // recorded id for a different repo would silently override the repo the
     // caller asked for (in the wizard, the answer to "Source repo (owner/name)").
     let repo = TestRepo::new();
@@ -100,17 +98,17 @@ fn recorded_source_id_is_dropped_when_it_belongs_to_another_repo() {
     repo.commit("init");
 
     let mut state = sample_state();
-    state.set_app_source_id(777);
+    state.set_project_id(777);
     state.write(repo.root()).unwrap();
 
     let args = deploy_args(&repo.path("apps/bot"));
     assert_eq!(
-        args.resolve_app_source_id(repo.root(), "a/b"),
+        args.resolve_project_id(repo.root(), "a/b"),
         Some(777),
         "same repo still reuses the recorded id"
     );
     assert_eq!(
-        args.resolve_app_source_id(repo.root(), "someone-else/other"),
+        args.resolve_project_id(repo.root(), "someone-else/other"),
         None,
         "a mismatched repo must re-resolve instead of deploying the recorded source"
     );

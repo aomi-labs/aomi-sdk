@@ -62,8 +62,8 @@ enum Cmd {
     Login(cli::LoginArgs),
     /// Mint, list, or revoke platform/app activation tokens.
     Token(cli::TokenArgs),
-    /// Resolve a connected source repo to its `app_source_id`.
-    Source(cli::SourceArgs),
+    /// Create a platform-bound Project from an installed GitHub repository.
+    Project(cli::ProjectArgs),
     /// List a platform's apps.
     Apps(cli::AppsArgs),
     /// Check or fix the app repo's aomi-sdk pin against the backend.
@@ -96,7 +96,7 @@ async fn main() -> Result<()> {
         Cmd::Connect(args) => args.run().await.map_err(git_error),
         Cmd::Login(args) => args.run().await.map_err(git_error),
         Cmd::Token(args) => args.run().await.map_err(git_error),
-        Cmd::Source(args) => args.run().await.map_err(git_error),
+        Cmd::Project(args) => args.run().await.map_err(git_error),
         Cmd::Apps(args) => args.run().await.map_err(git_error),
         Cmd::Sdk(args) => sdk_guard::run(args).await,
         Cmd::Request(args) => args.run().await.map_err(git_error),
