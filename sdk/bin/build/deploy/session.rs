@@ -44,10 +44,18 @@ impl Session {
     /// Authenticate against an already-resolved Build URL — the wizard prompts
     /// for the backend itself, so it has one before a session exists.
     pub async fn at(build_url: &str, backend_url: Option<String>) -> Result<Self> {
+        Self::at_with_options(build_url, backend_url, false).await
+    }
+
+    pub async fn at_with_options(
+        build_url: &str,
+        backend_url: Option<String>,
+        no_browser: bool,
+    ) -> Result<Self> {
         if let Some(open) = Self::cached(build_url) {
             return Ok(open);
         }
-        let authenticated = login::authenticate(build_url).await?;
+        let authenticated = login::authenticate_with_options(build_url, no_browser).await?;
         let session = Self {
             backend_url,
             build_url: build_url.to_string(),

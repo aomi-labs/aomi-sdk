@@ -63,11 +63,19 @@ pub struct Authenticated {
     pub identity: CliStatusResult,
 }
 
+pub(crate) fn verified_builder_github_user_id(github_user_id: &str) -> Result<String> {
+    let github_user_id = github_user_id.trim();
+    if github_user_id.is_empty() {
+        bail!("a verified Builder identity is required; run `aomi-build login` first");
+    }
+    Ok(github_user_id.to_string())
+}
+
 /// Prove the stored credential works, falling back to a browser login.
 ///
 /// Deliberately silent on success: announcing the identity is the session's job,
 /// so it happens once per process instead of once per command step.
-pub async fn authenticate(build_url: &str) -> Result<Authenticated> {
+pub async fn authenticate_with_options(build_url: &str, no_browser: bool) -> Result<Authenticated> {
     let env_token = env_value(BUILD_TOKEN_ENV);
     let saved_token = AomiConfig::load().cli_access_token;
     if let Some(token) = env_token.clone().or(saved_token) {
@@ -100,7 +108,7 @@ pub async fn authenticate(build_url: &str) -> Result<Authenticated> {
     }
 
     println!("You need to log in to Aomi Build.");
-    let (authenticated, _) = browser_login_and_save(build_url, None, false).await?;
+    let (authenticated, _) = browser_login_and_save(build_url, None, no_browser).await?;
     Ok(authenticated)
 }
 

@@ -59,21 +59,10 @@ impl AomiConfig {
 
     /// Read-modify-write the on-disk config under `mutate`.
     ///
-    /// [`save`](Self::save) replaces the whole file, so saving a struct that was
-    /// loaded before some other code path wrote to it silently drops that
-    /// code path's fields — which is how the wizard used to erase the CLI bearer
-    /// that `login` had just persisted. Anything mutating a subset of the config
-    /// should go through here so it always merges onto the current file.
+    /// Saving a stale struct wholesale can drop fields written by another code
+    /// path. Always merge onto the current file.
     pub fn update(mutate: impl FnOnce(&mut Self)) -> Result<PathBuf> {
         Self::update_in(&Self::dir(), mutate)
-    }
-
-    /// Atomically write the config `0600`. Returns the path.
-    ///
-    /// Replaces the file wholesale. Prefer [`update`](Self::update) unless you
-    /// genuinely own every field.
-    pub fn save(&self) -> Result<PathBuf> {
-        self.save_in(&Self::dir())
     }
 
     /// Directory-scoped variants. The config home is process-global, so tests

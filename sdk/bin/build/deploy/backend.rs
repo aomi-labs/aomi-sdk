@@ -156,19 +156,14 @@ impl BackendClient {
         .await
     }
 
-    /// Resolve-or-bind an installed source repo:
-    /// `POST /api/platforms/:platform/sources/sync-installed`. Returns the
-    /// `app_source` row whose `id` deploy needs.
+    /// Resolve or create an installed source as a manager-v2 project.
     pub async fn sync_installed(
         &self,
         platform: &Platform,
         request: &SyncSourceInput,
     ) -> Result<SourceResult> {
         self.post(
-            &format!(
-                "/api/platforms/{}/sources/sync-installed",
-                platform.as_str()
-            ),
+            &format!("/api/platforms/{}/projects", platform.as_str()),
             request,
             "source sync",
         )

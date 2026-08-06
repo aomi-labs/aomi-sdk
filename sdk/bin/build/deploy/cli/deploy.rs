@@ -309,7 +309,7 @@ impl DeployStepArgs {
             }
         }
 
-        prepared.request.app_source_id = Some(preflight.app_source_id);
+        prepared.request.project_id = Some(preflight.project_id);
         let deploy = prepared.deploy(false).await?;
         let mut state = LocalDeployment::from_build_deploy(deploy);
         let path = state.write(&prepared.git_root)?;
@@ -401,14 +401,14 @@ impl DeployStepArgs {
     async fn run_step(self, preflight: bool) -> Result<()> {
         // Preflight's stdout is the JSON plan; keep the human card off it.
         let mut prepared = self.prepare(!self.json && !preflight).await?;
-        // A first deploy has no app_source_id yet; preflight resolves it.
-        let response = if preflight || prepared.request.app_source_id.is_none() {
+        // A first deploy has no project id yet; preflight resolves it.
+        let response = if preflight || prepared.request.project_id.is_none() {
             let resolved = prepared.deploy(true).await?;
             if preflight {
                 println!("{}", serde_json::to_string_pretty(&resolved)?);
                 return Ok(());
             }
-            prepared.request.app_source_id = Some(resolved.app_source_id);
+            prepared.request.project_id = Some(resolved.project_id);
             prepared.deploy(false).await?
         } else {
             prepared.deploy(false).await?

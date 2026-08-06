@@ -16,7 +16,7 @@ pub use super::backend::TokenCheck;
 use super::backend::{self, BackendClient};
 use super::build_client::BuildClient;
 use super::platform::Platform;
-use super::types::OAuthStart;
+use super::types::{DeploymentStatusResult, OAuthStart};
 
 /// Fetch the aomi-build GitHub App install URL for `platform` (optionally scoped
 /// to a single `repo`). `mode` is `"install"` for a fresh install or
@@ -61,6 +61,7 @@ pub enum DeployReady {
 /// no longer masks that as `pending`), so we ride out a short window — but a
 /// persistent error is surfaced, not silently waited out to the timeout.
 const MAX_STATUS_FAILURES: u32 = 15;
+const NO_CI_GRACE: Duration = Duration::from_secs(90);
 const GITHUB_STATUS_INTERVAL: Duration = Duration::from_secs(30);
 
 pub async fn poll_build_deployment_ready(
@@ -84,18 +85,16 @@ pub async fn poll_build_deployment_ready(
                 match status.state.as_str() {
                     "ready" => return Ok(DeployReady::Ready),
                     "failed" => {
-                        return Ok(DeployReady::Failed(
-                            status
-                                .message
-                                .unwrap_or_else(|| "release build failed".to_string()),
-                        ));
+                        return Ok(DeployReady::Failed(status_failure_detail(
+                            &status,
+                            "release build failed",
+                        )));
                     }
-                    "no_ci" => {
-                        return Ok(DeployReady::NoCi(
-                            status
-                                .message
-                                .unwrap_or_else(|| "no CI ran for this deployment commit".into()),
-                        ));
+                    "no_ci" if started.elapsed() >= NO_CI_GRACE => {
+                        return Ok(DeployReady::NoCi(status_failure_detail(
+                            &status,
+                            "no CI ran for this deployment commit",
+                        )));
                     }
                     _ => {}
                 }
@@ -157,16 +156,16 @@ pub async fn poll_deployment_ready_with_pr(
                 match status.state.as_str() {
                     "ready" => return Ok(DeployReady::Ready),
                     "failed" => {
-                        return Ok(DeployReady::Failed(
-                            status
-                                .message
-                                .unwrap_or_else(|| "release build failed".to_string()),
-                        ));
+                        return Ok(DeployReady::Failed(status_failure_detail(
+                            &status,
+                            "release build failed",
+                        )));
                     }
-                    "no_ci" => {
-                        return Ok(DeployReady::NoCi(status.message.unwrap_or_else(|| {
-                            "no CI ran for this deployment commit".to_string()
-                        })));
+                    "no_ci" if started.elapsed() >= NO_CI_GRACE => {
+                        return Ok(DeployReady::NoCi(status_failure_detail(
+                            &status,
+                            "no CI ran for this deployment commit",
+                        )));
                     }
                     _ => {}
                 }
@@ -221,6 +220,28 @@ pub async fn poll_deployment_ready_with_pr(
         }
         tokio::time::sleep(Duration::from_secs(6)).await;
     }
+}
+
+fn status_failure_detail(status: &DeploymentStatusResult, fallback: &str) -> String {
+    let mut detail = status
+        .message
+        .as_deref()
+        .map(str::trim)
+        .filter(|message| !message.is_empty())
+        .unwrap_or(fallback)
+        .to_string();
+    if let Some(url) = status
+        .ci
+        .as_ref()
+        .and_then(|ci| ci.url.as_deref())
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        && !detail.contains(url)
+    {
+        detail.push_str("\nBuild logs: ");
+        detail.push_str(url);
+    }
+    detail
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -397,6 +418,21 @@ pub(crate) fn combined_status_state(value: &serde_json::Value) -> Result<GithubC
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failure_detail_surfaces_build_logs() {
+        let status = DeploymentStatusResult {
+            state: "failed".into(),
+            message: None,
+            ci: Some(crate::deploy::types::DeploymentCiStatus {
+                url: Some("https://github.com/aomi-labs/community-apps/actions/runs/1".into()),
+            }),
+        };
+        assert_eq!(
+            status_failure_detail(&status, "release build failed"),
+            "release build failed\nBuild logs: https://github.com/aomi-labs/community-apps/actions/runs/1"
+        );
+    }
 
     #[test]
     fn parses_github_pr_urls() {

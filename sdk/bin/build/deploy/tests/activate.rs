@@ -213,6 +213,76 @@ fn apply_target_activation_keeps_unloaded_active_row_inactive() {
 }
 
 #[test]
+fn activation_accepts_manager_v2_and_builder_shapes() {
+    let mut manager: ActivateResult = serde_json::from_value(json!({
+        "ok": true,
+        "activation": {
+            "status": "activating",
+            "platform": "krexa",
+            "target": {
+                "kind": "release_tags",
+                "value": ["apps-1-r00a1b2c3d4-bot-abc1234"]
+            },
+            "apps": [{
+                "application_id": 7,
+                "name": "bot",
+                "path": "apps/1/r00a1b2c3d4/bot",
+                "release_tag": "apps-1-r00a1b2c3d4-bot-abc1234",
+                "is_active": true,
+                "loaded": true,
+                "error": null,
+                "platform_branch": "publish",
+                "activation_status": "promoted"
+            }]
+        }
+    }))
+    .unwrap();
+    assert!(!manager.activation.apps[0].artifact_ready);
+    assert_eq!(
+        manager.activation.apps[0].platform_branch.as_deref(),
+        Some("publish")
+    );
+
+    // The direct activation path verifies the live app projection before it
+    // folds the response into local state.
+    manager.activation.apps[0].artifact_ready = true;
+    let mut state = sample_state();
+    state.apply_target_activation(&manager);
+    assert_eq!(state.deployment.platform.apps[0].activated, Some(true));
+    assert!(state.state.ci_passed);
+
+    let builder: ActivateResult = serde_json::from_value(json!({
+        "ok": true,
+        "activation": {
+            "status": "activating",
+            "platform": "krexa",
+            "target": {
+                "kind": "release_tags",
+                "value": ["apps-1-r00a1b2c3d4-bot-abc1234"]
+            },
+            "apps": [{
+                "applicationId": 7,
+                "name": "bot",
+                "path": "apps/1/r00a1b2c3d4/bot",
+                "releaseTag": "apps-1-r00a1b2c3d4-bot-abc1234",
+                "isActive": true,
+                "artifactReady": true,
+                "loaded": true,
+                "error": null,
+                "platformBranch": "publish",
+                "activationStatus": "promoted"
+            }]
+        }
+    }))
+    .unwrap();
+    assert!(builder.activation.apps[0].artifact_ready);
+    assert_eq!(
+        builder.activation.apps[0].platform_branch.as_deref(),
+        Some("publish")
+    );
+}
+
+#[test]
 fn activation_request_defaults_to_deployment_release_tags() {
     let state = sample_state();
     let request = activate_args().activation_request(&state).unwrap();

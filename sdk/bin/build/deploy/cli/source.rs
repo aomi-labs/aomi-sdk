@@ -5,9 +5,11 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 use clap::{Args, Subcommand};
 
+use super::login::verified_builder_github_user_id;
 use super::shared::{APP_SOURCE_ID_ENV, git_context, resolve_activation};
 use crate::deploy::backend::BackendClient;
 use crate::deploy::platform::{Platform, normalize_github_repo};
+use crate::deploy::session::Session;
 use crate::deploy::state::LocalDeployment;
 use crate::deploy::types::{SourceResult, SyncSourceInput};
 
@@ -40,6 +42,9 @@ pub struct SourceSyncArgs {
     pub platform: Platform,
     #[arg(long, value_name = "URL")]
     pub backend: Option<String>,
+    /// Aomi Build URL used to verify the Builder identity that owns the source.
+    #[arg(long = "build-url", value_name = "URL")]
+    pub build_url: Option<String>,
     #[arg(long, value_name = "TOKEN")]
     pub activation_token: Option<String>,
     /// Source repo path for `.aomi/deployment.json` persistence.
@@ -54,8 +59,16 @@ impl SourceSyncArgs {
         let repo = normalize_github_repo(&self.repo)?;
         let (url, token) =
             resolve_activation("source sync", &self.backend, &self.activation_token)?;
+        let session = Session::open(&self.backend, &self.build_url).await?;
+        let github_user_id = verified_builder_github_user_id(&session.identity.github_user_id)?;
         let result = BackendClient::new(url, token)?
-            .sync_installed(&self.platform, &SyncSourceInput { repo: repo.clone() })
+            .sync_installed(
+                &self.platform,
+                &SyncSourceInput {
+                    repo: repo.clone(),
+                    github_user_id,
+                },
+            )
             .await?;
         report_source(&result, &self.path, self.json, "synced")
     }

@@ -51,7 +51,7 @@ impl DeployStepArgs {
             platform: platform.to_string(),
             source_ref: self.source_ref(git_root)?,
             aomi_toml_paths: self.aomi_toml_paths(git_root)?,
-            app_source_id: self.resolve_app_source_id(git_root, &repo),
+            project_id: self.resolve_app_source_id(git_root, &repo),
             repo,
         })
     }

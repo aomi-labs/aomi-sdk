@@ -134,7 +134,7 @@ impl ActivateArgs {
                 &session.client,
                 &BuildActivateInput {
                     platform: platform.to_string(),
-                    app_source_id,
+                    project_id: app_source_id,
                     release_tags: request.target.value.clone(),
                     apps: request.apps.clone(),
                     // Was silently dropped here, so `--target-tag` was accepted

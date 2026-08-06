@@ -250,7 +250,7 @@ fn build_deploy_input_uses_bff_camel_case_contract() {
         repo: "peggyjv/somm-agent".into(),
         source_ref: "abc1234".into(),
         aomi_toml_paths: vec!["aomi.toml".into()],
-        app_source_id: Some(1065),
+        project_id: Some(1065),
     };
     assert_eq!(
         serde_json::to_value(request).unwrap(),
@@ -259,7 +259,7 @@ fn build_deploy_input_uses_bff_camel_case_contract() {
             "repo": "peggyjv/somm-agent",
             "sourceRef": "abc1234",
             "aomiTomlPaths": ["aomi.toml"],
-            "appSourceId": 1065
+            "projectId": 1065
         })
     );
 }

@@ -65,7 +65,7 @@ impl LocalDeployment {
                 ok: resp.ok,
                 deployment: resp.deployment,
             },
-            resp.app_source_id,
+            resp.project_id,
         );
         state.project_url = Some(project_url);
         state
@@ -169,7 +169,14 @@ impl LocalDeployment {
                 .promoted
                 .iter()
                 .all(|promotion| promotion.ci_status == "passed");
-        if target_ci_passed || promoted_ci_passed {
+        // Manager v2 returns the activation request as `target`, without the
+        // legacy CI projection. A fully usable app set still proves the
+        // release artifacts passed the activation gate.
+        let all_apps_activated = !response.activation.apps.is_empty()
+            && response.activation.apps.iter().all(|app| {
+                app.is_active && app.artifact_ready && app.loaded && app.error.is_none()
+            });
+        if target_ci_passed || promoted_ci_passed || all_apps_activated {
             self.state.ci_passed = true;
         }
         let apps = &self.deployment.platform.apps;

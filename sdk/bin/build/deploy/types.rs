@@ -37,6 +37,8 @@ pub struct DeployResult {
 
 /// Aomi Build BFF request. Browser and CLI deployments share this
 /// Builder-authenticated surface; the BFF derives ownership from the session.
+/// Manager v2 keys deploys by `projectId`; preflight resolves it from `repo`
+/// when absent.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BuildDeployInput {
@@ -45,7 +47,7 @@ pub struct BuildDeployInput {
     pub source_ref: String,
     pub aomi_toml_paths: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub app_source_id: Option<i64>,
+    pub project_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
@@ -55,8 +57,8 @@ pub struct BuildDeployResult {
     /// Snake aliases keep the envelope as tolerant as the nested payloads: the
     /// Builder BFF answers camelCase, the Rust backend snake_case, and a single
     /// CLI build has to read whichever one it is pointed at.
-    #[serde(alias = "app_source_id")]
-    pub app_source_id: i64,
+    #[serde(alias = "appSourceId", alias = "app_source_id", alias = "project_id")]
+    pub project_id: i64,
     pub deployment: DeployPayload,
     #[serde(alias = "project_url")]
     pub project_url: String,
@@ -88,7 +90,7 @@ pub struct Source {
     pub source_ref: String,
     #[serde(alias = "commitHash")]
     pub commit_hash: String,
-    #[serde(alias = "aomiTomlPaths")]
+    #[serde(default, alias = "aomiTomlPaths")]
     pub aomi_toml_paths: Vec<String>,
     /// The connected GitHub App install (`app_source`) this deploy ran from.
     /// Absent from the backend deploy response; the CLI records the id it sent
@@ -101,7 +103,11 @@ pub struct Source {
 pub struct Platform {
     pub platform: String,
     pub repository: String,
-    #[serde(alias = "sourceBranch")]
+    #[serde(
+        alias = "sourceBranch",
+        alias = "platform_branch",
+        alias = "platformBranch"
+    )]
     pub source_branch: String,
     #[serde(alias = "deployBranch")]
     pub deploy_branch: String,
@@ -181,7 +187,7 @@ pub struct ActivateResult {
 #[serde(rename_all = "camelCase")]
 pub struct BuildActivateInput {
     pub platform: String,
-    pub app_source_id: i64,
+    pub project_id: i64,
     pub release_tags: Vec<String>,
     pub apps: Vec<String>,
     /// Backend server tags from `--target-tag`. Omitted entirely when unused so
@@ -193,7 +199,8 @@ pub struct BuildActivateInput {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Activation {
-    /// `activated` | `partial_failed`.
+    /// Legacy: `activated` | `partial_failed`; manager v2 may initially return
+    /// `activating`.
     pub status: String,
     pub platform: String,
     pub target: ActivationTarget,
@@ -225,7 +232,7 @@ pub struct ActivationPromotion {
     pub name: String,
     #[serde(alias = "releaseTag")]
     pub release_tag: String,
-    #[serde(alias = "sourceBranch")]
+    #[serde(default, alias = "sourceBranch", alias = "platformBranch")]
     pub source_branch: String,
     #[serde(alias = "platformCommitHash", skip_serializing_if = "Option::is_none")]
     pub platform_commit_hash: Option<String>,
@@ -262,13 +269,15 @@ pub struct ActivatedApp {
     // `print_activation` reports as a failed activation. Absent and "not ready"
     // are different problems, so an omitted field is now a parse error like its
     // `is_active` / `loaded` siblings.
-    #[serde(alias = "artifactReady")]
+    #[serde(default, alias = "artifactReady")]
     pub artifact_ready: bool,
     pub loaded: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     #[serde(alias = "sourceBranch", skip_serializing_if = "Option::is_none")]
     pub source_branch: Option<String>,
+    #[serde(alias = "platformBranch", skip_serializing_if = "Option::is_none")]
+    pub platform_branch: Option<String>,
     #[serde(alias = "liveCommitHash", skip_serializing_if = "Option::is_none")]
     pub live_commit_hash: Option<String>,
     #[serde(alias = "activationStatus", skip_serializing_if = "Option::is_none")]
@@ -294,15 +303,17 @@ pub struct MintTokenResult {
     pub scope: String,
 }
 
-/// Body of `POST /api/platforms/:platform/sources/sync-installed`.
+/// Body of `POST /api/platforms/:platform/projects`.
 #[derive(Debug, Clone, Serialize)]
 pub struct SyncSourceInput {
     pub repo: String,
+    /// Verified Builder identity established by `aomi-build login`. The
+    /// backend verifies installation ownership before recording the project.
+    pub github_user_id: String,
 }
 
-/// A connected GitHub App source row — the `source` payload returned by
-/// sync-installed. Its `id` is the `app_source_id` deploy needs. Fields mirror
-/// the backend response; not all are consumed by the CLI today.
+/// A connected source row. Legacy backends return `source`; manager v2 returns
+/// the same identity as `project` and calls `bound_platform_id` `platform_id`.
 #[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)]
 pub struct AppSource {
@@ -312,9 +323,7 @@ pub struct AppSource {
     pub repository_link: String,
     #[serde(default)]
     pub github_account: Option<String>,
-    #[serde(default)]
-    pub github_user_id: Option<i64>,
-    #[serde(default)]
+    #[serde(default, alias = "platform_id")]
     pub bound_platform_id: Option<i64>,
 }
 
@@ -337,6 +346,14 @@ pub struct DeploymentStatusResult {
     pub state: String,
     #[serde(default)]
     pub message: Option<String>,
+    #[serde(default)]
+    pub ci: Option<DeploymentCiStatus>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeploymentCiStatus {
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -372,12 +389,14 @@ pub struct CliStatusResult {
     pub github_user_id: String,
 }
 
-/// Envelope around a single source row (`{ ok, source }`).
+/// Envelope around a source row: legacy `{ ok, source }`, manager v2
+/// `{ ok, project }`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct SourceResult {
     #[serde(default)]
     #[allow(dead_code)]
     pub ok: bool,
+    #[serde(alias = "project")]
     pub source: AppSource,
 }
 
