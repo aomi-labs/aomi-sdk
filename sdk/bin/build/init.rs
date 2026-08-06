@@ -12,6 +12,7 @@ use clap::Args;
 use eyre::{Result, bail};
 use toml_edit::{Array, DocumentMut, value};
 
+use crate::spec_load::pascal_case;
 use crate::specs::workspace_root;
 
 #[derive(Args, Debug)]
@@ -42,17 +43,7 @@ pub fn run(args: InitArgs) -> Result<()> {
     fs::create_dir_all(&src_dir)?;
 
     // Derive a Rust-friendly struct name from the app name.
-    let struct_name: String = name
-        .split('-')
-        .map(|part| {
-            let mut chars = part.chars();
-            match chars.next() {
-                Some(c) => c.to_uppercase().to_string() + chars.as_str(),
-                None => String::new(),
-            }
-        })
-        .collect::<String>()
-        + "App";
+    let struct_name = format!("{}App", pascal_case(name));
 
     // Cargo.toml
     fs::write(

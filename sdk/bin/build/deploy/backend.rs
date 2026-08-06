@@ -42,19 +42,29 @@ pub async fn oauth_start(
         .send()
         .await
         .with_context(|| format!("failed to call oauth start endpoint {endpoint}"))?;
+    decode(response, "oauth start", &endpoint).await
+}
+
+/// Shared success + JSON handling for every backend response. 202 counts as
+/// success: the manager-v2 activate endpoint answers `202 Accepted`.
+async fn decode<Resp: DeserializeOwned>(
+    response: reqwest::Response,
+    operation: &str,
+    endpoint: &str,
+) -> Result<Resp> {
     let status = response.status();
     let text = response
         .text()
         .await
-        .context("failed to read oauth start response body")?;
-    if !matches!(status.as_u16(), 200 | 201) {
+        .with_context(|| format!("failed to read {operation} response body"))?;
+    if !matches!(status.as_u16(), 200..=202) {
         bail!(
-            "oauth start endpoint {endpoint} returned {status}: {}",
+            "{operation} endpoint {endpoint} returned {status}: {}",
             text.trim()
         );
     }
     serde_json::from_str(&text)
-        .with_context(|| format!("oauth start endpoint {endpoint} returned invalid JSON"))
+        .with_context(|| format!("{operation} endpoint {endpoint} returned invalid JSON"))
 }
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
@@ -140,7 +150,8 @@ impl BackendClient {
 
     /// List a platform's activation tokens: `GET /api/platforms/:platform/tokens`.
     pub async fn list_tokens(&self, platform: &Platform) -> Result<serde_json::Value> {
-        self.get(
+        self.send(
+            reqwest::Method::GET,
             &format!("/api/platforms/{}/tokens", platform.as_str()),
             "token list",
         )
@@ -149,26 +160,25 @@ impl BackendClient {
 
     /// Revoke a token: `DELETE /api/platforms/:platform/tokens/:id`.
     pub async fn revoke_token(&self, platform: &Platform, id: i64) -> Result<serde_json::Value> {
-        self.delete(
+        self.send(
+            reqwest::Method::DELETE,
             &format!("/api/platforms/{}/tokens/{id}", platform.as_str()),
             "token revoke",
         )
         .await
     }
 
-    /// Resolve-or-bind an installed source repo:
-    /// `POST /api/platforms/:platform/sources/sync-installed`. Returns the
-    /// `app_source` row whose `id` deploy needs.
+    /// Connect (resolve-or-create) an installed source repo as a platform
+    /// project: `POST /api/platforms/:platform/projects` — the manager-v2
+    /// replacement for the retired `sources/sync-installed`. Returns the
+    /// project row whose `id` deploy needs.
     pub async fn sync_installed(
         &self,
         platform: &Platform,
         request: &SyncSourceInput,
     ) -> Result<SourceResult> {
         self.post(
-            &format!(
-                "/api/platforms/{}/sources/sync-installed",
-                platform.as_str()
-            ),
+            &format!("/api/platforms/{}/projects", platform.as_str()),
             request,
             "source sync",
         )
@@ -177,7 +187,8 @@ impl BackendClient {
 
     /// List a platform's apps: `GET /api/platforms/:platform/apps`.
     pub async fn list_apps(&self, platform: &Platform) -> Result<serde_json::Value> {
-        self.get(
+        self.send(
+            reqwest::Method::GET,
             &format!("/api/platforms/{}/apps", platform.as_str()),
             "apps list",
         )
@@ -225,28 +236,7 @@ impl BackendClient {
             .send()
             .await
             .with_context(|| format!("failed to call {operation} endpoint {endpoint}"))?;
-
-        let status = response.status();
-        let text = response
-            .text()
-            .await
-            .with_context(|| format!("failed to read {operation} response body"))?;
-        if !matches!(status.as_u16(), 200 | 201) {
-            bail!(
-                "{operation} endpoint {endpoint} returned {status}: {}",
-                text.trim()
-            );
-        }
-        serde_json::from_str(&text)
-            .with_context(|| format!("{operation} endpoint {endpoint} returned invalid JSON"))
-    }
-
-    async fn get<Resp: DeserializeOwned>(&self, path: &str, operation: &str) -> Result<Resp> {
-        self.send(reqwest::Method::GET, path, operation).await
-    }
-
-    async fn delete<Resp: DeserializeOwned>(&self, path: &str, operation: &str) -> Result<Resp> {
-        self.send(reqwest::Method::DELETE, path, operation).await
+        decode(response, operation, &endpoint).await
     }
 
     /// Bodyless request (GET/DELETE) sharing `post`'s status + JSON handling.
@@ -264,19 +254,6 @@ impl BackendClient {
             .send()
             .await
             .with_context(|| format!("failed to call {operation} endpoint {endpoint}"))?;
-
-        let status = response.status();
-        let text = response
-            .text()
-            .await
-            .with_context(|| format!("failed to read {operation} response body"))?;
-        if !matches!(status.as_u16(), 200 | 201) {
-            bail!(
-                "{operation} endpoint {endpoint} returned {status}: {}",
-                text.trim()
-            );
-        }
-        serde_json::from_str(&text)
-            .with_context(|| format!("{operation} endpoint {endpoint} returned invalid JSON"))
+        decode(response, operation, &endpoint).await
     }
 }

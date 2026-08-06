@@ -12,7 +12,8 @@ use tempfile::TempDir;
 use super::cli::{ActivateArgs, DeployArgs, StatusArgs};
 use super::platform::Platform;
 use super::types::{
-    ActivateInput, ActivateResult, DeployInput, DeployResult, LocalDeployment, ReleaseTags,
+    ActivateInput, ActivateResult, BuildActivateInput, BuildDeployInput, BuildDeployResult,
+    DeployInput, DeployResult, LocalDeployment, ReleaseTags, SourceResult, SyncSourceInput,
 };
 
 // ── deploy: arg parsing ─────────────────────────────────────────────────────
@@ -91,6 +92,73 @@ fn connect_parses_authorize_and_drops_polling_flags() {
     }
 }
 
+#[test]
+fn source_sync_request_carries_string_builder_identity() {
+    let value = serde_json::to_value(SyncSourceInput {
+        repo: "alice/project".to_string(),
+        github_user_id: "12345".to_string(),
+    })
+    .unwrap();
+    assert_eq!(
+        value,
+        json!({ "repo": "alice/project", "github_user_id": "12345" })
+    );
+}
+
+#[test]
+fn source_sync_accepts_v2_project_envelope() {
+    // manager-v2: `POST /api/platforms/:platform/projects` answers
+    // `{ ok, project: { ..., platform_id } }` instead of `{ ok, source }`.
+    let result: SourceResult = serde_json::from_value(json!({
+        "ok": true,
+        "project": {
+            "id": 42,
+            "installation_id": 8,
+            "repository_id": 9,
+            "repository_link": "alice/project",
+            "platform_id": 3,
+            "owner_builder_id": 17,
+            "created_at": "2026-08-05T00:00:00Z",
+            "updated_at": "2026-08-05T00:00:00Z"
+        }
+    }))
+    .unwrap();
+    assert_eq!(result.source.id, 42);
+    assert_eq!(result.source.repository_link, "alice/project");
+    assert_eq!(result.source.bound_platform_id, Some(3));
+}
+
+#[test]
+fn source_sync_accepts_legacy_string_and_current_missing_owner_field() {
+    for source in [
+        json!({
+            "id": 7,
+            "installation_id": 8,
+            "repository_id": 9,
+            "repository_link": "alice/project",
+            "github_account": "alice",
+            "github_user_id": "12345",
+            "bound_platform_id": 1
+        }),
+        json!({
+            "id": 7,
+            "installation_id": 8,
+            "repository_id": 9,
+            "repository_link": "alice/project",
+            "github_account": "alice",
+            "bound_platform_id": 1
+        }),
+    ] {
+        let result: SourceResult = serde_json::from_value(json!({
+            "ok": true,
+            "source": source
+        }))
+        .unwrap();
+        assert_eq!(result.source.id, 7);
+        assert_eq!(result.source.repository_link, "alice/project");
+    }
+}
+
 // ── deploy: source ref resolution ───────────────────────────────────────────
 
 #[test]
@@ -121,6 +189,142 @@ fn source_ref_rejects_branch_and_honors_commit_flag() {
     let mut args = deploy_args(repo.root());
     args.commit = Some("main".into());
     assert!(args.source_ref(repo.root()).is_err());
+}
+
+#[test]
+fn build_inputs_serialize_project_id() {
+    // The v2 Build BFF keys deploys and activations by `projectId` (the
+    // legacy BFF's `appSourceId` is rejected as "missing projectId").
+    let deploy = serde_json::to_value(BuildDeployInput {
+        platform: "community".into(),
+        repo: "alice/project".into(),
+        source_ref: "0badc0de".into(),
+        aomi_toml_paths: vec!["aomi.toml".into()],
+        project_id: Some(42),
+    })
+    .unwrap();
+    assert_eq!(deploy["projectId"], 42);
+    assert!(deploy.get("appSourceId").is_none());
+
+    let activate = serde_json::to_value(BuildActivateInput {
+        platform: "community".into(),
+        project_id: 42,
+        release_tags: vec!["tag".into()],
+        apps: vec!["bot".into()],
+    })
+    .unwrap();
+    assert_eq!(activate["projectId"], 42);
+}
+
+#[test]
+fn build_deploy_result_accepts_v2_bff_response() {
+    // The v2 Build BFF answers `{ ok, projectId, deployment, projectUrl, … }`
+    // with a fully camelCased deployment whose source omits `aomiTomlPaths`
+    // (apps are discovered server-side) and whose platform carries
+    // `platformBranch` (the manager's rename of `source_branch`).
+    let resp: BuildDeployResult = serde_json::from_value(json!({
+        "ok": true,
+        "repo": "alice/project",
+        "installationId": "8",
+        "projectId": 42,
+        "sourceRef": "abc1234",
+        "deployment": {
+            "id": "dep_8_myrepo_abc1234",
+            "status": "building",
+            "source": {
+                "installationId": 8,
+                "repositoryId": 9,
+                "repositoryLink": "https://github.com/alice/project",
+                "ref": "abc1234",
+                "commitHash": "abc1234"
+            },
+            "platform": {
+                "platform": "community",
+                "repository": "aomi-labs/community-apps",
+                "deployBranch": "deploy/8/abc1234",
+                "platformBranch": "alice/project/8/abc1234",
+                "commitHash": null,
+                "prNumber": null,
+                "prUrl": null,
+                "ciStatus": null,
+                "ciUrl": null,
+                "apps": [{
+                    "name": "bot",
+                    "path": "apps/8/r0/bot",
+                    "aomiTomlPath": "aomi.toml",
+                    "releaseTag": "apps-8-r0-bot-abc1234",
+                    "sdkVersion": null,
+                    "target": "x86_64-unknown-linux-gnu",
+                    "files": []
+                }]
+            }
+        },
+        "releaseTags": ["apps-8-r0-bot-abc1234"],
+        "apps": ["bot"],
+        "projectUrl": "https://build.aomi.dev/projects/42?tab=deployments"
+    }))
+    .unwrap();
+
+    assert_eq!(resp.project_id, 42);
+    assert!(resp.deployment.source.aomi_toml_paths.is_empty());
+    assert_eq!(
+        resp.deployment.platform.source_branch,
+        "alice/project/8/abc1234"
+    );
+
+    let state = LocalDeployment::from_build_deploy(resp);
+    assert_eq!(state.app_source_id(), Some(42));
+    assert_eq!(
+        state.project_url.as_deref(),
+        Some("https://build.aomi.dev/projects/42?tab=deployments")
+    );
+}
+
+#[test]
+fn activation_accepts_v2_bff_camelcase_shape() {
+    // The v2 Build BFF forwards the TS client's camelCased activation result.
+    let response: ActivateResult = serde_json::from_value(json!({
+        "ok": true,
+        "activation": {
+            "status": "activating",
+            "platform": "krexa",
+            "target": {
+                "kind": "release_tags",
+                "value": ["apps-1-r00a1b2c3d4-bot-abc1234"],
+                "platformRepo": null,
+                "platformBranch": null,
+                "platformCommitHash": null,
+                "ciStatus": null,
+                "ciUrl": null,
+                "promoted": []
+            },
+            "apps": [{
+                "applicationId": 7,
+                "name": "bot",
+                "path": "apps/1/r00a1b2c3d4/bot",
+                "releaseTag": "apps-1-r00a1b2c3d4-bot-abc1234",
+                "isActive": true,
+                "artifactReady": true,
+                "loaded": true,
+                "error": null,
+                "platformBranch": "publish",
+                "liveCommitHash": "fed7654",
+                "activationStatus": "promoted",
+                "activationPr": null,
+                "activationPrCloseError": null
+            }]
+        }
+    }))
+    .unwrap();
+
+    let app = &response.activation.apps[0];
+    assert!(app.is_active && app.loaded);
+    assert_eq!(app.release_tag.as_deref(), Some("apps-1-r00a1b2c3d4-bot-abc1234"));
+    assert_eq!(app.platform_branch.as_deref(), Some("publish"));
+
+    let mut state = sample_state();
+    state.apply_target_activation(&response);
+    assert_eq!(state.deployment.platform.apps[0].activated, Some(true));
 }
 
 #[test]
@@ -400,6 +604,72 @@ fn activation_response_accepts_live_promoted_shape() {
         promoted.activated_commit_hash.as_deref(),
         Some("cfb6a6411712f1f65ce81d7373decd1d21be4ea1")
     );
+}
+
+#[test]
+fn activation_accepts_v2_manager_shape_and_infers_ci_passed() {
+    // manager-v2 activation: 202-Accepted body whose `target` is the request
+    // echo (no platform_repo / ci_status / promoted), `status` starts as
+    // `activating`, and each app row carries `platform_branch` +
+    // `application_id` extras. A fully successful activation must still flip
+    // `ci_passed` — v2 only promotes release tags whose CI-built assets exist.
+    let response: ActivateResult = serde_json::from_value(json!({
+        "ok": true,
+        "activation": {
+            "status": "activating",
+            "platform": "krexa",
+            "target": {
+                "kind": "release_tags",
+                "value": ["apps-1-r00a1b2c3d4-bot-abc1234", "apps-1-r00a1b2c3d4-bot2-abc1234"]
+            },
+            "apps": [
+                {
+                    "application_id": 7,
+                    "name": "bot",
+                    "path": "apps/1/r00a1b2c3d4/bot",
+                    "release_tag": "apps-1-r00a1b2c3d4-bot-abc1234",
+                    "is_active": true,
+                    "loaded": true,
+                    "error": null,
+                    "platform_branch": "publish",
+                    "live_commit_hash": "fed7654",
+                    "activation_status": "promoted",
+                    "activation_pr": null,
+                    "activation_pr_close_error": null
+                },
+                {
+                    "application_id": 8,
+                    "name": "bot2",
+                    "path": "apps/1/r00a1b2c3d4/bot2",
+                    "release_tag": "apps-1-r00a1b2c3d4-bot2-abc1234",
+                    "is_active": true,
+                    "loaded": true,
+                    "error": null,
+                    "platform_branch": "publish",
+                    "live_commit_hash": "fed7654",
+                    "activation_status": "unchanged",
+                    "activation_pr": null,
+                    "activation_pr_close_error": null
+                }
+            ]
+        }
+    }))
+    .unwrap();
+
+    let mut state = sample_state();
+    state.apply_target_activation(&response);
+
+    assert_eq!(state.deployment.platform.apps[0].activated, Some(true));
+    assert_eq!(state.deployment.platform.apps[1].activated, Some(true));
+    assert!(state.state.activated, "all apps active");
+    assert!(
+        state.state.ci_passed,
+        "successful v2 activation implies the release build passed"
+    );
+    let last = state.last_activation.as_ref().expect("last activation");
+    assert_eq!(last.status, "activating");
+    assert!(last.target.promoted.is_empty());
+    assert_eq!(last.apps[0].platform_branch.as_deref(), Some("publish"));
 }
 
 #[test]

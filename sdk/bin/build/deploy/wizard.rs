@@ -11,6 +11,7 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use inquire::{Confirm, Select, Text};
 
+use super::backend;
 use super::cli::login;
 use super::cli::shared::{BUILD_URL_ENV, git_context, infer_build_url};
 use super::cli::{ActivateArgs, DeployArgs};
@@ -33,7 +34,7 @@ pub async fn run() -> Result<()> {
 
     // Human deploys are always tied to a verified GitHub Builder. The saved
     // session is reused only after Build validates it.
-    config = login::ensure_logged_in(&build_url).await?.config;
+    config = login::ensure_logged_in(&build_url, false).await?.config;
     config.backend_url = Some(backend_url.clone());
     config.build_url = Some(build_url.clone());
 
@@ -164,7 +165,7 @@ async fn existing_dir_flow(backend_url: &str, build_url: &str, platform: &str) -
 /// the resulting installation id — deploy resolves the source by repo via
 /// sync-installed — so this is just "open and wait".
 async fn ensure_app_installed(backend_url: &str, platform: &str, repo: Option<&str>) -> Result<()> {
-    let start = flow::oauth_install_url(backend_url, platform, repo, "install").await?;
+    let start = backend::oauth_start(backend_url, platform, repo, "install").await?;
     println!("Install the aomi-build GitHub App:");
     println!("  {}", start.install_url);
     if let Err(e) = open::that(&start.install_url) {
@@ -340,7 +341,7 @@ async fn deploy_then_activate(
     // recorded the id in `.aomi/deployment.json`.
     let deployment = local_deployment(dir);
     if let Some(id) = deployment.as_ref().map(|state| &state.deployment.id) {
-        let client = login::ensure_logged_in(build_url).await?.client;
+        let client = login::ensure_logged_in(build_url, false).await?.client;
         println!("Waiting for the release build (up to 30 min, Ctrl-C to stop)…");
         match flow::poll_build_deployment_ready(
             &client,

@@ -72,20 +72,15 @@ impl GenSpecsArgs {
 pub struct SpecHit {
     /// Raw spec body (either YAML or JSON text).
     pub body: String,
-    /// What format `body` is in. The cascade always normalises to YAML on disk.
-    pub format: SpecFormat,
+    /// What format `body` is in: `"yaml"` or `"json"`. The cascade always
+    /// normalises to YAML on disk.
+    pub format: String,
     /// Source URL the body was fetched from (provenance).
     pub source_url: String,
     /// Human-friendly source label ("apis-guru", "github", "postman").
     pub source_kind: &'static str,
     /// Optional API version string from upstream metadata.
     pub version: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum SpecFormat {
-    Yaml,
-    Json,
 }
 
 pub fn run(args: GenSpecsArgs) -> Result<()> {
@@ -126,36 +121,37 @@ fn cascade(platform: &str, source: Source, from_url: Option<&str>) -> Result<Spe
     let try_github = from_url.is_none() && matches!(source, Source::All | Source::Github);
     let try_postman = from_url.is_none() && matches!(source, Source::All | Source::Postman);
 
-    if try_well_known {
-        match well_known::find(platform, from_url) {
-            Ok(Some(hit)) => return Ok(hit),
-            Ok(None) => println!("  well-known: no match"),
-            Err(e) => println!("  well-known: error: {e:#}"),
-        }
+    if try_well_known
+        && let Some(hit) = probe("well-known", well_known::find(platform, from_url))
+    {
+        return Ok(hit);
     }
-    if try_apis_guru {
-        match apis_guru::find(platform) {
-            Ok(Some(hit)) => return Ok(hit),
-            Ok(None) => println!("  apis-guru: no match"),
-            Err(e) => println!("  apis-guru: error: {e:#}"),
-        }
+    if try_apis_guru && let Some(hit) = probe("apis-guru", apis_guru::find(platform)) {
+        return Ok(hit);
     }
-    if try_github {
-        match github::find(platform) {
-            Ok(Some(hit)) => return Ok(hit),
-            Ok(None) => println!("  github: no match"),
-            Err(e) => println!("  github: error: {e:#}"),
-        }
+    if try_github && let Some(hit) = probe("github", github::find(platform)) {
+        return Ok(hit);
     }
-    if try_postman {
-        match postman::find(platform) {
-            Ok(Some(hit)) => return Ok(hit),
-            Ok(None) => println!("  postman: no match"),
-            Err(e) => println!("  postman: error: {e:#}"),
-        }
+    if try_postman && let Some(hit) = probe("postman", postman::find(platform)) {
+        return Ok(hit);
     }
 
     bail!(skill_handoff_message(platform));
+}
+
+/// Unwrap one discovery source's outcome, printing the miss/error line.
+fn probe(name: &str, result: Result<Option<SpecHit>>) -> Option<SpecHit> {
+    match result {
+        Ok(Some(hit)) => Some(hit),
+        Ok(None) => {
+            println!("  {name}: no match");
+            None
+        }
+        Err(e) => {
+            println!("  {name}: error: {e:#}");
+            None
+        }
+    }
 }
 
 fn skill_handoff_message(platform: &str) -> String {
@@ -170,13 +166,12 @@ fn skill_handoff_message(platform: &str) -> String {
 }
 
 fn normalise_to_yaml(hit: &SpecHit) -> Result<String> {
-    match hit.format {
-        SpecFormat::Yaml => Ok(hit.body.clone()),
-        SpecFormat::Json => {
-            let value: serde_json::Value =
-                serde_json::from_str(&hit.body).context("upstream JSON spec is invalid")?;
-            serde_yaml::to_string(&value).context("failed to serialise spec to YAML")
-        }
+    if hit.format == "json" {
+        let value: serde_json::Value =
+            serde_json::from_str(&hit.body).context("upstream JSON spec is invalid")?;
+        serde_yaml::to_string(&value).context("failed to serialise spec to YAML")
+    } else {
+        Ok(hit.body.clone())
     }
 }
 
@@ -208,7 +203,6 @@ pub(crate) fn workspace_root() -> Result<PathBuf> {
     }
 }
 
-#[allow(dead_code)]
 pub(crate) fn fetch_text(url: &str) -> Result<String> {
     let client = http_client()?;
     let resp = client
@@ -231,15 +225,12 @@ pub(crate) fn http_client() -> Result<reqwest::blocking::Client> {
         .context("failed to build HTTP client")
 }
 
-pub(crate) fn detect_format(body: &str) -> SpecFormat {
+/// `"json"` or `"yaml"`, sniffed from the body's first character.
+pub(crate) fn detect_format(body: &str) -> String {
     let trimmed = body.trim_start();
     if trimmed.starts_with('{') || trimmed.starts_with('[') {
-        SpecFormat::Json
+        "json".to_string()
     } else {
-        SpecFormat::Yaml
+        "yaml".to_string()
     }
-}
-
-pub(crate) fn _path_to_string(p: &Path) -> String {
-    p.to_string_lossy().into_owned()
 }

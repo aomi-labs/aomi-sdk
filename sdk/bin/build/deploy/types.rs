@@ -49,6 +49,8 @@ pub struct DeployResult {
 
 /// Aomi Build BFF request. Browser and CLI deployments share this Builder-
 /// authenticated surface; the BFF derives ownership from the signed session.
+/// manager-v2 keys deploys by `projectId` (preflight resolves it from `repo`
+/// when absent); `aomiTomlPaths` is advisory — v2 discovers apps server-side.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BuildDeployInput {
@@ -57,13 +59,15 @@ pub struct BuildDeployInput {
     pub source_ref: String,
     pub aomi_toml_paths: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub app_source_id: Option<i64>,
+    pub project_id: Option<i64>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BuildDeployResult {
-    pub app_source_id: i64,
+    /// v2 wire name is `projectId`; the legacy BFF said `appSourceId`.
+    #[serde(alias = "appSourceId")]
+    pub project_id: i64,
     pub deployment: DeployPayload,
     pub project_url: String,
 }
@@ -92,7 +96,9 @@ pub struct Source {
     pub source_ref: String,
     #[serde(alias = "commitHash")]
     pub commit_hash: String,
-    #[serde(alias = "aomiTomlPaths")]
+    /// Absent from the v2 Build BFF's deploy response (apps are discovered
+    /// server-side), so it defaults to empty.
+    #[serde(default, alias = "aomiTomlPaths")]
     pub aomi_toml_paths: Vec<String>,
     /// The connected GitHub App install (`app_source`) this deploy ran from.
     /// Absent from the backend deploy response; the CLI records the id it sent
@@ -105,7 +111,9 @@ pub struct Source {
 pub struct Platform {
     pub platform: String,
     pub repository: String,
-    #[serde(alias = "sourceBranch")]
+    /// manager-v2 renamed this to `platform_branch` (`platformBranch` on the
+    /// BFF wire) — same concept, so both spellings land here.
+    #[serde(alias = "sourceBranch", alias = "platform_branch", alias = "platformBranch")]
     pub source_branch: String,
     #[serde(alias = "deployBranch")]
     pub deploy_branch: String,
@@ -185,18 +193,20 @@ pub struct ActivateResult {
     pub activation: Activation,
 }
 
+/// The v2 Build BFF requires `apps` paired 1:1 with `releaseTags`.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BuildActivateInput {
     pub platform: String,
-    pub app_source_id: i64,
+    pub project_id: i64,
     pub release_tags: Vec<String>,
     pub apps: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Activation {
-    /// `activated` | `partial_failed`.
+    /// Legacy backend: `activated` | `partial_failed`; manager-v2:
+    /// `activating` | `partial_failed`.
     pub status: String,
     pub platform: String,
     pub target: ActivationTarget,
@@ -209,15 +219,15 @@ pub struct ActivationTarget {
     /// Array for `release_tags`.
     #[serde(default)]
     pub value: serde_json::Value,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "platformRepo", skip_serializing_if = "Option::is_none")]
     pub platform_repo: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "platformBranch", skip_serializing_if = "Option::is_none")]
     pub platform_branch: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "platformCommitHash", skip_serializing_if = "Option::is_none")]
     pub platform_commit_hash: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "ciStatus", skip_serializing_if = "Option::is_none")]
     pub ci_status: Option<CiStatus>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "ciUrl", skip_serializing_if = "Option::is_none")]
     pub ci_url: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub promoted: Vec<ActivationPromotion>,
@@ -226,22 +236,27 @@ pub struct ActivationTarget {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ActivationPromotion {
     pub name: String,
+    #[serde(alias = "releaseTag")]
     pub release_tag: String,
+    /// The BFF's camelCase promotion shape carries `platformBranch` instead;
+    /// default keeps the row parseable either way.
+    #[serde(default, alias = "platformBranch")]
     pub source_branch: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "platformCommitHash", skip_serializing_if = "Option::is_none")]
     pub platform_commit_hash: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "activatedCommitHash", skip_serializing_if = "Option::is_none")]
     pub activated_commit_hash: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "liveCommitHash", skip_serializing_if = "Option::is_none")]
     pub live_commit_hash: Option<String>,
+    #[serde(alias = "ciStatus")]
     pub ci_status: CiStatus,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "ciUrl", skip_serializing_if = "Option::is_none")]
     pub ci_url: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, alias = "releaseAssets", skip_serializing_if = "Vec::is_empty")]
     pub release_assets: Vec<String>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(default, alias = "releaseAssetDigests", skip_serializing_if = "BTreeMap::is_empty")]
     pub release_asset_digests: BTreeMap<String, String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "activationStatus", skip_serializing_if = "Option::is_none")]
     pub activation_status: Option<String>,
 }
 
@@ -250,17 +265,21 @@ pub struct ActivatedApp {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "releaseTag", skip_serializing_if = "Option::is_none")]
     pub release_tag: Option<String>,
+    #[serde(alias = "isActive")]
     pub is_active: bool,
     pub loaded: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "sourceBranch", skip_serializing_if = "Option::is_none")]
     pub source_branch: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    /// Platform-repo branch the activation promoted (manager-v2).
+    #[serde(default, alias = "platformBranch", skip_serializing_if = "Option::is_none")]
+    pub platform_branch: Option<String>,
+    #[serde(default, alias = "liveCommitHash", skip_serializing_if = "Option::is_none")]
     pub live_commit_hash: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "activationStatus", skip_serializing_if = "Option::is_none")]
     pub activation_status: Option<String>,
 }
 
@@ -291,11 +310,18 @@ pub struct MintTokenResult {
 #[derive(Debug, Clone, Serialize)]
 pub struct SyncSourceInput {
     pub repo: String,
+    /// Verified Builder identity established by `aomi-build login`. The
+    /// backend independently verifies that this user owns the GitHub App
+    /// installation before it records `owner_builder_id`.
+    pub github_user_id: String,
 }
 
-/// A connected GitHub App source row — the `source` payload returned by
-/// sync-installed. Its `id` is the `app_source_id` deploy needs. Fields mirror
-/// the backend response; not all are consumed by the CLI today.
+/// A connected source-repo row. The legacy backend returned it as the `source`
+/// payload of sync-installed; the manager-v2 backend returns the same fields
+/// as the `project` payload of `POST /api/platforms/:platform/projects`
+/// (`platform_id` aliased onto `bound_platform_id`). Its `id` is the
+/// `app_source_id` (v2: project id) deploy needs. Not all fields are consumed
+/// by the CLI today.
 #[derive(Debug, Clone, Deserialize)]
 #[allow(dead_code)]
 pub struct AppSource {
@@ -305,9 +331,7 @@ pub struct AppSource {
     pub repository_link: String,
     #[serde(default)]
     pub github_account: Option<String>,
-    #[serde(default)]
-    pub github_user_id: Option<i64>,
-    #[serde(default)]
+    #[serde(default, alias = "platform_id")]
     pub bound_platform_id: Option<i64>,
 }
 
@@ -330,6 +354,15 @@ pub struct DeploymentStatusResult {
     pub state: String,
     #[serde(default)]
     pub message: Option<String>,
+    #[serde(default)]
+    pub ci: Option<DeploymentCiStatus>,
+}
+
+/// GitHub Actions result attached to a deployment status response.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeploymentCiStatus {
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -357,12 +390,14 @@ pub struct CliStatusResult {
     pub github_user_id: String,
 }
 
-/// Envelope around a single source row (`{ ok, source }`).
+/// Envelope around a single source row: legacy `{ ok, source }`, manager-v2
+/// `{ ok, project }`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct SourceResult {
     #[serde(default)]
     #[allow(dead_code)]
     pub ok: bool,
+    #[serde(alias = "project")]
     pub source: AppSource,
 }
 
@@ -418,7 +453,7 @@ impl LocalDeployment {
             DeployResult {
                 deployment: resp.deployment,
             },
-            resp.app_source_id,
+            resp.project_id,
         );
         state.project_url = Some(project_url);
         state
@@ -508,7 +543,17 @@ impl LocalDeployment {
                 .promoted
                 .iter()
                 .all(|promotion| promotion.ci_status == "passed");
-        if target_ci_passed || promoted_ci_passed {
+        // The manager-v2 activation response carries no CI fields (its target
+        // is the request echo). A fully successful activation still proves the
+        // release build passed: activation only promotes release tags whose
+        // CI-built assets exist.
+        let all_apps_activated = !response.activation.apps.is_empty()
+            && response
+                .activation
+                .apps
+                .iter()
+                .all(|app| app.is_active && app.loaded && app.error.is_none());
+        if target_ci_passed || promoted_ci_passed || all_apps_activated {
             self.state.ci_passed = true;
         }
         let apps = &self.deployment.platform.apps;

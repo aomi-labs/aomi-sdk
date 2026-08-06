@@ -15,7 +15,7 @@ use crate::deploy::platform::Platform;
 use crate::deploy::types::{ActivateInput, BuildActivateInput, LocalDeployment, ReleaseTags};
 
 pub async fn run(args: ActivateArgs) -> eyre::Result<()> {
-    args.run().await.map_err(crate::git_error)
+    args.run().await.map_err(crate::to_eyre)
 }
 
 #[derive(Debug, Args, Clone)]
@@ -108,14 +108,14 @@ impl ActivateArgs {
                 resolve_build_url(&self.build_url, backend_url.as_deref()).ok_or_else(|| {
                     anyhow!("activate needs an Aomi Build URL — set --build-url or {BUILD_URL_ENV}")
                 })?;
-            let client = ensure_logged_in(&build_url).await?.client;
+            let client = ensure_logged_in(&build_url, false).await?.client;
             let app_source_id = state.app_source_id().ok_or_else(|| {
                 anyhow!("deployment has no app_source_id; deploy again while logged in")
             })?;
             client
                 .activate(&BuildActivateInput {
                     platform: platform.to_string(),
-                    app_source_id,
+                    project_id: app_source_id,
                     release_tags: request.target.value.clone(),
                     apps: request.apps.clone(),
                 })

@@ -2,7 +2,7 @@ use eyre::{Context, Result};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 
-use super::{SpecFormat, SpecHit, fetch_text};
+use super::{SpecHit, fetch_text};
 
 const LIST_URL: &str = "https://api.apis.guru/v2/list.json";
 
@@ -47,8 +47,8 @@ pub fn find(platform: &str) -> Result<Option<SpecHit>> {
     let v = &entry.versions[ver_key];
 
     let (url, format) = match (&v.swagger_yaml_url, &v.swagger_url) {
-        (Some(yaml), _) => (yaml.clone(), SpecFormat::Yaml),
-        (None, Some(json)) => (json.clone(), SpecFormat::Json),
+        (Some(yaml), _) => (yaml.clone(), "yaml".to_string()),
+        (None, Some(json)) => (json.clone(), "json".to_string()),
         (None, None) => return Ok(None),
     };
 

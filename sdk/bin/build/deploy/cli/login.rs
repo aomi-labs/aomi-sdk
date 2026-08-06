@@ -22,7 +22,7 @@ use crate::deploy::types::CliStatusResult;
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
 pub async fn run(args: LoginArgs) -> eyre::Result<()> {
-    args.run().await.map_err(crate::git_error)
+    args.run().await.map_err(crate::to_eyre)
 }
 
 #[derive(Debug, Args, Clone)]
@@ -51,8 +51,7 @@ impl LoginArgs {
                  known {BACKEND_URL_ENV} staging/production URLs are inferred automatically"
                 )
             })?;
-        let (authenticated, path) =
-            browser_login_and_save(&build_url, backend_url, self.no_browser).await?;
+        let (authenticated, path) = authenticate(&build_url, backend_url, self.no_browser).await?;
 
         println!("✓ Logged in as @{}", authenticated.status.github_login);
         println!("  saved to {}", path.display());
@@ -66,7 +65,17 @@ pub struct AuthenticatedBuild {
     pub config: AomiConfig,
 }
 
-pub async fn ensure_logged_in(build_url: &str) -> Result<AuthenticatedBuild> {
+pub(crate) fn verified_builder_github_user_id(github_user_id: &str) -> Result<String> {
+    let github_user_id = github_user_id.trim();
+    if github_user_id.is_empty() {
+        return Err(anyhow!(
+            "a verified Builder identity is required; run `aomi-build login` first"
+        ));
+    }
+    Ok(github_user_id.to_string())
+}
+
+pub async fn ensure_logged_in(build_url: &str, no_browser: bool) -> Result<AuthenticatedBuild> {
     let mut config = AomiConfig::load();
     let env_token = env_value(BUILD_TOKEN_ENV);
     let saved_token = config.cli_access_token.clone();
@@ -91,7 +100,7 @@ pub async fn ensure_logged_in(build_url: &str) -> Result<AuthenticatedBuild> {
     }
 
     println!("You need to log in to Aomi Build.");
-    let (authenticated, _) = browser_login_and_save(build_url, None, false).await?;
+    let (authenticated, _) = authenticate(build_url, None, no_browser).await?;
     println!("✓ Logged in as @{}\n", authenticated.status.github_login);
     Ok(authenticated)
 }
@@ -102,7 +111,7 @@ struct LoginIdentity {
     github_user_id: String,
 }
 
-async fn browser_login_and_save(
+async fn authenticate(
     build_url: &str,
     backend_url: Option<String>,
     no_browser: bool,

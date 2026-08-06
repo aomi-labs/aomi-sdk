@@ -9,6 +9,7 @@ mod deploy;
 mod init;
 mod new_app;
 mod spec_load;
+mod spec_patch;
 mod specs;
 mod test_schema;
 mod tighten;
@@ -70,7 +71,7 @@ enum Cmd {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let Some(cmd) = cli.cmd else {
-        return deploy::wizard::run().await.map_err(git_error);
+        return deploy::wizard::run().await.map_err(to_eyre);
     };
     match cmd {
         Cmd::GenSpecs(args) => specs::run(args),
@@ -93,6 +94,6 @@ async fn main() -> Result<()> {
     }
 }
 
-fn git_error(err: anyhow::Error) -> eyre::Report {
+fn to_eyre(err: anyhow::Error) -> eyre::Report {
     eyre::eyre!("{err:#}")
 }

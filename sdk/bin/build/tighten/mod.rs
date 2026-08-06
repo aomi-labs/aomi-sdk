@@ -315,10 +315,6 @@ enum InferredSchema {
         #[serde(rename = "additionalProperties")]
         additional_properties: bool,
     },
-    Empty {
-        #[serde(rename = "type")]
-        ty: &'static str,
-    },
 }
 
 fn infer_schema(value: &Value) -> InferredSchema {
@@ -363,10 +359,6 @@ fn infer_schema(value: &Value) -> InferredSchema {
                     required.push(k.clone());
                 }
                 properties.insert(k.clone(), infer_schema(v));
-            }
-            // Empty struct guard (theoretical given the early return above).
-            if properties.is_empty() {
-                return InferredSchema::Empty { ty: "object" };
             }
             InferredSchema::Object {
                 ty: "object",

@@ -12,12 +12,11 @@ use super::shared::{
     head_commit, remote_origin, resolve_backend, resolve_build_url, tracked_aomi_tomls,
 };
 use crate::deploy::app::AomiAppFiles;
-use crate::deploy::platform::Platform;
-use crate::deploy::platform::normalize_github_repo;
+use crate::deploy::platform::{Platform, normalize_github_repo};
 use crate::deploy::types::{BuildDeployInput, LocalDeployment};
 
 pub async fn run(args: DeployArgs) -> eyre::Result<()> {
-    args.run().await.map_err(crate::git_error)
+    args.run().await.map_err(crate::to_eyre)
 }
 
 #[derive(Debug, Args, Clone)]
@@ -81,19 +80,20 @@ impl DeployArgs {
             resolve_build_url(&self.build_url, backend_url.as_deref()).ok_or_else(|| {
                 anyhow!("deploy needs an Aomi Build URL — set --build-url or {BUILD_URL_ENV}")
             })?;
-        let client = ensure_logged_in(&build_url).await?.client;
+        let client = ensure_logged_in(&build_url, false).await?.client;
         let mut request = BuildDeployInput {
             platform: platform.to_string(),
             repo,
             source_ref: source_ref.clone(),
             aomi_toml_paths,
-            app_source_id,
+            project_id: app_source_id,
         };
         // The Builder-authenticated preflight is also the source-claim seam:
-        // when no local app_source_id exists, Build resolves the installed repo
-        // and links it to the signed-in Builder before any deployment write.
+        // when no local project id exists, Build resolves the installed repo
+        // into a project owned by the signed-in Builder before any deployment
+        // write (v2 apply-deploys are rejected without a `projectId`).
         let preflight =
-            if self.preflight || request.app_source_id.is_none() {
+            if self.preflight || request.project_id.is_none() {
                 Some(client.deploy(&request, true).await.map_err(|error| {
                     explain_deploy_error(error, &platform, &source_ref, &build_url)
                 })?)
@@ -112,7 +112,7 @@ impl DeployArgs {
             return Ok(());
         }
         if let Some(preflight) = preflight {
-            request.app_source_id = Some(preflight.app_source_id);
+            request.project_id = Some(preflight.project_id);
         }
         let response = client
             .deploy(&request, false)

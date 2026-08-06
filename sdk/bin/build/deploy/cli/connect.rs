@@ -3,13 +3,18 @@
 use anyhow::{Context, Result, anyhow, bail};
 use clap::Args;
 
-use super::shared::{BACKEND_URL_ENV, resolve_activation_token, resolve_backend};
+use super::login;
+use super::shared::{
+    BACKEND_URL_ENV, BUILD_URL_ENV, resolve_activation_token, resolve_backend, resolve_build_url,
+};
+use crate::deploy::backend::{BackendClient, oauth_start};
 use crate::deploy::config::AomiConfig;
-use crate::deploy::flow::{TokenCheck, oauth_install_url, validate_activation_token};
+use crate::deploy::flow::{TokenCheck, validate_activation_token};
 use crate::deploy::platform::{Platform, normalize_github_repo};
+use crate::deploy::types::SyncSourceInput;
 
 pub async fn run(args: ConnectArgs) -> eyre::Result<()> {
-    args.run().await.map_err(crate::git_error)
+    args.run().await.map_err(crate::to_eyre)
 }
 
 #[derive(Debug, Args, Clone)]
@@ -30,6 +35,11 @@ pub struct ConnectArgs {
     /// Backend base URL (default: AOMI_BACKEND_URL, then saved config).
     #[arg(long, value_name = "URL")]
     pub backend: Option<String>,
+
+    /// Aomi Build URL used to authenticate the Builder that owns a selected
+    /// `--repo`. Known staging/production URLs are inferred from `--backend`.
+    #[arg(long = "build-url", value_name = "URL")]
+    pub build_url: Option<String>,
 
     /// Activation token to store (issued by your Aomi admin). Prompted if omitted.
     #[arg(long, value_name = "TOKEN")]
@@ -63,6 +73,16 @@ impl ConnectArgs {
             Some(r) => Some(normalize_github_repo(r)?),
             None => None,
         };
+        let build_url = repo
+            .as_ref()
+            .map(|_| {
+                resolve_build_url(&self.build_url, Some(&backend_url)).ok_or_else(|| {
+                    anyhow!(
+                        "connect --repo needs an Aomi Build URL to verify ownership; set --build-url or {BUILD_URL_ENV}"
+                    )
+                })
+            })
+            .transpose()?;
 
         // 1. GitHub App install URL. After the user installs, GitHub redirects
         //    *their browser* (not this CLI) to the App's configured callback,
@@ -75,7 +95,7 @@ impl ConnectArgs {
             "install"
         };
         let start =
-            oauth_install_url(&backend_url, self.platform.as_str(), repo.as_deref(), mode).await?;
+            oauth_start(&backend_url, self.platform.as_str(), repo.as_deref(), mode).await?;
         println!("Connect your source by installing the Aomi GitHub App:");
         println!("  {}", start.install_url);
         if self.no_browser {
@@ -123,9 +143,36 @@ impl ConnectArgs {
             }
         }
 
-        // 4. Persist account identity.
+        // 4. Authenticate the Builder. When connect names a repository, claim
+        // it now instead of leaving an operator-only owner_builder_id repair
+        // for the first deploy.
+        let claimed = match (repo.as_ref(), build_url.as_deref()) {
+            (Some(repo), Some(build_url)) => {
+                let builder = login::ensure_logged_in(build_url, self.no_browser).await?;
+                let github_user_id =
+                    login::verified_builder_github_user_id(&builder.status.github_user_id)?;
+                let source = BackendClient::new(backend_url.clone(), token.clone())?
+                    .sync_installed(
+                        &self.platform,
+                        &SyncSourceInput {
+                            repo: repo.clone(),
+                            github_user_id,
+                        },
+                    )
+                    .await?;
+                Some((builder.status, source))
+            }
+            _ => None,
+        };
+
+        // 5. Persist account and platform credentials. `ensure_logged_in`
+        // saved the Builder session first, so load it again before merging the
+        // connect fields rather than overwriting that identity.
         let mut config = AomiConfig::load();
         config.backend_url = Some(backend_url);
+        if let Some(build_url) = build_url {
+            config.build_url = Some(build_url);
+        }
         config.platform = Some(self.platform.to_string());
         config.installation_id = Some(installation_id);
         config.activation_token = Some(token);
@@ -134,6 +181,13 @@ impl ConnectArgs {
         println!();
         println!("Connected. Saved to {}", path.display());
         println!("  installation_id: {installation_id}");
+        if let Some((builder, source)) = claimed {
+            println!("  Builder: @{}", builder.github_login);
+            println!(
+                "  claimed source: {} (app_source_id {})",
+                source.source.repository_link, source.source.id
+            );
+        }
         println!();
         println!("Next:");
         println!(

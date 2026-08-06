@@ -8,7 +8,7 @@ use crate::deploy::backend::BackendClient;
 use crate::deploy::platform::Platform;
 
 pub async fn run(args: AppsArgs) -> eyre::Result<()> {
-    args.run().await.map_err(crate::git_error)
+    args.run().await.map_err(crate::to_eyre)
 }
 
 #[derive(Debug, Args, Clone)]

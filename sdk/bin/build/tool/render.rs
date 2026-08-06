@@ -1,30 +1,27 @@
 use std::fmt::Write;
 
-use super::{Mode, Op, ParamKind, ParamLoc, ResponseSummary};
+use super::op::{Op, ParamKind, ResponseSummary};
 
-pub fn cargo_toml(platform: &str, mode: Mode) -> String {
-    let provider_dep_block = match mode {
-        Mode::Shared => {
-            format!("aomi-ext = {{ path = \"../../ext\", features = [\"{platform}\"] }}\n")
+pub fn cargo_toml(platform: &str, mode: &str) -> String {
+    let provider_dep_block = if mode == "shared" {
+        format!("aomi-ext = {{ path = \"../../ext\", features = [\"{platform}\"] }}\n")
+    } else {
+        // App-local: client deps live directly here. Detect from the
+        // generated client source which optional crates progenitor pulled
+        // in (uuid for `format: uuid`, regress for `pattern:` constraints).
+        let client_path = format!("apps/{platform}/src/client/client.rs");
+        let src = std::fs::read_to_string(&client_path).unwrap_or_default();
+        let mut block = String::from(
+            "progenitor-client = \"0.14\"\n\
+             chrono = { version = \"0.4\", features = [\"serde\"] }\n",
+        );
+        if src.contains("uuid::") {
+            block.push_str("uuid = { version = \"1\", features = [\"serde\", \"v4\"] }\n");
         }
-        Mode::AppLocal => {
-            // App-local: client deps live directly here. Detect from the
-            // generated client source which optional crates progenitor pulled
-            // in (uuid for `format: uuid`, regress for `pattern:` constraints).
-            let client_path = format!("apps/{platform}/src/client/client.rs");
-            let src = std::fs::read_to_string(&client_path).unwrap_or_default();
-            let mut block = String::from(
-                "progenitor-client = \"0.14\"\n\
-                 chrono = { version = \"0.4\", features = [\"serde\"] }\n",
-            );
-            if src.contains("uuid::") {
-                block.push_str("uuid = { version = \"1\", features = [\"serde\", \"v4\"] }\n");
-            }
-            if src.contains("regress::") {
-                block.push_str("regress = \"0.10\"\n");
-            }
-            block
+        if src.contains("regress::") {
+            block.push_str("regress = \"0.10\"\n");
         }
+        block
     };
     format!(
         r#"[package]
@@ -54,7 +51,7 @@ pub fn preamble_default(platform: &str) -> String {
     )
 }
 
-pub fn lib_rs(platform: &str, app_struct: &str, ops: &[Op], preamble: &str, mode: Mode) -> String {
+pub fn lib_rs(platform: &str, app_struct: &str, ops: &[Op], preamble: &str, mode: &str) -> String {
     let tool_list = ops
         .iter()
         .map(|o| format!("        tool::{},", o.tool_marker))
@@ -70,7 +67,7 @@ pub fn lib_rs(platform: &str, app_struct: &str, ops: &[Op], preamble: &str, mode
     let _ = writeln!(out);
     let _ = writeln!(out, "use aomi_sdk::*;");
     let _ = writeln!(out);
-    if mode == Mode::AppLocal {
+    if mode == "app-local" {
         // Generated client lives at apps/<platform>/src/client/
         let _ = writeln!(out, "#[allow(clippy::all, dead_code, unused_imports)]");
         let _ = writeln!(out, "mod client;");
@@ -92,7 +89,7 @@ pub fn lib_rs(platform: &str, app_struct: &str, ops: &[Op], preamble: &str, mode
     out
 }
 
-pub fn tool_rs(platform: &str, app_struct: &str, ops: &[Op], mode: Mode) -> String {
+pub fn tool_rs(platform: &str, app_struct: &str, ops: &[Op], mode: &str) -> String {
     let mut out = String::new();
     let _ = writeln!(
         out,
@@ -101,15 +98,16 @@ pub fn tool_rs(platform: &str, app_struct: &str, ops: &[Op], mode: Mode) -> Stri
          //! review tool names, descriptions, and any auth assumptions."
     );
     let _ = writeln!(out);
-    let (client_use, types_use) = match mode {
-        Mode::Shared => (
+    let (client_use, types_use) = if mode == "shared" {
+        (
             format!("use aomi_ext::{platform}::Client as GenClient;"),
             format!("#[allow(unused_imports)]\nuse aomi_ext::{platform}::types::*;"),
-        ),
-        Mode::AppLocal => (
+        )
+    } else {
+        (
             "use crate::client::Client as GenClient;".to_string(),
             "#[allow(unused_imports)]\nuse crate::client::types::*;".to_string(),
-        ),
+        )
     };
     let _ = writeln!(out, "{client_use}");
     let _ = writeln!(out, "{types_use}");
@@ -240,13 +238,11 @@ fn emit_tool(out: &mut String, platform: &str, app_struct: &str, op: &Op) {
     );
 
     // Auth resolution (first auth param only — multi-auth needs hand-editing)
-    let auth = op.params.iter().find(|p| p.is_auth);
-    if let Some(a) = auth {
+    if op.params.iter().any(|p| p.is_auth) {
         let _ = writeln!(
             out,
             "        let api_key = resolve_secret_value(&ctx, args.api_key.as_deref(), \"{env_var}\", \"[{platform}] missing api_key argument and {env_var} env var\")?;"
         );
-        let _ = a; // silence unused
     }
 
     let _ = writeln!(
@@ -381,7 +377,3 @@ fn sanitize_one_liner(s: &str) -> String {
         .replace('"', "'")
         .replace('\\', "\\\\")
 }
-
-// silence unused-import warning in render.rs — ParamLoc reserved for future.
-#[allow(dead_code)]
-fn _hold(_: ParamLoc) {}

@@ -18,7 +18,7 @@ use crate::deploy::platform::Platform;
 use crate::deploy::types::MintTokenInput;
 
 pub async fn run(args: TokenArgs) -> eyre::Result<()> {
-    args.run().await.map_err(crate::git_error)
+    args.run().await.map_err(crate::to_eyre)
 }
 
 #[derive(Debug, Args, Clone)]

@@ -36,13 +36,6 @@ pub(crate) fn bin_name() -> String {
         .unwrap_or_else(|| "aomi-build".to_string())
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub(crate) enum CredentialSource {
-    Flag,
-    Env,
-    Config,
-}
-
 /// `--backend` flag → `AOMI_BACKEND_URL` → saved `connect` config.
 pub(crate) fn resolve_backend(flag: &Option<String>) -> Option<String> {
     flag.clone()
@@ -78,22 +71,11 @@ pub(crate) fn infer_build_url(backend_url: &str) -> Option<String> {
 /// `--activation-token` flag → `AOMI_APP_ACTIVATION_TOKEN` → saved `connect`
 /// config. Lets a connected user run deploy/activate with no env wiring.
 pub(crate) fn resolve_activation_token(flag: &Option<String>) -> Option<String> {
-    resolve_activation_token_with_source(flag).map(|(token, _)| token)
-}
-
-pub(crate) fn resolve_activation_token_with_source(
-    flag: &Option<String>,
-) -> Option<(String, CredentialSource)> {
     flag.clone()
         .map(|t| t.trim().to_string())
         .filter(|t| !t.is_empty())
-        .map(|token| (token, CredentialSource::Flag))
-        .or_else(|| env_value(ACTIVATION_TOKEN_ENV).map(|token| (token, CredentialSource::Env)))
-        .or_else(|| {
-            AomiConfig::load()
-                .activation_token
-                .map(|token| (token, CredentialSource::Config))
-        })
+        .or_else(|| env_value(ACTIVATION_TOKEN_ENV))
+        .or_else(|| AomiConfig::load().activation_token)
 }
 
 /// `--backend`/env + activation token resolution shared by the activation-token

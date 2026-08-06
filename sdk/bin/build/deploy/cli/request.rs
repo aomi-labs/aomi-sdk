@@ -11,7 +11,7 @@ use crate::deploy::discord;
 use crate::deploy::platform::{Platform, normalize_github_repo};
 
 pub async fn run(args: RequestArgs) -> eyre::Result<()> {
-    args.run().await.map_err(crate::git_error)
+    args.run().await.map_err(crate::to_eyre)
 }
 
 #[derive(Debug, Args, Clone)]
