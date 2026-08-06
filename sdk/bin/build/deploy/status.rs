@@ -21,6 +21,7 @@ pub struct StatusResult {
     pub project_url: Option<String>,
     pub build_state: Option<String>,
     pub build_message: Option<String>,
+    pub build_logs_url: Option<String>,
     pub backend: Option<String>,
     pub apps: Vec<AppStatus>,
 }
@@ -87,6 +88,7 @@ impl StatusResult {
             project_url: state.project_url.clone(),
             build_state: None,
             build_message: None,
+            build_logs_url: None,
             backend: backend_url,
             apps,
         }
@@ -106,6 +108,9 @@ impl StatusResult {
             let _ = writeln!(out, "  release build : {state}");
             if let Some(message) = &self.build_message {
                 let _ = writeln!(out, "  build detail  : {message}");
+            }
+            if let Some(url) = &self.build_logs_url {
+                let _ = writeln!(out, "  build logs    : {url}");
             }
         }
         let _ = writeln!(
@@ -139,6 +144,33 @@ impl StatusResult {
             }
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::StatusResult;
+
+    #[test]
+    fn status_report_prints_build_logs_url() {
+        let report = StatusResult {
+            platform: "community".to_string(),
+            pr_url: "https://github.com/aomi-labs/community-apps/pull/1".to_string(),
+            deploy_branch: "publish".to_string(),
+            deployed: true,
+            activated: false,
+            project_url: None,
+            build_state: Some("failed".to_string()),
+            build_message: Some("release build failed".to_string()),
+            build_logs_url: Some(
+                "https://github.com/aomi-labs/community-apps/actions/runs/1".to_string(),
+            ),
+            backend: None,
+            apps: vec![],
+        };
+        assert!(report.render().contains(
+            "build logs    : https://github.com/aomi-labs/community-apps/actions/runs/1"
+        ));
     }
 }
 

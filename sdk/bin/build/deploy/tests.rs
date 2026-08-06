@@ -13,6 +13,7 @@ use super::cli::{ActivateArgs, DeployArgs, StatusArgs};
 use super::platform::Platform;
 use super::types::{
     ActivateInput, ActivateResult, DeployInput, DeployResult, LocalDeployment, ReleaseTags,
+    SourceResult, SyncSourceInput,
 };
 
 // ── deploy: arg parsing ─────────────────────────────────────────────────────
@@ -88,6 +89,50 @@ fn connect_parses_authorize_and_drops_polling_flags() {
             crate::Cli::try_parse_from(argv).is_err(),
             "removed flag {legacy:?} should no longer parse"
         );
+    }
+}
+
+#[test]
+fn source_sync_request_carries_string_builder_identity() {
+    let value = serde_json::to_value(SyncSourceInput {
+        repo: "alice/project".to_string(),
+        github_user_id: "12345".to_string(),
+    })
+    .unwrap();
+    assert_eq!(
+        value,
+        json!({ "repo": "alice/project", "github_user_id": "12345" })
+    );
+}
+
+#[test]
+fn source_sync_accepts_legacy_string_and_current_missing_owner_field() {
+    for source in [
+        json!({
+            "id": 7,
+            "installation_id": 8,
+            "repository_id": 9,
+            "repository_link": "alice/project",
+            "github_account": "alice",
+            "github_user_id": "12345",
+            "bound_platform_id": 1
+        }),
+        json!({
+            "id": 7,
+            "installation_id": 8,
+            "repository_id": 9,
+            "repository_link": "alice/project",
+            "github_account": "alice",
+            "bound_platform_id": 1
+        }),
+    ] {
+        let result: SourceResult = serde_json::from_value(json!({
+            "ok": true,
+            "source": source
+        }))
+        .unwrap();
+        assert_eq!(result.source.id, 7);
+        assert_eq!(result.source.repository_link, "alice/project");
     }
 }
 

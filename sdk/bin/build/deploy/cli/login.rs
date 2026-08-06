@@ -66,7 +66,24 @@ pub struct AuthenticatedBuild {
     pub config: AomiConfig,
 }
 
+pub(crate) fn verified_builder_github_user_id(github_user_id: &str) -> Result<String> {
+    let github_user_id = github_user_id.trim();
+    if github_user_id.is_empty() {
+        return Err(anyhow!(
+            "a verified Builder identity is required; run `aomi-build login` first"
+        ));
+    }
+    Ok(github_user_id.to_string())
+}
+
 pub async fn ensure_logged_in(build_url: &str) -> Result<AuthenticatedBuild> {
+    ensure_logged_in_with_options(build_url, false).await
+}
+
+pub async fn ensure_logged_in_with_options(
+    build_url: &str,
+    no_browser: bool,
+) -> Result<AuthenticatedBuild> {
     let mut config = AomiConfig::load();
     let env_token = env_value(BUILD_TOKEN_ENV);
     let saved_token = config.cli_access_token.clone();
@@ -91,7 +108,7 @@ pub async fn ensure_logged_in(build_url: &str) -> Result<AuthenticatedBuild> {
     }
 
     println!("You need to log in to Aomi Build.");
-    let (authenticated, _) = browser_login_and_save(build_url, None, false).await?;
+    let (authenticated, _) = browser_login_and_save(build_url, None, no_browser).await?;
     println!("✓ Logged in as @{}\n", authenticated.status.github_login);
     Ok(authenticated)
 }

@@ -2,10 +2,13 @@
 
 use std::path::{Path, PathBuf};
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use clap::{Args, Subcommand};
 
-use super::shared::{APP_SOURCE_ID_ENV, git_context, resolve_activation};
+use super::login;
+use super::shared::{
+    APP_SOURCE_ID_ENV, BUILD_URL_ENV, git_context, resolve_activation, resolve_build_url,
+};
 use crate::deploy::backend::BackendClient;
 use crate::deploy::platform::{Platform, normalize_github_repo};
 use crate::deploy::types::{LocalDeployment, SourceResult, SyncSourceInput};
@@ -43,6 +46,10 @@ pub struct SourceSyncArgs {
     pub platform: Platform,
     #[arg(long, value_name = "URL")]
     pub backend: Option<String>,
+    /// Aomi Build URL used to verify the Builder identity that will own the
+    /// source. Known staging/production URLs are inferred from `--backend`.
+    #[arg(long = "build-url", value_name = "URL")]
+    pub build_url: Option<String>,
     #[arg(long, value_name = "TOKEN")]
     pub activation_token: Option<String>,
     /// Source repo path for `.aomi/deployment.json` persistence.
@@ -56,10 +63,36 @@ impl SourceSyncArgs {
     pub async fn run(self) -> Result<()> {
         let repo = normalize_github_repo(&self.repo)?;
         let (url, token) = resolve_activation(&self.backend, &self.activation_token)?;
+        let build_url = resolve_build_url(&self.build_url, Some(&url)).ok_or_else(|| {
+            anyhow!(
+                "source sync needs an Aomi Build URL to verify ownership; set --build-url or {BUILD_URL_ENV}"
+            )
+        })?;
+        let builder = login::ensure_logged_in(&build_url).await?;
+        let github_user_id =
+            login::verified_builder_github_user_id(&builder.status.github_user_id)?;
         let result = BackendClient::new(url, token)?
-            .sync_installed(&self.platform, &SyncSourceInput { repo: repo.clone() })
+            .sync_installed(
+                &self.platform,
+                &SyncSourceInput {
+                    repo: repo.clone(),
+                    github_user_id,
+                },
+            )
             .await?;
         report_source(&result, &self.path, self.json, "synced")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::login::verified_builder_github_user_id;
+
+    #[test]
+    fn source_sync_requires_verified_builder_identity() {
+        let error = verified_builder_github_user_id("").unwrap_err();
+        assert!(error.to_string().contains("aomi-build login"));
+        assert_eq!(verified_builder_github_user_id(" 12345 ").unwrap(), "12345");
     }
 }
 

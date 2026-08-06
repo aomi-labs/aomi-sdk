@@ -291,6 +291,10 @@ pub struct MintTokenResult {
 #[derive(Debug, Clone, Serialize)]
 pub struct SyncSourceInput {
     pub repo: String,
+    /// Verified Builder identity established by `aomi-build login`. The
+    /// backend independently verifies that this user owns the GitHub App
+    /// installation before it records `owner_builder_id`.
+    pub github_user_id: String,
 }
 
 /// A connected GitHub App source row — the `source` payload returned by
@@ -305,9 +309,6 @@ pub struct AppSource {
     pub repository_link: String,
     #[serde(default)]
     pub github_account: Option<String>,
-    #[serde(default)]
-    pub github_user_id: Option<i64>,
-    #[serde(default)]
     pub bound_platform_id: Option<i64>,
 }
 
@@ -330,6 +331,15 @@ pub struct DeploymentStatusResult {
     pub state: String,
     #[serde(default)]
     pub message: Option<String>,
+    #[serde(default)]
+    pub ci: Option<DeploymentCiStatus>,
+}
+
+/// GitHub Actions result attached to a deployment status response.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeploymentCiStatus {
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

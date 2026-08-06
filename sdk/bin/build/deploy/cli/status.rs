@@ -61,7 +61,18 @@ impl StatusArgs {
             .as_ref()
             .and_then(|_| resolve_activation_token(&self.activation_token));
 
-        let build_url = resolve_build_url(&self.build_url, backend_url.as_deref());
+        // Keep `--backend ''` as a complete remote-status opt-out unless the
+        // caller explicitly asks for an Aomi Build endpoint.
+        let build_url = if self
+            .backend
+            .as_deref()
+            .is_some_and(|backend| backend.trim().is_empty())
+            && self.build_url.is_none()
+        {
+            None
+        } else {
+            resolve_build_url(&self.build_url, backend_url.as_deref())
+        };
         let mut report = StatusResult::collect(&state, backend_url, token).await;
 
         if let Some(build_url) = build_url {
@@ -72,6 +83,7 @@ impl StatusArgs {
                 .await?;
             report.build_state = Some(build_status.state);
             report.build_message = build_status.message;
+            report.build_logs_url = build_status.ci.and_then(|ci| ci.url);
         }
 
         if self.json {
