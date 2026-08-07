@@ -285,9 +285,12 @@ pub struct MintTokenResult {
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateProjectInput {
     pub repo: String,
-    /// Verified Builder identity established by `aomi-build login`. The
-    /// backend verifies installation ownership before recording the project.
-    pub github_user_id: String,
+    /// Builder identity saved by a previous `aomi-build login`, when one
+    /// exists. Present, the backend verifies installation ownership and claims
+    /// the project for that Builder; absent, the project is bound to the
+    /// platform on the activation token alone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub github_user_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
