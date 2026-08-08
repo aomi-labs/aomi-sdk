@@ -13,7 +13,6 @@
 //! skill tables will ride the skills bundle through the same shape.
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
@@ -470,9 +469,12 @@ fn digest(id: &str, sections: &[AppSkillSection], guard: Option<&GuardTable>) ->
         hasher.update([0u8]);
     }
     if let Some(guard) = guard {
-        let canonical = serde_json::to_value(guard)
-            .unwrap_or(Value::Null)
-            .to_string();
+        // Serialize the typed value directly. Round-tripping through
+        // `serde_json::Value` makes object ordering depend on whether the
+        // final binary enables serde_json's `preserve_order` feature, so a
+        // plugin and host can hash the same guard differently.
+        let canonical =
+            serde_json::to_string(guard).expect("GuardTable serialization should be infallible");
         hasher.update(canonical.as_bytes());
     }
     let mut out = String::with_capacity(64);
@@ -533,6 +535,10 @@ mod tests {
         let a = skill();
         let b = skill();
         assert_eq!(a.content_digest, b.content_digest);
+        assert_eq!(
+            a.content_digest, "0205fe9c2e9f5e3130fe3cfef12dd079051f1b1338b1e9651bbe21a0bfdb526a",
+            "digest must not depend on serde_json feature unification"
+        );
 
         let mut c = skill();
         c.sections[0].content.push_str(" (edited)");
