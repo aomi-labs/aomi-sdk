@@ -42,6 +42,7 @@ exclude = [
     "apps/limitless",
     "apps/zora",
     "apps/krexa",
+    "apps/stablefx",
 ]
 resolver = "2"
 
