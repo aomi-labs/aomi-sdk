@@ -3,6 +3,9 @@ name = "stablefx"
 version = "0.1.0"
 edition = "2024"
 
+[package.metadata.aomi]
+chain_ids = [5042002]
+
 [lib]
 crate-type = ["cdylib"]
 

@@ -108,13 +108,7 @@ pub(crate) struct FundRequest {
 }
 
 impl StableFxClient {
-    pub(crate) fn from_env() -> Result<Self, String> {
-        let api_key = std::env::var("STABLEFX_API_KEY")
-            .map_err(|_| "[stablefx] STABLEFX_API_KEY is not configured".to_string())?;
-        if api_key.trim().is_empty() {
-            return Err("[stablefx] STABLEFX_API_KEY is empty".to_string());
-        }
-
+    pub(crate) fn new(api_key: &str) -> Result<Self, String> {
         let mut headers = HeaderMap::new();
         let mut authorization = HeaderValue::from_str(&format!("Bearer {api_key}"))
             .map_err(|_| "[stablefx] STABLEFX_API_KEY is not a valid header value".to_string())?;
