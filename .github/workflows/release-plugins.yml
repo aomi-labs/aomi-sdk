@@ -96,14 +96,33 @@ jobs:
           sdk_toml = tomllib.loads((repo / "sdk" / "Cargo.toml").read_text())
           sdk_version = sdk_toml["package"]["version"]
 
+          app_metadata = {}
+          for app_toml_path in sorted((repo / "apps").glob("*/Cargo.toml")):
+              app_toml = tomllib.loads(app_toml_path.read_text())
+              package = app_toml["package"]
+              plugin_name = app_toml.get("lib", {}).get("name", package["name"])
+              chain_ids = package.get("metadata", {}).get("aomi", {}).get("chain_ids", [])
+              if not isinstance(chain_ids, list) or any(
+                  not isinstance(chain_id, int) or isinstance(chain_id, bool) or chain_id <= 0
+                  for chain_id in chain_ids
+              ):
+                  raise ValueError(f"{app_toml_path}: chain_ids must be positive integers")
+              app_metadata[plugin_name.replace("-", "_")] = {
+                  "chain_ids": sorted(set(chain_ids)),
+              }
+
           plugins = {}
           for path in sorted(plugins_dir.iterdir()):
               if not path.is_file() or path.name == "manifest.json":
                   continue
-              plugins[path.stem] = {
+              plugin = {
                   "file": path.name,
                   "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
               }
+              metadata = app_metadata.get(path.stem, {})
+              if metadata.get("chain_ids"):
+                  plugin.update(metadata)
+              plugins[path.stem] = plugin
 
           manifest = {
               "app_release_tag": "${{ needs.resolve.outputs.tag }}",

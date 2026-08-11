@@ -29,6 +29,30 @@ fn ok<T: Serialize>(value: T) -> Result<Value, String> {
     })
 }
 
+fn require_arc(ctx: &DynToolCallCtx) -> Result<(), String> {
+    let chain_id = ctx
+        .attribute_u64(&["domain", "evm", "chain_id"])
+        .ok_or_else(|| {
+            "[stablefx] Arc Testnet must be selected before using StableFX".to_string()
+        })?;
+    if chain_id != ARC_TESTNET_CHAIN_ID {
+        return Err(format!(
+            "[stablefx] StableFX is only available on Arc Testnet (chainId {ARC_TESTNET_CHAIN_ID}); selected chainId is {chain_id}"
+        ));
+    }
+    Ok(())
+}
+
+fn client(ctx: &DynToolCallCtx) -> Result<StableFxClient, String> {
+    let api_key = resolve_secret_value(
+        ctx,
+        None,
+        "STABLEFX_API_KEY",
+        "[stablefx] add a Circle StableFX API key in package settings before using StableFX",
+    )?;
+    StableFxClient::new(&api_key)
+}
+
 fn connected_wallet(
     override_address: Option<String>,
     ctx: &DynToolCallCtx,
@@ -238,7 +262,8 @@ impl DynAomiTool for Quote {
     const NAME: &'static str = "stablefx_quote";
     const DESCRIPTION: &'static str = "Get an indicative Circle StableFX rate without creating a trade or asking the wallet to sign. Amount is a human-unit decimal string. One side of the pair must be USDC.";
 
-    fn run(_app: &StableFxApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
+    fn run(_app: &StableFxApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
+        require_arc(&ctx)?;
         let request = quote_request(
             args.from_currency,
             args.to_currency,
@@ -248,7 +273,7 @@ impl DynAomiTool for Quote {
             None,
         )?;
         let runtime = rt()?;
-        let response = runtime.block_on(StableFxClient::from_env()?.quote(&request))?;
+        let response = runtime.block_on(client(&ctx)?.quote(&request))?;
         ok(response)
     }
 }
@@ -286,6 +311,7 @@ impl DynAomiTool for AcceptQuote {
         args: Self::Args,
         ctx: DynToolCallCtx,
     ) -> Result<ToolReturn, String> {
+        require_arc(&ctx)?;
         let wallet = connected_wallet(args.wallet, &ctx)?;
         let recipient = args.recipient.unwrap_or_else(|| wallet.clone());
         let request = quote_request(
@@ -297,7 +323,7 @@ impl DynAomiTool for AcceptQuote {
             Some(recipient),
         )?;
         let runtime = rt()?;
-        let quote = runtime.block_on(StableFxClient::from_env()?.quote(&request))?;
+        let quote = runtime.block_on(client(&ctx)?.quote(&request))?;
         let typed_data = typed_data(&quote)?;
         validate_arc_typed_data(&typed_data)?;
         let message = typed_message(&typed_data)?;
@@ -357,7 +383,8 @@ impl DynAomiTool for CreateTrade {
     const NAME: &'static str = "stablefx_create_trade";
     const DESCRIPTION: &'static str = "Routed continuation of stablefx_accept_quote. It submits the pinned quote message and wallet signature to Circle. Do not invoke directly.";
 
-    fn run(_app: &StableFxApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
+    fn run(_app: &StableFxApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
+        require_arc(&ctx)?;
         validate_address(&args.wallet)?;
         validate_uuid("idempotency_key", &args.idempotency_key)?;
         validate_uuid("quote_id", &args.quote_id)?;
@@ -370,7 +397,7 @@ impl DynAomiTool for CreateTrade {
             signature,
         };
         let runtime = rt()?;
-        let trade = runtime.block_on(StableFxClient::from_env()?.create_trade(&request))?;
+        let trade = runtime.block_on(client(&ctx)?.create_trade(&request))?;
         ok(json!({
             "trade": trade,
             "next": "Poll stablefx_trade_status until pending_settlement, then call stablefx_prepare_funding.",
@@ -399,10 +426,11 @@ impl DynAomiTool for PrepareFunding {
     fn run_with_routes(
         _app: &StableFxApp,
         args: Self::Args,
-        _ctx: DynToolCallCtx,
+        ctx: DynToolCallCtx,
     ) -> Result<ToolReturn, String> {
+        require_arc(&ctx)?;
         validate_uuid("trade_id", &args.trade_id)?;
-        let client = StableFxClient::from_env()?;
+        let client = client(&ctx)?;
         let runtime = rt()?;
         let trade = runtime.block_on(client.trade(&args.trade_id))?;
         if trade.status != "pending_settlement" {
@@ -472,10 +500,11 @@ impl DynAomiTool for FundTrade {
     const NAME: &'static str = "stablefx_fund_trade";
     const DESCRIPTION: &'static str = "Routed continuation of stablefx_prepare_funding. Relays the pinned Permit2 message and signature to Circle, then reads back the trade. Do not invoke directly.";
 
-    fn run(_app: &StableFxApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
+    fn run(_app: &StableFxApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
+        require_arc(&ctx)?;
         validate_uuid("trade_id", &args.trade_id)?;
         let signature = validate_signature(args.signature)?;
-        let client = StableFxClient::from_env()?;
+        let client = client(&ctx)?;
         let runtime = rt()?;
         runtime.block_on(client.fund(&FundRequest {
             trader_type: "taker".to_string(),
@@ -508,10 +537,11 @@ impl DynAomiTool for TradeStatus {
     const NAME: &'static str = "stablefx_trade_status";
     const DESCRIPTION: &'static str = "Get the current Circle StableFX trade state and settlement transaction hash. Poll at a moderate cadence; call stablefx_prepare_funding only when the state is pending_settlement.";
 
-    fn run(_app: &StableFxApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
+    fn run(_app: &StableFxApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
+        require_arc(&ctx)?;
         validate_uuid("trade_id", &args.trade_id)?;
         let runtime = rt()?;
-        let trade = runtime.block_on(StableFxClient::from_env()?.trade(&args.trade_id))?;
+        let trade = runtime.block_on(client(&ctx)?.trade(&args.trade_id))?;
         ok(trade)
     }
 }
@@ -519,6 +549,39 @@ impl DynAomiTool for TradeStatus {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ctx(chain_id: Option<u64>) -> DynToolCallCtx {
+        DynToolCallCtx {
+            session_id: "test".to_string(),
+            tool_name: "stablefx_quote".to_string(),
+            call_id: "call".to_string(),
+            state_attributes: chain_id
+                .map(|chain_id| {
+                    serde_json::from_value(json!({
+                        "domain": { "evm": { "chain_id": chain_id } }
+                    }))
+                    .unwrap()
+                })
+                .unwrap_or_default(),
+            secrets: Default::default(),
+        }
+    }
+
+    #[test]
+    fn requires_arc_thread_context() {
+        assert!(require_arc(&ctx(Some(ARC_TESTNET_CHAIN_ID))).is_ok());
+        assert!(require_arc(&ctx(Some(1))).is_err());
+        assert!(require_arc(&ctx(None)).is_err());
+    }
+
+    #[test]
+    fn resolves_api_key_from_the_account_secret_context() {
+        let mut context = ctx(Some(ARC_TESTNET_CHAIN_ID));
+        context
+            .secrets
+            .insert("STABLEFX_API_KEY".to_string(), "TEST_KEY".to_string());
+        assert!(client(&context).is_ok());
+    }
 
     #[test]
     fn validates_amounts_without_float_rounding() {

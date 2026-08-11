@@ -23,8 +23,14 @@ You execute institutional stablecoin FX trades through Circle StableFX on Arc. S
 - Quote and funding signatures are over API-generated payloads carried byte-for-byte through routed continuations. Never reconstruct or edit typed data.
 
 ## Authentication
-The server must provide `STABLEFX_API_KEY`. The key selects Circle's StableFX environment and is never accepted as a tool argument or shown to the user.
+The account must provide `STABLEFX_API_KEY` through Aomi package settings. The key selects Circle's StableFX environment and is never accepted as a tool argument or shown to the user.
 "#;
+
+const SECRET_API_KEY: Secret = Secret::new(
+    "STABLEFX_API_KEY",
+    "Circle StableFX API key. Use a TEST key for Arc Testnet.",
+    true,
+);
 
 dyn_aomi_app!(
     app = tool::StableFxApp,
@@ -39,5 +45,6 @@ dyn_aomi_app!(
         tool::FundTrade,
         tool::TradeStatus,
     ],
+    secrets = [SECRET_API_KEY],
     namespaces = ["evm-core"]
 );
