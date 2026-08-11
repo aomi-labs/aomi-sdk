@@ -1,0 +1,21 @@
+{
+  "user_story": "Preview a best-execution swap of 10 USDC into SOL on Jupiter, then confirm the route and price impact look reasonable before executing. Read-only flow against lite-api.jup.ag — the quote is the last step; no swap is executed, no wallet signature.",
+  "turns": [
+    {
+      "prompt": "Get me a Jupiter quote to swap 10 USDC (mint EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v) into SOL (mint So11111111111111111111111111111111111111112).",
+      "expected_tools": {
+        "must_call": ["jupiter_get_quote"]
+      }
+    },
+    {
+      "prompt": "What's the price impact and which venues does that route go through?",
+      "expected_tools": {
+        "must_not_call": ["jupiter_swap"]
+      }
+    }
+  ],
+  "final_assertion": {
+    "no_errors": false,
+    "max_turns": 8
+  }
+}

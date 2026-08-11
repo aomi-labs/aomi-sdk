@@ -1,0 +1,15 @@
+{
+  "evm": {
+    "contracts": {
+      "ROUTER": "0x7a2088a1bfc9d81c55368ae168c2c02570cb814f"
+    },
+    "selectors": {
+      "BUY_OUTCOME": "buyOutcome(uint256,uint256,uint256)"
+    },
+    "chain_ids": [1]
+  },
+  "limits": {
+    "hard_cap": 10000,
+    "confirm_cap": 1000
+  }
+}

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 /// Opaque platform identifier. Any well-formed string is accepted at the CLI;
 /// the backend's `platforms` table is the authority on what's valid. It names
-/// the platform path segment of the repo-scoped deploy endpoint.
+/// the platform selected when a Project is created.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Deserialize, Serialize)]
 #[serde(transparent)]
 pub struct Platform(String);

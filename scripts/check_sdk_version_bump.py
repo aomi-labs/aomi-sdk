@@ -41,6 +41,14 @@ def base_sdk_version(base_rev: str) -> str | None:
     return parse_version(show.stdout, f"{base_rev}:sdk/Cargo.toml")
 
 
+def sdk_version_changed(base_rev: str, head_rev: str) -> bool:
+    base = base_sdk_version(base_rev)
+    head_text = file_at(head_rev, "sdk/Cargo.toml")
+    if base is None or head_text is None:
+        return True
+    return base != parse_version(head_text, f"{head_rev}:sdk/Cargo.toml")
+
+
 def file_at(rev: str, path: str) -> str | None:
     show = subprocess.run(
         ["git", "show", f"{rev}:{path}"],
@@ -75,8 +83,9 @@ def changed_sdk_files(base_rev: str, head_rev: str) -> list[str]:
     for line in output.splitlines():
         if not line or line.startswith(("sdk/bin/", "sdk/examples/")):
             continue
-        if line == "sdk/Cargo.toml" and not sdk_manifest_change_requires_version_bump(
-            base_rev, head_rev
+        if line == "sdk/Cargo.toml" and not (
+            sdk_version_changed(base_rev, head_rev)
+            or sdk_manifest_change_requires_version_bump(base_rev, head_rev)
         ):
             continue
         changed.append(line)
@@ -95,12 +104,25 @@ def main() -> None:
     parser.add_argument("--base", required=True)
     parser.add_argument("--head", default="HEAD")
     parser.add_argument("--github-output")
+    parser.add_argument(
+        "--force-publish",
+        action="store_true",
+        help="publish the current SDK even when the base revision has the same version",
+    )
     args = parser.parse_args()
 
     if not args.base or re.fullmatch(r"0+", args.base):
         raise SystemExit("base revision is required")
 
     current_version = current_sdk_version()
+
+    if args.force_publish:
+        write_output(args.github_output, "sdk_version", current_version)
+        write_output(args.github_output, "sdk_changed", "true")
+        write_output(args.github_output, "publish_sdk", "true")
+        print(f"forced SDK publish for version {current_version}")
+        return
+
     changed_files = changed_sdk_files(args.base, args.head)
     sdk_changed = bool(changed_files)
     base_version = base_sdk_version(args.base)
