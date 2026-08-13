@@ -330,6 +330,7 @@ mod tests {
             namespaces: Some(vec!["database".to_string()]),
             secrets: None,
             broadcast: None,
+            evm_execution: None,
             skill: None,
         };
 
@@ -350,6 +351,7 @@ mod tests {
             namespaces: None,
             secrets: None,
             broadcast: None,
+            evm_execution: None,
             skill: Some(aomi_sdk::AppSkillManifest::from_parts(
                 "other-app/trading",
                 vec![("instructions", "content")],

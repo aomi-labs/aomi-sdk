@@ -180,6 +180,52 @@ dyn_aomi_app!(
 }
 
 #[test]
+fn valid_sponsored_4337_requirement_compiles() {
+    let output = cargo_check_temp_crate(
+        "dyn-sdk-shape-pass-sponsored-4337",
+        r#"
+use aomi_sdk::{DynAomiTool, DynToolCallCtx, dyn_aomi_app, schemars::JsonSchema, serde_json::{json, Value}};
+use serde::Deserialize;
+
+#[derive(Clone, Default)]
+struct App;
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+struct Args {}
+
+struct Tool;
+
+impl DynAomiTool for Tool {
+    type App = App;
+    type Args = Args;
+
+    const NAME: &'static str = "tool";
+    const DESCRIPTION: &'static str = "shape test tool";
+
+    fn run(_app: &Self::App, _args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
+        Ok(json!({ "ok": true }))
+    }
+}
+
+dyn_aomi_app!(
+    app = App,
+    name = "shape_sponsored_4337",
+    version = "0.1.0",
+    preamble = "shape",
+    tools = [Tool],
+    evm_execution = AomiSponsored4337
+);
+"#,
+    );
+
+    assert!(
+        output.status.success(),
+        "expected sponsored 4337 shape to compile:\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
 fn dyn_app_missing_default_fails_to_compile() {
     let output = cargo_check_temp_crate(
         "dyn-sdk-shape-fail-default",
