@@ -100,8 +100,7 @@ request to the platform backend, waits for the backend-owned platform PR/CI
 deployment, activates the release tag, verifies the runtime loaded the app, and
 writes `.aomi/deployment.json` in the source repository. The CLI does not hold a
 GitHub token, clone a platform repo, push branches, mint release tags, or write
-manifests. The backend owns those operations through the connected GitHub App
-install identified by `app_source_id`.
+manifests. The backend owns those operations through the platform-bound Project.
 
 Community contributors should start with the step-by-step
 [community deployment guide](./community-deployment.md). This section is the
@@ -112,29 +111,29 @@ for repeated runs:
 
 | Input | Flag | Env fallback | Used by |
 |---|---|---|---|
-| Backend URL | `--backend <url>` | `AOMI_BACKEND_URL` | deploy group, source sync, token commands, apps list, sdk check/fix |
-| Activation token | `--activation-token <token>` | `AOMI_APP_ACTIVATION_TOKEN` | deploy group, source sync, token list/revoke, apps list |
-| App source id | `--app-source-id <id>` | `AOMI_APP_SOURCE_ID` | deploy, deploy preflight, deploy run |
+| Backend URL | `--backend <url>` | `AOMI_BACKEND_URL` | deploy group, project creation, token commands, apps list, sdk check/fix |
+| Activation token | `--activation-token <token>` | `AOMI_APP_ACTIVATION_TOKEN` | deploy group, project creation, token list/revoke, apps list |
 | Admin signing key | `--admin-key <pkcs8-pem-or-path>` | `AOMI_ADMIN_KEY` | token mint |
 | Admin key id | `--admin-kid <kid>` | `AOMI_ADMIN_KID` | token mint |
 
 ```sh
-aomi-build deploy \
+aomi-build project create \
   --platform community \
   --repo owner/repo \
   --backend https://api.aomi.dev \
   --activation-token <platform-or-app-token>
+git add .aomi/config.json && git commit && git push
+aomi-build deploy
 ```
 
 That is enough for the happy path when the repo is committed, the Aomi GitHub
 App is installed, the source is bound or syncable, and the app pins the platform
 SDK version. A developer receiving only the `aomi-build` binary still needs:
 
-- a committed and pushed source repo containing `aomi.toml`
+- a committed and pushed source repo containing `.aomi/config.json` and its referenced manifests
 - the Aomi GitHub App installed on that repo
 - backend URL and a valid platform/app activation token
-- either `--app-source-id <id>` or `--repo owner/repo` so the backend can
-  resolve or sync the source
+- an explicitly created Project for that repository
 
 They do not need a GitHub PAT, platform repo write access, database access, or
 an admin private key.
@@ -159,9 +158,8 @@ Resolution order:
 | Input | Resolution |
 |---|---|
 | backend | `--backend` → `AOMI_BACKEND_URL` → saved config |
-| platform | `--platform` → `aomi.toml` → saved config → `community` |
 | token | `--activation-token` → `AOMI_APP_ACTIVATION_TOKEN` → saved config |
-| source | `--app-source-id` → `AOMI_APP_SOURCE_ID` → `.aomi/deployment.json` → `--repo owner/repo` source sync |
+| project | repository origin → existing backend Project |
 | commit | `--commit` → local `HEAD`; branches are rejected |
 
 ### `deploy preflight`
@@ -170,10 +168,11 @@ Resolution order:
 writes:
 
 ```sh
-aomi-build deploy preflight --platform community --repo owner/repo
+aomi-build deploy preflight --repo owner/repo
 ```
 
-It sends `preflight: true` to `POST /api/platforms/:platform/deploy`. If a
+It resolves the repository's existing Project and sends `preflight: true` to
+`POST /api/projects/:project_id/deploy`. If a
 required input is missing, the CLI stops with the next command to run instead of
 falling into documentation.
 
@@ -184,9 +183,7 @@ falling into documentation.
 
 ```json
 {
-  "app_source_id": 123,
   "source_ref": "<commit-sha>",
-  "aomi_toml_paths": ["apps/foo/aomi.toml"],
   "preflight": false
 }
 ```
@@ -196,6 +193,7 @@ release tags, source commit, and local state:
 
 ```json
 {
+  "project_id": 123,
   "id": "...",
   "status": "pr_created",
   "source": {
@@ -209,7 +207,7 @@ release tags, source commit, and local state:
   "platform": {
     "platform": "community",
     "repository": "aomi-labs/community-apps",
-    "source_branch": "...",
+    "platform_branch": "...",
     "deploy_branch": "...",
     "pr_url": "https://github.com/aomi-labs/community-apps/pull/9",
     "apps": [

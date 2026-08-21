@@ -144,6 +144,17 @@ pub struct DynManifest {
     /// [`BroadcastConfig`]). Absent → the host default (`wallet`-only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub broadcast: Option<BroadcastConfig>,
+    /// Backend-enforced EVM write requirement. Applications can request a
+    /// route, but all provider, sponsorship and fee policy remains server
+    /// controlled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evm_execution: Option<EvmExecutionRequirement>,
+    /// App-scoped skill: structured instruction sections, an optional guard
+    /// table, and host hook bindings, activated by app binding (see
+    /// [`crate::AppSkillManifest`]). Absent → the app has only its plain
+    /// `preamble`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill: Option<crate::AppSkillManifest>,
 }
 
 /// Operator-declared broadcast policy: who submits this app's signed SVM
@@ -176,6 +187,20 @@ pub struct BroadcastConfig {
     /// Every submitter the operator permits for this app. User overrides
     /// and runtime retries resolve within this set.
     pub allowed: Vec<String>,
+}
+
+/// Backend-owned execution requirements an application may request.
+///
+/// This is intentionally not a configuration object. Apps cannot choose the
+/// AA provider, paymaster, gas policy, treasury or fee rate. The host activates
+/// the app only when its server-side policy is complete.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvmExecutionRequirement {
+    /// Every EVM write must be assembled, sponsored and broadcast by Aomi
+    /// through the canonical ERC-4337 route.
+    #[serde(rename = "aomi_sponsored_4337")]
+    AomiSponsored4337,
 }
 
 // ============================================================================
@@ -469,10 +494,23 @@ pub trait DynAomiApp: Clone + Default + Send + Sync + 'static {
         None
     }
 
+    /// Backend-enforced EVM execution requirement. Default: none, preserving
+    /// ordinary EVM behavior for applications that do not opt into AA-only
+    /// execution.
+    fn evm_execution(&self) -> Option<EvmExecutionRequirement> {
+        None
+    }
+
     /// Per-app secret slots this plugin needs. Default: none. Apps that
     /// require external credentials override this (typically via the
     /// `secrets = [...]` arm of `dyn_aomi_app!`).
     fn secrets(&self) -> Option<Vec<crate::SecretSlot>> {
+        None
+    }
+
+    /// App-scoped skill block. Default: none. Typically set via the
+    /// `skill = { ... }` arm of `dyn_aomi_app!`.
+    fn skill(&self) -> Option<crate::AppSkillManifest> {
         None
     }
 
@@ -487,6 +525,8 @@ pub trait DynAomiApp: Clone + Default + Send + Sync + 'static {
             namespaces: self.namespaces(),
             secrets: self.secrets(),
             broadcast: self.broadcast(),
+            evm_execution: self.evm_execution(),
+            skill: self.skill(),
         }
     }
 }

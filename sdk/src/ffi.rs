@@ -340,18 +340,60 @@ macro_rules! declare_dyn {
 ///     broadcast = { default: "venue", allowed: ["venue", "wallet"] });
 /// ```
 ///
+/// **With backend-owned sponsored ERC-4337 writes**:
+/// ```rust,ignore
+/// dyn_aomi_app!(app = SponsoredApp, name = "sponsored", version = "1.0.0",
+///     preamble = "...", tools = [...], namespaces = ["evm-core"],
+///     evm_execution = AomiSponsored4337);
+/// ```
+///
+/// **With an app-scoped skill** (structured instruction sections + guard
+/// table + host hook bindings, see [`AppSkillManifest`](crate::AppSkillManifest)).
+/// Section and guard values are file paths relative to the invoking source
+/// file, embedded via `include_str!` at compile time:
+/// ```rust,ignore
+/// dyn_aomi_app!(app = WorldMarketsApp, name = "world-markets", version = "0.3.0",
+///     preamble = SHORT_ROLE_LINE,
+///     tools = [GetWorldMarket, PreviewWorldTrade, BuildWorldTrade],
+///     namespaces = ["svm-reads", "svm-write-tx"],
+///     skill = {
+///         id: "world-markets/trading",
+///         sections: {
+///             instructions: "skill/instructions.md",
+///             workflows: "skill/workflows.md",
+///             action_rules: "skill/action-rules.md",
+///             safety: "skill/safety.md",
+///         },
+///         guard: "skill/guard.json",
+///         hooks: { build_world_trade: { pre: ["value_at_risk"] } },
+///     });
+/// ```
+///
 #[macro_export]
 macro_rules! dyn_aomi_app {
-    // ── With secrets + namespaces + broadcast ────────────────────────────
+    // One arm, canonical key order, optional blocks each preceded by a comma:
+    //   app, name, version, preamble, tools,
+    //   [secrets], [namespaces], [broadcast], [evm_execution], [skill]
+    // Optional blocks expand their `DynAomiApp` method override only when
+    // present; absent blocks fall back to the trait defaults.
     (
         app = $app_type:ty,
         name = $name:expr,
         version = $version:expr,
         preamble = $preamble:expr,
-        tools = [ $( $tool_type:ty ),* $(,)? ],
-        secrets = [ $( $secret:expr ),* $(,)? ],
-        namespaces = [ $( $ns:expr ),* $(,)? ],
-        broadcast = { default: $bc_default:expr, allowed: [ $( $bc_allowed:expr ),* $(,)? ] } $(,)?
+        tools = [ $( $tool_type:ty ),* $(,)? ]
+        $(, secrets = [ $( $secret:expr ),* $(,)? ] )?
+        $(, namespaces = [ $( $ns:expr ),* $(,)? ] )?
+        $(, broadcast = { default: $bc_default:expr, allowed: [ $( $bc_allowed:expr ),* $(,)? ] } )?
+        $(, evm_execution = $evm_execution:ident )?
+        $(, skill = {
+            id: $skill_id:expr,
+            sections: { $( $section_name:ident : $section_path:expr ),+ $(,)? }
+            $(, guard: $guard_path:expr )?
+            $(, hooks: { $( $hook_tool:ident : { $( $hook_kind:ident : [ $( $hook_name:expr ),* $(,)? ] ),+ $(,)? } ),+ $(,)? } )?
+            $(,)?
+        } )?
+        $(,)?
     ) => {
         impl $crate::DynAomiApp for $app_type {
             fn name(&self) -> &'static str { $name }
@@ -362,20 +404,63 @@ macro_rules! dyn_aomi_app {
                 ::std::vec![ $( <$tool_type as $crate::DynAomiTool>::descriptor(self) ),* ]
             }
 
-            fn namespaces(&self) -> ::std::option::Option<::std::vec::Vec<::std::string::String>> {
-                ::std::option::Option::Some(::std::vec![ $( $ns.to_string() ),* ])
-            }
+            $(
+                fn secrets(&self) -> ::std::option::Option<::std::vec::Vec<$crate::SecretSlot>> {
+                    ::std::option::Option::Some(::std::vec![ $( $crate::SecretSlot::from(&$secret) ),* ])
+                }
+            )?
 
-            fn secrets(&self) -> ::std::option::Option<::std::vec::Vec<$crate::SecretSlot>> {
-                ::std::option::Option::Some(::std::vec![ $( $crate::SecretSlot::from(&$secret) ),* ])
-            }
+            $(
+                fn namespaces(&self) -> ::std::option::Option<::std::vec::Vec<::std::string::String>> {
+                    ::std::option::Option::Some(::std::vec![ $( $ns.to_string() ),* ])
+                }
+            )?
 
-            fn broadcast(&self) -> ::std::option::Option<$crate::BroadcastConfig> {
-                ::std::option::Option::Some($crate::BroadcastConfig {
-                    default: $bc_default.to_string(),
-                    allowed: ::std::vec![ $( $bc_allowed.to_string() ),* ],
-                })
-            }
+            $(
+                fn broadcast(&self) -> ::std::option::Option<$crate::BroadcastConfig> {
+                    ::std::option::Option::Some($crate::BroadcastConfig {
+                        default: $bc_default.to_string(),
+                        allowed: ::std::vec![ $( $bc_allowed.to_string() ),* ],
+                    })
+                }
+            )?
+
+            $(
+                fn evm_execution(&self) -> ::std::option::Option<$crate::EvmExecutionRequirement> {
+                    ::std::option::Option::Some(
+                        $crate::EvmExecutionRequirement::$evm_execution,
+                    )
+                }
+            )?
+
+            $(
+                fn skill(&self) -> ::std::option::Option<$crate::AppSkillManifest> {
+                    // Section/guard paths resolve relative to the invoking
+                    // source file (standard `include_str!` semantics), and the
+                    // content is embedded at compile time — a missing file is
+                    // a compile error, and the release digest covers it.
+                    #[allow(unused_mut, unused_assignments)]
+                    let mut guard_json: ::std::option::Option<&'static str> =
+                        ::std::option::Option::None;
+                    $( guard_json = ::std::option::Option::Some(include_str!($guard_path)); )?
+                    #[allow(unused_mut, unused_assignments)]
+                    let mut hooks: ::std::vec::Vec<$crate::DynToolHookBinding> =
+                        ::std::vec::Vec::new();
+                    $(
+                        hooks = ::std::vec![ $(
+                            $crate::__app_skill_hook_binding!(
+                                $hook_tool $(, $hook_kind : [ $( $hook_name ),* ] )+
+                            )
+                        ),+ ];
+                    )?
+                    ::std::option::Option::Some($crate::AppSkillManifest::from_parts(
+                        $skill_id,
+                        ::std::vec![ $( (stringify!($section_name), include_str!($section_path)) ),+ ],
+                        guard_json,
+                        hooks,
+                    ))
+                }
+            )?
 
             fn start_tool(
                 &self,
@@ -390,193 +475,35 @@ macro_rules! dyn_aomi_app {
 
         $crate::declare_dyn!($app_type);
     };
+}
 
-    // ── With namespaces + broadcast ──────────────────────────────────────
-    (
-        app = $app_type:ty,
-        name = $name:expr,
-        version = $version:expr,
-        preamble = $preamble:expr,
-        tools = [ $( $tool_type:ty ),* $(,)? ],
-        namespaces = [ $( $ns:expr ),* $(,)? ],
-        broadcast = { default: $bc_default:expr, allowed: [ $( $bc_allowed:expr ),* $(,)? ] } $(,)?
-    ) => {
-        impl $crate::DynAomiApp for $app_type {
-            fn name(&self) -> &'static str { $name }
-            fn version(&self) -> &'static str { $version }
-            fn preamble(&self) -> &'static str { $preamble }
-
-            fn tools(&self) -> ::std::vec::Vec<$crate::DynToolMetadata> {
-                ::std::vec![ $( <$tool_type as $crate::DynAomiTool>::descriptor(self) ),* ]
-            }
-
-            fn namespaces(&self) -> ::std::option::Option<::std::vec::Vec<::std::string::String>> {
-                ::std::option::Option::Some(::std::vec![ $( $ns.to_string() ),* ])
-            }
-
-            fn broadcast(&self) -> ::std::option::Option<$crate::BroadcastConfig> {
-                ::std::option::Option::Some($crate::BroadcastConfig {
-                    default: $bc_default.to_string(),
-                    allowed: ::std::vec![ $( $bc_allowed.to_string() ),* ],
-                })
-            }
-
-            fn start_tool(
-                &self,
-                name: &str,
-                args_json: &str,
-                ctx_json: &str,
-                sink: $crate::DynAsyncSink,
-            ) -> $crate::DynToolDispatch {
-                $crate::__dispatch_tool!(self, name, args_json, ctx_json, sink, [ $( $tool_type ),* ])
-            }
+/// Internal helper: builds one [`DynToolHookBinding`](crate::DynToolHookBinding)
+/// from the `hooks: { tool: { pre: [...], post: [...] } }` sugar. Only `pre`
+/// and `post` keys exist — anything else fails to match and is a compile
+/// error at the invocation site.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __app_skill_hook_binding {
+    ($tool:ident, pre : [ $( $pre:expr ),* ], post : [ $( $post:expr ),* ]) => {
+        $crate::DynToolHookBinding {
+            tool: stringify!($tool).to_string(),
+            pre_call: ::std::vec![ $( $pre.to_string() ),* ],
+            post_call: ::std::vec![ $( $post.to_string() ),* ],
         }
-
-        $crate::declare_dyn!($app_type);
     };
-
-    // ── With secrets + namespaces ────────────────────────────────────────
-    (
-        app = $app_type:ty,
-        name = $name:expr,
-        version = $version:expr,
-        preamble = $preamble:expr,
-        tools = [ $( $tool_type:ty ),* $(,)? ],
-        secrets = [ $( $secret:expr ),* $(,)? ],
-        namespaces = [ $( $ns:expr ),* $(,)? ] $(,)?
-    ) => {
-        impl $crate::DynAomiApp for $app_type {
-            fn name(&self) -> &'static str { $name }
-            fn version(&self) -> &'static str { $version }
-            fn preamble(&self) -> &'static str { $preamble }
-
-            fn tools(&self) -> ::std::vec::Vec<$crate::DynToolMetadata> {
-                ::std::vec![ $( <$tool_type as $crate::DynAomiTool>::descriptor(self) ),* ]
-            }
-
-            fn namespaces(&self) -> ::std::option::Option<::std::vec::Vec<::std::string::String>> {
-                ::std::option::Option::Some(::std::vec![ $( $ns.to_string() ),* ])
-            }
-
-            fn secrets(&self) -> ::std::option::Option<::std::vec::Vec<$crate::SecretSlot>> {
-                ::std::option::Option::Some(::std::vec![ $( $crate::SecretSlot::from(&$secret) ),* ])
-            }
-
-            fn start_tool(
-                &self,
-                name: &str,
-                args_json: &str,
-                ctx_json: &str,
-                sink: $crate::DynAsyncSink,
-            ) -> $crate::DynToolDispatch {
-                $crate::__dispatch_tool!(self, name, args_json, ctx_json, sink, [ $( $tool_type ),* ])
-            }
+    ($tool:ident, pre : [ $( $pre:expr ),* ]) => {
+        $crate::DynToolHookBinding {
+            tool: stringify!($tool).to_string(),
+            pre_call: ::std::vec![ $( $pre.to_string() ),* ],
+            post_call: ::std::vec::Vec::new(),
         }
-
-        $crate::declare_dyn!($app_type);
     };
-
-    // ── With secrets (no namespaces) ─────────────────────────────────────
-    (
-        app = $app_type:ty,
-        name = $name:expr,
-        version = $version:expr,
-        preamble = $preamble:expr,
-        tools = [ $( $tool_type:ty ),* $(,)? ],
-        secrets = [ $( $secret:expr ),* $(,)? ] $(,)?
-    ) => {
-        impl $crate::DynAomiApp for $app_type {
-            fn name(&self) -> &'static str { $name }
-            fn version(&self) -> &'static str { $version }
-            fn preamble(&self) -> &'static str { $preamble }
-
-            fn tools(&self) -> ::std::vec::Vec<$crate::DynToolMetadata> {
-                ::std::vec![ $( <$tool_type as $crate::DynAomiTool>::descriptor(self) ),* ]
-            }
-
-            fn secrets(&self) -> ::std::option::Option<::std::vec::Vec<$crate::SecretSlot>> {
-                ::std::option::Option::Some(::std::vec![ $( $crate::SecretSlot::from(&$secret) ),* ])
-            }
-
-            fn start_tool(
-                &self,
-                name: &str,
-                args_json: &str,
-                ctx_json: &str,
-                sink: $crate::DynAsyncSink,
-            ) -> $crate::DynToolDispatch {
-                $crate::__dispatch_tool!(self, name, args_json, ctx_json, sink, [ $( $tool_type ),* ])
-            }
+    ($tool:ident, post : [ $( $post:expr ),* ]) => {
+        $crate::DynToolHookBinding {
+            tool: stringify!($tool).to_string(),
+            pre_call: ::std::vec::Vec::new(),
+            post_call: ::std::vec![ $( $post.to_string() ),* ],
         }
-
-        $crate::declare_dyn!($app_type);
-    };
-
-    // ── With namespaces ──────────────────────────────────────────────────
-    (
-        app = $app_type:ty,
-        name = $name:expr,
-        version = $version:expr,
-        preamble = $preamble:expr,
-        tools = [ $( $tool_type:ty ),* $(,)? ],
-        namespaces = [ $( $ns:expr ),* $(,)? ] $(,)?
-    ) => {
-        impl $crate::DynAomiApp for $app_type {
-            fn name(&self) -> &'static str { $name }
-            fn version(&self) -> &'static str { $version }
-            fn preamble(&self) -> &'static str { $preamble }
-
-            fn tools(&self) -> ::std::vec::Vec<$crate::DynToolMetadata> {
-                ::std::vec![ $( <$tool_type as $crate::DynAomiTool>::descriptor(self) ),* ]
-            }
-
-            fn namespaces(&self) -> ::std::option::Option<::std::vec::Vec<::std::string::String>> {
-                ::std::option::Option::Some(::std::vec![ $( $ns.to_string() ),* ])
-            }
-
-            fn start_tool(
-                &self,
-                name: &str,
-                args_json: &str,
-                ctx_json: &str,
-                sink: $crate::DynAsyncSink,
-            ) -> $crate::DynToolDispatch {
-                $crate::__dispatch_tool!(self, name, args_json, ctx_json, sink, [ $( $tool_type ),* ])
-            }
-        }
-
-        $crate::declare_dyn!($app_type);
-    };
-
-    // ── Without namespaces (backward compatible) ─────────────────────────
-    (
-        app = $app_type:ty,
-        name = $name:expr,
-        version = $version:expr,
-        preamble = $preamble:expr,
-        tools = [ $( $tool_type:ty ),* $(,)? ] $(,)?
-    ) => {
-        impl $crate::DynAomiApp for $app_type {
-            fn name(&self) -> &'static str { $name }
-            fn version(&self) -> &'static str { $version }
-            fn preamble(&self) -> &'static str { $preamble }
-
-            fn tools(&self) -> ::std::vec::Vec<$crate::DynToolMetadata> {
-                ::std::vec![ $( <$tool_type as $crate::DynAomiTool>::descriptor(self) ),* ]
-            }
-
-            fn start_tool(
-                &self,
-                name: &str,
-                args_json: &str,
-                ctx_json: &str,
-                sink: $crate::DynAsyncSink,
-            ) -> $crate::DynToolDispatch {
-                $crate::__dispatch_tool!(self, name, args_json, ctx_json, sink, [ $( $tool_type ),* ])
-            }
-        }
-
-        $crate::declare_dyn!($app_type);
     };
 }
 

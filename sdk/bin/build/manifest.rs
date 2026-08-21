@@ -62,6 +62,8 @@ mod tests {
                 required: true,
             }]),
             broadcast: None,
+            evm_execution: None,
+            skill: None,
         };
         let json: serde_json::Value =
             serde_json::from_str(&serde_json::to_string(&manifest).unwrap()).unwrap();

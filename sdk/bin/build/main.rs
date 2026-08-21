@@ -22,7 +22,7 @@ mod tool;
     about = "Build, deploy, and activate Aomi apps: spec → client → tool → backend"
 )]
 struct Cli {
-    /// No subcommand launches the interactive wizard (connect → deploy → activate).
+    /// No subcommand launches the interactive wizard (login → deploy → activate).
     #[command(subcommand)]
     cmd: Option<Cmd>,
 }
@@ -58,14 +58,16 @@ enum Cmd {
     Activate(cli::ActivateArgs),
     /// Connect: install the Aomi GitHub App and save your activation token.
     Connect(cli::ConnectArgs),
+    /// Log in with GitHub and link this CLI to your Aomi Builder account.
+    Login(cli::LoginArgs),
     /// Mint an activation token. Operator-only and hidden from `--help`: app
     /// developers are given a token, they never mint one. Hiding is not the
     /// authorization boundary — `token mint` needs the admin signing key, and
     /// the backend verifies that signature.
     #[command(hide = true)]
     Token(cli::TokenArgs),
-    /// Resolve a connected source repo to its `app_source_id`.
-    Source(cli::SourceArgs),
+    /// Create a platform-bound Project from an installed GitHub repository.
+    Project(cli::ProjectArgs),
     /// List a platform's apps.
     Apps(cli::AppsArgs),
     /// Check or fix the app repo's aomi-sdk pin against the backend.
@@ -95,12 +97,13 @@ async fn main() -> Result<()> {
         Cmd::Activate(args) => cli::deploy::run_activate_step(args)
             .await
             .map_err(git_error),
-        Cmd::Connect(args) => cli::connect::run(args).await,
-        Cmd::Token(args) => cli::token::run(args).await,
-        Cmd::Source(args) => cli::source::run(args).await,
-        Cmd::Apps(args) => cli::apps::run(args).await,
+        Cmd::Connect(args) => args.run().await.map_err(git_error),
+        Cmd::Login(args) => args.run().await.map_err(git_error),
+        Cmd::Token(args) => args.run().await.map_err(git_error),
+        Cmd::Project(args) => args.run().await.map_err(git_error),
+        Cmd::Apps(args) => args.run().await.map_err(git_error),
         Cmd::Sdk(args) => sdk_guard::run(args).await,
-        Cmd::Request(args) => cli::request::run(args).await,
+        Cmd::Request(args) => args.run().await.map_err(git_error),
     }
 }
 

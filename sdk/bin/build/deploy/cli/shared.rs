@@ -10,7 +10,8 @@ use crate::deploy::config::AomiConfig;
 
 pub(crate) const ACTIVATION_TOKEN_ENV: &str = "AOMI_APP_ACTIVATION_TOKEN";
 pub(crate) const BACKEND_URL_ENV: &str = "AOMI_BACKEND_URL";
-pub(crate) const APP_SOURCE_ID_ENV: &str = "AOMI_APP_SOURCE_ID";
+pub(crate) const BUILD_URL_ENV: &str = "AOMI_BUILD_URL";
+pub(crate) const BUILD_TOKEN_ENV: &str = "AOMI_BUILD_TOKEN";
 pub(crate) const ADMIN_KEY_ENV: &str = "AOMI_ADMIN_KEY";
 pub(crate) const ADMIN_KID_ENV: &str = "AOMI_ADMIN_KID";
 
@@ -43,34 +44,6 @@ pub(crate) fn bin_name() -> String {
         .unwrap_or_else(|| "aomi-build".to_string())
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub(crate) enum CredentialSource {
-    Flag,
-    Env,
-    Config,
-}
-
-impl CredentialSource {
-    pub(crate) fn label(self) -> &'static str {
-        match self {
-            CredentialSource::Flag => "--activation-token",
-            CredentialSource::Env => ACTIVATION_TOKEN_ENV,
-            CredentialSource::Config => "~/.config/aomi/config.toml",
-        }
-    }
-
-    pub(crate) fn stale_hint(self) -> &'static str {
-        match self {
-            CredentialSource::Env => {
-                "AOMI_APP_ACTIVATION_TOKEN overrides the saved connect token; unset it if it is stale."
-            }
-            CredentialSource::Flag | CredentialSource::Config => {
-                "Run `aomi-build connect` with a valid activation token if this token is stale."
-            }
-        }
-    }
-}
-
 /// `--backend` flag → `AOMI_BACKEND_URL` → saved `connect` config.
 pub(crate) fn resolve_backend(flag: &Option<String>) -> Option<String> {
     flag.clone()
@@ -80,25 +53,66 @@ pub(crate) fn resolve_backend(flag: &Option<String>) -> Option<String> {
         .or_else(|| AomiConfig::load().backend_url)
 }
 
+/// `--build-url` flag → `AOMI_BUILD_URL` → known backend environment mapping
+/// → saved login config. An explicitly selected staging/production backend must
+/// not accidentally reuse a saved Build URL from the other environment.
+///
+/// The env var still wins over the inferred URL — pointing at a local Build is a
+/// legitimate thing to do — but silently pairing a staging backend with the
+/// production Builder is not something a user ever means, so a stale exported
+/// `AOMI_BUILD_URL` that contradicts the chosen backend is called out.
+pub(crate) fn resolve_build_url(
+    flag: &Option<String>,
+    backend_url: Option<&str>,
+) -> Option<String> {
+    if let Some(flag) = flag
+        .clone()
+        .map(|value| value.trim().trim_end_matches('/').to_string())
+        .filter(|value| !value.is_empty())
+    {
+        return Some(flag);
+    }
+    if let Some(from_env) = env_value(BUILD_URL_ENV) {
+        let from_env = from_env.trim_end_matches('/').to_string();
+        if let Some(inferred) = backend_url.and_then(infer_build_url)
+            && inferred != from_env
+        {
+            warn_once(&format!(
+                "{BUILD_URL_ENV}={from_env} overrides the Aomi Build URL for the selected \
+                 backend ({inferred}). If that is not deliberate, unset {BUILD_URL_ENV} \
+                 or pass --build-url {inferred}."
+            ));
+        }
+        return Some(from_env);
+    }
+    backend_url
+        .and_then(infer_build_url)
+        .or_else(|| AomiConfig::load().build_url)
+}
+
+/// Emit a warning at most once per process — the resolvers run on every
+/// command step, and a warning repeated four times per deploy is noise.
+fn warn_once(message: &str) {
+    static WARNED: std::sync::Once = std::sync::Once::new();
+    WARNED.call_once(|| eprintln!("  warning: {message}"));
+}
+
+pub(crate) fn infer_build_url(backend_url: &str) -> Option<String> {
+    match backend_url.trim().trim_end_matches('/') {
+        "https://api-staging.aomi.dev" => Some("https://build-staging.aomi.dev".to_string()),
+        "https://api.aomi.dev" => Some("https://build.aomi.dev".to_string()),
+        _ => None,
+    }
+}
+
 /// `--activation-token` flag → `AOMI_APP_ACTIVATION_TOKEN` → saved `connect`
 /// config. Lets a connected user run deploy/activate with no env wiring.
 pub(crate) fn resolve_activation_token(flag: &Option<String>) -> Option<String> {
-    resolve_activation_token_with_source(flag).map(|(token, _)| token)
-}
-
-pub(crate) fn resolve_activation_token_with_source(
-    flag: &Option<String>,
-) -> Option<(String, CredentialSource)> {
     flag.clone()
         .map(|t| t.trim().to_string())
         .filter(|t| !t.is_empty())
-        .map(|token| (token, CredentialSource::Flag))
-        .or_else(|| env_value(ACTIVATION_TOKEN_ENV).map(|token| (token, CredentialSource::Env)))
-        .or_else(|| {
-            AomiConfig::load()
-                .activation_token
-                .map(|token| (token, CredentialSource::Config))
-        })
+        .or_else(|| env_value(ACTIVATION_TOKEN_ENV))
+        .or_else(|| AomiConfig::load().activation_token)
 }
 
 /// `--backend`/env + activation token resolution shared by the activation-token
@@ -206,21 +220,30 @@ pub(crate) fn remote_origin(git_root: &Path) -> Result<String> {
         .to_string())
 }
 
-pub(crate) fn tracked_aomi_tomls(git_root: &Path) -> Result<Vec<String>> {
-    let raw = git_output_at(
-        git_root,
-        ["ls-files", "-z", "--", "*aomi.toml", "aomi.toml"],
-    )
-    .with_context(|| format!("failed to list tracked files in {}", git_root.display()))?;
-    let mut paths: Vec<String> = raw
-        .split('\0')
-        .filter(|entry| !entry.is_empty())
-        .filter(|entry| entry.rsplit('/').next() == Some("aomi.toml"))
-        .map(str::to_string)
-        .collect();
-    paths.sort();
-    paths.dedup();
-    Ok(paths)
+/// Current branch name, or `None` when detached (or git fails).
+pub(crate) fn head_branch(git_root: &Path) -> Option<String> {
+    let name = git_output_at(git_root, ["rev-parse", "--abbrev-ref", "HEAD"]).ok()?;
+    let name = name.trim();
+    (!name.is_empty() && name != "HEAD").then(|| name.to_string())
+}
+
+/// Whether tracked files differ from HEAD. Untracked files are ignored — they
+/// wouldn't ship either, but counting them would flag every repo forever once
+/// the CLI writes its own (usually untracked) `.aomi/deployment.json`.
+/// `None` when git can't say.
+pub(crate) fn worktree_dirty(git_root: &Path) -> Option<bool> {
+    git_output_at(git_root, ["status", "--porcelain", "--untracked-files=no"])
+        .ok()
+        .map(|out| !out.trim().is_empty())
+}
+
+/// Whether `commit` is reachable from any remote-tracking ref — i.e. whether a
+/// deploy that ships this commit can be synced by the backend from GitHub.
+/// `None` when git can't say (no remotes fetched, shallow clone, …).
+pub(crate) fn commit_on_remote(git_root: &Path, commit: &str) -> Option<bool> {
+    git_output_at(git_root, ["branch", "-r", "--contains", commit])
+        .ok()
+        .map(|out| !out.trim().is_empty())
 }
 
 fn normalize_start_dir(path: &Path) -> Result<PathBuf> {

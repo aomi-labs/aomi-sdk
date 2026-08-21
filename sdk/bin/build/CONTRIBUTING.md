@@ -89,14 +89,14 @@ crate-type = ["cdylib"]
 aomi-sdk = "=3.0.2"
 ```
 
-Do **not** put GitHub tokens or a `git` field in `aomi.toml`. Source access is
-bound by `app_source_id`, not by the manifest.
+Do **not** put GitHub tokens or a `git` field in `aomi.toml`. Repository access
+and platform binding belong to the Project.
 
 ## 2. Connect a source repo
 
 Install the Aomi GitHub App on your source repo. `aomi-build deploy` can use
-`--app-source-id`/`AOMI_APP_SOURCE_ID` directly, or `--repo owner/repo` to ask
-the backend to resolve or sync the installed source. The backend mints
+`--project-id`/`AOMI_PROJECT_ID` directly, or `--repo owner/repo` to create the
+platform-bound Project. The backend mints
 short-lived GitHub App tokens server-side to read your source and write the
 platform repo.
 
@@ -124,10 +124,10 @@ pin before continuing.
 
 A developer receiving only the `aomi-build` binary still needs:
 
-- a committed and pushed source repo containing `aomi.toml`
+- a committed and pushed source repo containing `.aomi/config.json` and its referenced `aomi.toml` files
 - the Aomi GitHub App installed on that repo
 - backend URL and a valid platform/app activation token
-- either `--repo owner/repo` or `--app-source-id <id>`
+- either `--repo owner/repo` or `--project-id <id>`
 
 They do not need a GitHub PAT, platform repo write access, database access, or
 an admin private key.
@@ -139,7 +139,7 @@ Resolution order:
 | backend | `--backend` → `AOMI_BACKEND_URL` → saved config |
 | platform | `--platform` → `aomi.toml` → saved config → `community` |
 | token | `--activation-token` → `AOMI_APP_ACTIVATION_TOKEN` → saved config |
-| source | `--app-source-id` → `AOMI_APP_SOURCE_ID` → `.aomi/deployment.json` → `--repo owner/repo` source sync |
+| project | `--project-id` → `AOMI_PROJECT_ID` → `.aomi/deployment.json` → `--repo owner/repo` project creation |
 | commit | `--commit` → local `HEAD`; branches are rejected |
 
 Admin-only token minting follows the same flag/env rule:
@@ -151,9 +151,8 @@ Admin-only token minting follows the same flag/env rule:
 ```json
 POST /api/platforms/community/deploy
 {
-  "app_source_id": 123,
+  "project_id": 123,
   "source_ref": "<commit-sha>",
-  "aomi_toml_paths": ["aomi.toml"],
   "preflight": false
 }
 ```
@@ -261,7 +260,7 @@ one-shot when you want a working agent in your account with zero local setup.
 
 | Error | Cause | Fix |
 |---|---|---|
-| `deploy needs an app source id` | CLI doesn't know which connected source repo to deploy | pass `--repo owner/repo`, pass `--app-source-id <id>`, or set `AOMI_APP_SOURCE_ID` |
+| `deploy needs a project id` | CLI cannot identify the platform-bound Project | pass `--repo owner/repo`, pass `--project-id <id>`, or set `AOMI_PROJECT_ID` |
 | `deploy needs an activation token` | backend deploy needs platform/app authority | pass `--activation-token <token>`, export `AOMI_APP_ACTIVATION_TOKEN`, or `aomi-build request` one |
 | `git tree is dirty` | uncommitted files in your source repo | commit, or ignore `.aomi/`, `target/`, `Cargo.lock` |
 | `source is bound to platform ...` | source/app row is already bound to a different platform | deploy to the bound platform or ask ops to repair the binding |
@@ -279,5 +278,5 @@ one-shot when you want a working agent in your account with zero local setup.
 | `POST /api/platforms/:platform/deploy` | source fetch, staging, manifest generation |
 | `POST /api/platforms/:platform/apps/activate` | artifact resolution + activation |
 | platform app endpoint | app verification (`is_active` / `artifact_ready` / `loaded`) |
-| `--backend` / `--app-source-id` / `--activation-token` | CLI deploy inputs; env fallbacks are `AOMI_BACKEND_URL` / `AOMI_APP_SOURCE_ID` / `AOMI_APP_ACTIVATION_TOKEN` |
+| `--backend` / `--project-id` / `--activation-token` | CLI deploy inputs; env fallbacks are `AOMI_BACKEND_URL` / `AOMI_PROJECT_ID` / `AOMI_APP_ACTIVATION_TOKEN` |
 | `.aomi/deployment.json` | the backend's deploy record, kept locally |

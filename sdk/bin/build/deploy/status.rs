@@ -4,7 +4,7 @@
 
 use super::backend::BackendClient;
 use super::platform::Platform;
-use super::types::LocalDeployment;
+use super::state::LocalDeployment;
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]
@@ -15,6 +15,7 @@ pub struct StatusResult {
     pub deploy_branch: String,
     pub deployed: bool,
     pub activated: bool,
+    pub project_url: Option<String>,
     pub backend: Option<String>,
     pub deployment: DeploymentBackendStatus,
     pub apps: Vec<AppStatus>,
@@ -54,6 +55,8 @@ pub enum DeploymentBackendStatus {
         state: String,
         #[serde(skip_serializing_if = "Option::is_none")]
         message: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        ci_url: Option<String>,
     },
     Unknown {
         detail: String,
@@ -102,6 +105,7 @@ impl StatusResult {
             deploy_branch: state.deployment.platform.deploy_branch.clone(),
             deployed: state.state.deployed,
             activated: state.state.activated,
+            project_url: state.project_url.clone(),
             backend: backend_url,
             deployment,
             apps,
@@ -116,6 +120,9 @@ impl StatusResult {
         let _ = writeln!(out, "  deployment_id : {}", self.deployment_id);
         let _ = writeln!(out, "  pr            : {}", self.pr_url);
         let _ = writeln!(out, "  deploy_branch : {}", self.deploy_branch);
+        if let Some(url) = &self.project_url {
+            let _ = writeln!(out, "  project       : {url}");
+        }
         let _ = writeln!(
             out,
             "  local state   : deployed={} activated={}",
@@ -128,12 +135,19 @@ impl StatusResult {
         );
         match &self.deployment {
             DeploymentBackendStatus::NotChecked => {}
-            DeploymentBackendStatus::Found { state, message } => {
+            DeploymentBackendStatus::Found {
+                state,
+                message,
+                ci_url,
+            } => {
                 let detail = message.as_deref().unwrap_or("");
                 if detail.is_empty() {
                     let _ = writeln!(out, "  deploy state  : {state}");
                 } else {
                     let _ = writeln!(out, "  deploy state  : {state} ({detail})");
+                }
+                if let Some(url) = ci_url {
+                    let _ = writeln!(out, "  build logs    : {url}");
                 }
             }
             DeploymentBackendStatus::Unknown { detail } => {
@@ -177,6 +191,7 @@ async fn fetch_deployment_status(
         Ok(status) => DeploymentBackendStatus::Found {
             state: status.state,
             message: status.message,
+            ci_url: status.ci.and_then(|ci| ci.url),
         },
         Err(err) => DeploymentBackendStatus::Unknown {
             detail: err.to_string(),
@@ -200,5 +215,33 @@ async fn fetch_app(
         Err(err) => BackendAppStatus::Unknown {
             detail: err.to_string(),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn report_prints_build_logs_url() {
+        let report = StatusResult {
+            platform: "community".into(),
+            deployment_id: "dep_1".into(),
+            pr_url: String::new(),
+            deploy_branch: "publish".into(),
+            deployed: true,
+            activated: false,
+            project_url: None,
+            backend: None,
+            deployment: DeploymentBackendStatus::Found {
+                state: "failed".into(),
+                message: Some("release build failed".into()),
+                ci_url: Some("https://github.com/aomi-labs/community-apps/actions/runs/1".into()),
+            },
+            apps: vec![],
+        };
+        assert!(report.render().contains(
+            "build logs    : https://github.com/aomi-labs/community-apps/actions/runs/1"
+        ));
     }
 }

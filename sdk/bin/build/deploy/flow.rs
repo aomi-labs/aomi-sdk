@@ -14,8 +14,9 @@ use reqwest::header::{ACCEPT, USER_AGENT};
 
 pub use super::backend::TokenCheck;
 use super::backend::{self, BackendClient};
+use super::build_client::BuildClient;
 use super::platform::Platform;
-use super::types::{OAuthStart, SyncSourceInput};
+use super::types::{DeploymentStatusResult, OAuthStart};
 
 /// Fetch the aomi-build GitHub App install URL for `platform` (optionally scoped
 /// to a single `repo`). `mode` is `"install"` for a fresh install or
@@ -44,29 +45,14 @@ pub async fn validate_activation_token(
     }
 }
 
-/// Resolve-or-bind an installed source repo, returning its `app_source_id`.
-pub async fn sync_source(
-    backend_url: &str,
-    token: &str,
-    platform: &str,
-    repo: &str,
-) -> Result<i64> {
-    let client = BackendClient::new(backend_url.to_string(), token.to_string())?;
-    let result = client
-        .sync_installed(
-            &Platform::new(platform),
-            &SyncSourceInput {
-                repo: repo.to_string(),
-            },
-        )
-        .await?;
-    Ok(result.source.id)
-}
-
 /// Terminal outcome of waiting on a deployment's release build.
 pub enum DeployReady {
     Ready,
     Failed(String),
+    /// No CI ran for the deployment commit at all. Distinct from `Failed`: the
+    /// release build did not break, it never started — usually a missing or
+    /// unpicked-up workflow on the platform repo, which is a different fix.
+    NoCi(String),
     TimedOut,
 }
 
@@ -75,7 +61,64 @@ pub enum DeployReady {
 /// no longer masks that as `pending`), so we ride out a short window — but a
 /// persistent error is surfaced, not silently waited out to the timeout.
 const MAX_STATUS_FAILURES: u32 = 15;
+const NO_CI_GRACE: Duration = Duration::from_secs(90);
 const GITHUB_STATUS_INTERVAL: Duration = Duration::from_secs(30);
+
+pub async fn poll_build_deployment_ready(
+    client: &BuildClient,
+    platform: &str,
+    deployment_id: &str,
+    timeout: Duration,
+    mut on_state: impl FnMut(&str),
+) -> Result<DeployReady> {
+    let started = Instant::now();
+    let mut last_state: Option<String> = None;
+    let mut failures: u32 = 0;
+    loop {
+        match client.status(platform, deployment_id).await {
+            Ok(status) => {
+                failures = 0;
+                if last_state.as_deref() != Some(status.state.as_str()) {
+                    on_state(&status.state);
+                    last_state = Some(status.state.clone());
+                }
+                match status.state.as_str() {
+                    "ready" => return Ok(DeployReady::Ready),
+                    "failed" => {
+                        return Ok(DeployReady::Failed(status_failure_detail(
+                            &status,
+                            "release build failed",
+                        )));
+                    }
+                    "no_ci" if started.elapsed() >= NO_CI_GRACE => {
+                        return Ok(DeployReady::NoCi(status_failure_detail(
+                            &status,
+                            "no CI ran for this deployment commit",
+                        )));
+                    }
+                    _ => {}
+                }
+            }
+            Err(error) => {
+                failures += 1;
+                if failures >= MAX_STATUS_FAILURES {
+                    return Err(error.context("deployment status polling failed repeatedly"));
+                }
+                // Say so instead of showing a frozen screen for the ~90s this
+                // rides out. Clearing `last_state` makes the next good poll
+                // re-print the real state.
+                on_state(&format!(
+                    "status unavailable, retrying ({failures}/{MAX_STATUS_FAILURES}): {error}"
+                ));
+                last_state = None;
+            }
+        }
+        if started.elapsed() >= timeout {
+            return Ok(DeployReady::TimedOut);
+        }
+        tokio::time::sleep(Duration::from_secs(6)).await;
+    }
+}
 
 /// Poll `deployments/:id/status` until the release build reaches a terminal
 /// state or `timeout` elapses, calling `on_state` whenever the reported state
@@ -84,26 +127,6 @@ const GITHUB_STATUS_INTERVAL: Duration = Duration::from_secs(30);
 /// error is surfaced rather than masked (matching the portal, which stopped
 /// turning status 404s into a fake `pending`). Mirrors the portal gating
 /// activation on `ready`.
-pub async fn poll_deployment_ready(
-    backend_url: &str,
-    token: &str,
-    platform: &str,
-    deployment_id: &str,
-    timeout: Duration,
-    mut on_state: impl FnMut(&str),
-) -> Result<DeployReady> {
-    poll_deployment_ready_with_pr(
-        backend_url,
-        token,
-        platform,
-        deployment_id,
-        None,
-        timeout,
-        &mut on_state,
-    )
-    .await
-}
-
 pub async fn poll_deployment_ready_with_pr(
     backend_url: &str,
     token: &str,
@@ -133,16 +156,16 @@ pub async fn poll_deployment_ready_with_pr(
                 match status.state.as_str() {
                     "ready" => return Ok(DeployReady::Ready),
                     "failed" => {
-                        return Ok(DeployReady::Failed(
-                            status
-                                .message
-                                .unwrap_or_else(|| "release build failed".to_string()),
-                        ));
+                        return Ok(DeployReady::Failed(status_failure_detail(
+                            &status,
+                            "release build failed",
+                        )));
                     }
-                    "no_ci" => {
-                        return Ok(DeployReady::Failed(status.message.unwrap_or_else(|| {
-                            "no CI ran for this deployment commit".to_string()
-                        })));
+                    "no_ci" if started.elapsed() >= NO_CI_GRACE => {
+                        return Ok(DeployReady::NoCi(status_failure_detail(
+                            &status,
+                            "no CI ran for this deployment commit",
+                        )));
                     }
                     _ => {}
                 }
@@ -152,6 +175,10 @@ pub async fn poll_deployment_ready_with_pr(
                 if failures >= MAX_STATUS_FAILURES {
                     return Err(e.context("deployment status polling failed repeatedly"));
                 }
+                on_state(&format!(
+                    "status unavailable, retrying ({failures}/{MAX_STATUS_FAILURES}): {e}"
+                ));
+                last_state = None;
             }
         }
         if let Some(pr) = &github_pr {
@@ -193,6 +220,28 @@ pub async fn poll_deployment_ready_with_pr(
         }
         tokio::time::sleep(Duration::from_secs(6)).await;
     }
+}
+
+fn status_failure_detail(status: &DeploymentStatusResult, fallback: &str) -> String {
+    let mut detail = status
+        .message
+        .as_deref()
+        .map(str::trim)
+        .filter(|message| !message.is_empty())
+        .unwrap_or(fallback)
+        .to_string();
+    if let Some(url) = status
+        .ci
+        .as_ref()
+        .and_then(|ci| ci.url.as_deref())
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        && !detail.contains(url)
+    {
+        detail.push_str("\nBuild logs: ");
+        detail.push_str(url);
+    }
+    detail
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -369,6 +418,21 @@ pub(crate) fn combined_status_state(value: &serde_json::Value) -> Result<GithubC
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failure_detail_surfaces_build_logs() {
+        let status = DeploymentStatusResult {
+            state: "failed".into(),
+            message: None,
+            ci: Some(crate::deploy::types::DeploymentCiStatus {
+                url: Some("https://github.com/aomi-labs/community-apps/actions/runs/1".into()),
+            }),
+        };
+        assert_eq!(
+            status_failure_detail(&status, "release build failed"),
+            "release build failed\nBuild logs: https://github.com/aomi-labs/community-apps/actions/runs/1"
+        );
+    }
 
     #[test]
     fn parses_github_pr_urls() {

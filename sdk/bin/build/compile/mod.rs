@@ -125,7 +125,7 @@ pub fn run(args: CompileArgs) -> Result<()> {
             }
         }
 
-        let _plugin_manifest = match validate::inspect_plugin(&dest) {
+        let plugin_manifest = match validate::inspect_plugin(&dest) {
             Ok(manifest) => manifest,
             Err(validation_errors) => {
                 for err in &validation_errors {
@@ -137,6 +137,12 @@ pub fn run(args: CompileArgs) -> Result<()> {
                 continue;
             }
         };
+
+        // Print the app's resolved permission manifest so guard drift is
+        // visible at release review — this is what the app can do on-chain.
+        if let Some(rendered) = validate::render_permissions(&plugin_manifest) {
+            println!("{rendered}");
+        }
 
         built += 1;
     }

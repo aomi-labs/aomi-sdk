@@ -7,12 +7,15 @@ use anyhow::{Result, anyhow, bail};
 use clap::Args;
 
 use super::shared::{
-    bin_name, clean_list, git_context, missing_activation_token, missing_backend,
-    resolve_activation_token, resolve_backend,
+    ACTIVATION_TOKEN_ENV, BACKEND_URL_ENV, bin_name, clean_list, env_value, git_context,
+    resolve_backend,
 };
 use crate::deploy::backend::BackendClient;
+use crate::deploy::build_client::BuildClient;
 use crate::deploy::platform::Platform;
-use crate::deploy::types::{ActivateInput, LocalDeployment, ReleaseTags};
+use crate::deploy::session::Session;
+use crate::deploy::state::LocalDeployment;
+use crate::deploy::types::{ActivateInput, BuildActivateInput, ReleaseTags};
 
 #[derive(Debug, Args, Clone, Default)]
 pub struct ActivateArgs {
@@ -33,6 +36,10 @@ pub struct ActivateArgs {
     /// Backend base URL (default: `AOMI_BACKEND_URL`).
     #[arg(long, value_name = "URL")]
     pub backend: Option<String>,
+
+    /// Aomi Build URL for Builder-authenticated activation.
+    #[arg(long = "build-url", value_name = "URL")]
+    pub build_url: Option<String>,
 
     /// Activation token (default: `AOMI_APP_ACTIVATION_TOKEN`).
     #[arg(long, value_name = "TOKEN")]
@@ -101,17 +108,45 @@ impl ActivateArgs {
 
         let request = self.activation_request(state)?;
 
-        let backend_url =
-            resolve_backend(&self.backend).ok_or_else(|| missing_backend("activate"))?;
-        crate::sdk_guard::ensure_project_sdk(git_root, Some(&backend_url), self.fix_sdk).await?;
-        let token = resolve_activation_token(&self.activation_token)
-            .ok_or_else(|| missing_activation_token("activate"))?;
-        let client = BackendClient::new(backend_url, token)?;
-
-        // One call activates every requested app; the response carries per-app
-        // results with a partial-failure shape.
-        let mut response = client.activate(&platform, &request).await?;
-        verify_activation(&client, &platform, &mut response).await?;
+        let backend_url = resolve_backend(&self.backend);
+        crate::sdk_guard::ensure_project_sdk(git_root, backend_url.as_deref(), self.fix_sdk)
+            .await?;
+        let explicit_activation_token = self
+            .activation_token
+            .clone()
+            .or_else(|| env_value(ACTIVATION_TOKEN_ENV));
+        let response = if let Some(token) = explicit_activation_token {
+            // Explicit headless/admin compatibility path. Saved activation
+            // tokens are deliberately not used for interactive human deploys.
+            let backend_url = backend_url.ok_or_else(|| {
+                anyhow!("activate needs a backend URL — set --backend or {BACKEND_URL_ENV}")
+            })?;
+            let client = BackendClient::new(backend_url, token)?;
+            let mut response = client.activate(&platform, &request).await?;
+            verify_activation(&client, &platform, &mut response).await?;
+            response
+        } else {
+            let session = Session::open(&self.backend, &self.build_url).await?;
+            let project_id = state.project_id;
+            if project_id <= 0 {
+                return Err(anyhow!(
+                    "deployment has no valid project_id; deploy again while logged in"
+                ));
+            }
+            activate_until_loaded(
+                &session.client,
+                &BuildActivateInput {
+                    platform: platform.to_string(),
+                    project_id,
+                    release_tags: request.target.value.clone(),
+                    apps: request.apps.clone(),
+                    // Was silently dropped here, so `--target-tag` was accepted
+                    // and ignored on every Builder (i.e. every human) activation.
+                    target_tags: request.target_tags.clone(),
+                },
+            )
+            .await?
+        };
         state.apply_target_activation(&response);
         Ok(response)
     }
@@ -192,6 +227,50 @@ impl ActivateArgs {
             apps: app_names,
             target_tags: clean_list(&self.target_tags),
         })
+    }
+}
+
+/// How long to let the backend finish loading a freshly activated artifact.
+/// Mirrors [`verify_activation`]'s budget on the activation-token path.
+const ACTIVATION_SETTLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
+/// Activate through the Builder BFF and wait for the result to actually settle.
+///
+/// The `is_active` / `artifact_ready` / `loaded` flags in an activation response
+/// are a snapshot taken as activation is requested, and the backend loads the
+/// artifact asynchronously — which is exactly why the activation-token path polls
+/// `get_app` for five minutes before believing them. The Builder path had no such
+/// wait, so it reported `N app(s) failed to activate` on deploys that had in fact
+/// succeeded, and re-running `activate` "fixed" it.
+///
+/// There is no Builder-side read endpoint for per-app state, so this re-issues the
+/// activation instead. Release-tag activation is declarative — "make these tags the
+/// active ones" — so repeating it is what the portal does when a user clicks
+/// Activate twice, not a second distinct mutation.
+async fn activate_until_loaded(
+    client: &BuildClient,
+    input: &BuildActivateInput,
+) -> Result<crate::deploy::types::ActivateResult> {
+    let started = Instant::now();
+    let mut announced = false;
+    loop {
+        let response = client.activate(input).await?;
+        let apps = &response.activation.apps;
+        // A hard per-app error is terminal; retrying only delays the report.
+        let settled = apps.iter().any(|app| app.error.is_some())
+            || apps
+                .iter()
+                .all(|app| app.is_active && app.artifact_ready && app.loaded);
+        // On timeout, return the last response as-is so `print_activation`
+        // names exactly which flags are still false.
+        if settled || started.elapsed() >= ACTIVATION_SETTLE_TIMEOUT {
+            return Ok(response);
+        }
+        if !announced {
+            println!("  waiting for the backend to load the activated release…");
+            announced = true;
+        }
+        tokio::time::sleep(Duration::from_secs(6)).await;
     }
 }
 
