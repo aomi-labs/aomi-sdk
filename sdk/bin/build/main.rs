@@ -58,7 +58,11 @@ enum Cmd {
     Activate(cli::ActivateArgs),
     /// Connect: install the Aomi GitHub App and save your activation token.
     Connect(cli::ConnectArgs),
-    /// Mint, list, or revoke platform/app activation tokens.
+    /// Mint an activation token. Operator-only and hidden from `--help`: app
+    /// developers are given a token, they never mint one. Hiding is not the
+    /// authorization boundary — `token mint` needs the admin signing key, and
+    /// the backend verifies that signature.
+    #[command(hide = true)]
     Token(cli::TokenArgs),
     /// Resolve a connected source repo to its `app_source_id`.
     Source(cli::SourceArgs),

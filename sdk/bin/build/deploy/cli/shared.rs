@@ -142,10 +142,14 @@ pub(crate) fn missing_admin_key(command: &str) -> anyhow::Error {
     missing_flag_or_env(
         command,
         "the privileged admin signing key",
-        "--admin-key <pkcs8-pem-or-path>",
+        "--admin-key-file <path-to-pkcs8-pem>",
         ADMIN_KEY_ENV,
         "<pkcs8-pem-or-path>",
-        Some("This is an out-of-band admin/service signing key, not an activation token."),
+        Some(
+            "This is an out-of-band admin/service signing key, not an activation token.\n\
+             It is never accepted as a command-line argument — process arguments are \n\
+             visible to other users and recorded in shell history.",
+        ),
     )
 }
 
