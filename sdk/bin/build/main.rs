@@ -60,7 +60,11 @@ enum Cmd {
     Connect(cli::ConnectArgs),
     /// Log in with GitHub and link this CLI to your Aomi Builder account.
     Login(cli::LoginArgs),
-    /// Mint, list, or revoke platform/app activation tokens.
+    /// Mint an activation token. Operator-only and hidden from `--help`: app
+    /// developers are given a token, they never mint one. Hiding is not the
+    /// authorization boundary — `token mint` needs the admin signing key, and
+    /// the backend verifies that signature.
+    #[command(hide = true)]
     Token(cli::TokenArgs),
     /// Create a platform-bound Project from an installed GitHub repository.
     Project(cli::ProjectArgs),
