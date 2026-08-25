@@ -138,7 +138,7 @@ fn support_commands_parse_prerequisite_flags() {
         "community",
         "--backend",
         "https://api.aomi.dev",
-        "--admin-key",
+        "--admin-key-file",
         "admin.pem",
         "--admin-kid",
         "aomi-admin-prod-1",
@@ -148,7 +148,10 @@ fn support_commands_parse_prerequisite_flags() {
         Some(crate::Cmd::Token(args)) => match args.cmd {
             crate::deploy::cli::token::TokenCmd::Mint(mint) => {
                 assert_eq!(mint.backend.as_deref(), Some("https://api.aomi.dev"));
-                assert_eq!(mint.admin_key.as_deref(), Some("admin.pem"));
+                assert_eq!(
+                    mint.admin_key_file.as_deref(),
+                    Some(std::path::Path::new("admin.pem"))
+                );
                 assert_eq!(mint.admin_kid.as_deref(), Some("aomi-admin-prod-1"));
             }
             _ => panic!("expected token mint"),
@@ -168,7 +171,7 @@ fn missing_prerequisite_errors_print_flag_first_hints() {
     assert!(token.contains("export AOMI_APP_ACTIVATION_TOKEN=<token>"));
 
     let admin_key = crate::deploy::cli::shared::missing_admin_key("token mint").to_string();
-    assert!(admin_key.contains("token mint --admin-key <pkcs8-pem-or-path>"));
+    assert!(admin_key.contains("token mint --admin-key-file <path-to-pkcs8-pem>"));
     assert!(admin_key.contains("export AOMI_ADMIN_KEY=<pkcs8-pem-or-path>"));
 }
 

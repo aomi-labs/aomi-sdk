@@ -62,6 +62,7 @@ mod tests {
                 required: true,
             }]),
             broadcast: None,
+            evm_execution: None,
             skill: None,
         };
         let json: serde_json::Value =

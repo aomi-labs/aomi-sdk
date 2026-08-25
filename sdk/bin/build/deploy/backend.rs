@@ -138,23 +138,10 @@ impl BackendClient {
         .await
     }
 
-    /// List a platform's activation tokens: `GET /api/platforms/:platform/tokens`.
-    pub async fn list_tokens(&self, platform: &Platform) -> Result<serde_json::Value> {
-        self.get(
-            &format!("/api/platforms/{}/tokens", platform.as_str()),
-            "token list",
-        )
-        .await
-    }
-
-    /// Revoke a token: `DELETE /api/platforms/:platform/tokens/:id`.
-    pub async fn revoke_token(&self, platform: &Platform, id: i64) -> Result<serde_json::Value> {
-        self.delete(
-            &format!("/api/platforms/{}/tokens/{id}", platform.as_str()),
-            "token revoke",
-        )
-        .await
-    }
+    // Token list/revoke have no client here on purpose. The backend still
+    // serves `GET`/`DELETE /api/platforms/:name/tokens[/:id]` as the incident
+    // and break-glass path; routine operation is mint-and-deliver, so the CLI
+    // does not carry a second way to reach them.
 
     /// Connect an installed GitHub repository as a platform-bound Project.
     pub async fn create_project(
@@ -278,11 +265,7 @@ impl BackendClient {
         decode_response(response, operation, &endpoint).await
     }
 
-    async fn delete<Resp: DeserializeOwned>(&self, path: &str, operation: &str) -> Result<Resp> {
-        self.send(reqwest::Method::DELETE, path, operation).await
-    }
-
-    /// Bodyless request (GET/DELETE) sharing `post`'s status + JSON handling.
+    /// Bodyless request (GET) sharing `post`'s status + JSON handling.
     async fn send<Resp: DeserializeOwned>(
         &self,
         method: reqwest::Method,

@@ -340,6 +340,13 @@ macro_rules! declare_dyn {
 ///     broadcast = { default: "venue", allowed: ["venue", "wallet"] });
 /// ```
 ///
+/// **With backend-owned sponsored ERC-4337 writes**:
+/// ```rust,ignore
+/// dyn_aomi_app!(app = SponsoredApp, name = "sponsored", version = "1.0.0",
+///     preamble = "...", tools = [...], namespaces = ["evm-core"],
+///     evm_execution = AomiSponsored4337);
+/// ```
+///
 /// **With an app-scoped skill** (structured instruction sections + guard
 /// table + host hook bindings, see [`AppSkillManifest`](crate::AppSkillManifest)).
 /// Section and guard values are file paths relative to the invoking source
@@ -366,7 +373,7 @@ macro_rules! declare_dyn {
 macro_rules! dyn_aomi_app {
     // One arm, canonical key order, optional blocks each preceded by a comma:
     //   app, name, version, preamble, tools,
-    //   [secrets], [namespaces], [broadcast], [skill]
+    //   [secrets], [namespaces], [broadcast], [evm_execution], [skill]
     // Optional blocks expand their `DynAomiApp` method override only when
     // present; absent blocks fall back to the trait defaults.
     (
@@ -378,6 +385,7 @@ macro_rules! dyn_aomi_app {
         $(, secrets = [ $( $secret:expr ),* $(,)? ] )?
         $(, namespaces = [ $( $ns:expr ),* $(,)? ] )?
         $(, broadcast = { default: $bc_default:expr, allowed: [ $( $bc_allowed:expr ),* $(,)? ] } )?
+        $(, evm_execution = $evm_execution:ident )?
         $(, skill = {
             id: $skill_id:expr,
             sections: { $( $section_name:ident : $section_path:expr ),+ $(,)? }
@@ -414,6 +422,14 @@ macro_rules! dyn_aomi_app {
                         default: $bc_default.to_string(),
                         allowed: ::std::vec![ $( $bc_allowed.to_string() ),* ],
                     })
+                }
+            )?
+
+            $(
+                fn evm_execution(&self) -> ::std::option::Option<$crate::EvmExecutionRequirement> {
+                    ::std::option::Option::Some(
+                        $crate::EvmExecutionRequirement::$evm_execution,
+                    )
                 }
             )?
 
