@@ -9,6 +9,8 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 const ARC_TESTNET_CHAIN_ID: u64 = 5_042_002;
+const PERMIT2_ADDRESS: &str = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
+const STABLEFX_ESCROW_ADDRESS: &str = "0x867650F5eAe8df91445971f14d89fd84F0C9a9f8";
 
 #[derive(Clone, Default)]
 pub(crate) struct StableFxApp;
@@ -53,15 +55,10 @@ fn client(ctx: &DynToolCallCtx) -> Result<StableFxClient, String> {
     StableFxClient::new(&api_key)
 }
 
-fn connected_wallet(
-    override_address: Option<String>,
-    ctx: &DynToolCallCtx,
-) -> Result<String, String> {
-    let wallet = override_address
-        .or_else(|| ctx.attribute_string(&["domain", "evm", "address"]))
-        .ok_or_else(|| {
-            "[stablefx] no EVM wallet is connected; connect one or pass `wallet`".to_string()
-        })?;
+fn connected_wallet(ctx: &DynToolCallCtx) -> Result<String, String> {
+    let wallet = ctx
+        .attribute_string(&["domain", "evm", "address"])
+        .ok_or_else(|| "[stablefx] no EVM wallet is connected".to_string())?;
     validate_address(&wallet)?;
     Ok(wallet)
 }
@@ -197,6 +194,28 @@ fn validate_arc_typed_data(typed_data: &Value) -> Result<(), String> {
             "[stablefx] refusing unexpected EIP-712 domain {domain_name}; expected Permit2"
         ));
     }
+    for (pointer, label, expected) in [
+        (
+            "/domain/verifyingContract",
+            "EIP-712 verifying contract",
+            PERMIT2_ADDRESS,
+        ),
+        (
+            "/message/spender",
+            "Permit2 spender",
+            STABLEFX_ESCROW_ADDRESS,
+        ),
+    ] {
+        let address = typed_data
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("[stablefx] typedData is missing {label}"))?;
+        if !address.eq_ignore_ascii_case(expected) {
+            return Err(format!(
+                "[stablefx] refusing unexpected {label} {address}; expected {expected}"
+            ));
+        }
+    }
     let primary_type = typed_data
         .get("primaryType")
         .and_then(Value::as_str)
@@ -295,9 +314,6 @@ pub(crate) struct AcceptQuoteArgs {
     /// Recipient of the destination currency. Defaults to the connected wallet.
     #[serde(default)]
     pub recipient: Option<String>,
-    /// Wallet that signs and funds the trade. Defaults to the connected EVM wallet.
-    #[serde(default)]
-    pub wallet: Option<String>,
 }
 
 impl DynAomiTool for AcceptQuote {
@@ -312,7 +328,7 @@ impl DynAomiTool for AcceptQuote {
         ctx: DynToolCallCtx,
     ) -> Result<ToolReturn, String> {
         require_arc(&ctx)?;
-        let wallet = connected_wallet(args.wallet, &ctx)?;
+        let wallet = connected_wallet(&ctx)?;
         let recipient = args.recipient.unwrap_or_else(|| wallet.clone());
         let request = quote_request(
             args.from_currency,
@@ -385,7 +401,13 @@ impl DynAomiTool for CreateTrade {
 
     fn run(_app: &StableFxApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
         require_arc(&ctx)?;
+        let connected_wallet = connected_wallet(&ctx)?;
         validate_address(&args.wallet)?;
+        if !args.wallet.eq_ignore_ascii_case(&connected_wallet) {
+            return Err(
+                "[stablefx] routed trade wallet does not match the connected wallet".to_string(),
+            );
+        }
         validate_uuid("idempotency_key", &args.idempotency_key)?;
         validate_uuid("quote_id", &args.quote_id)?;
         let signature = validate_signature(args.signature)?;
@@ -594,22 +616,37 @@ mod tests {
     #[test]
     fn rejects_non_arc_typed_data() {
         let wrong_chain = json!({
-            "domain": { "name": "Permit2", "chainId": 1 },
+            "domain": {
+                "name": "Permit2",
+                "chainId": 1,
+                "verifyingContract": PERMIT2_ADDRESS,
+            },
             "types": {},
             "primaryType": "PermitWitnessTransferFrom",
-            "message": {},
+            "message": { "spender": STABLEFX_ESCROW_ADDRESS },
         });
         assert!(validate_arc_typed_data(&wrong_chain).is_err());
     }
 
     #[test]
-    fn accepts_arc_chain_id_as_string() {
-        let arc = json!({
-            "domain": { "name": "Permit2", "chainId": "5042002" },
+    fn validates_arc_stablefx_signing_scope() {
+        let mut arc = json!({
+            "domain": {
+                "name": "Permit2",
+                "chainId": "5042002",
+                "verifyingContract": PERMIT2_ADDRESS.to_ascii_lowercase(),
+            },
             "types": {},
             "primaryType": "PermitWitnessTransferFrom",
-            "message": {},
+            "message": { "spender": STABLEFX_ESCROW_ADDRESS },
         });
         assert!(validate_arc_typed_data(&arc).is_ok());
+
+        arc["domain"]["verifyingContract"] = json!("0x0000000000000000000000000000000000000001");
+        assert!(validate_arc_typed_data(&arc).is_err());
+
+        arc["domain"]["verifyingContract"] = json!(PERMIT2_ADDRESS);
+        arc["message"]["spender"] = json!("0x0000000000000000000000000000000000000001");
+        assert!(validate_arc_typed_data(&arc).is_err());
     }
 }
