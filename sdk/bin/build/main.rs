@@ -7,7 +7,9 @@ mod client;
 mod compile;
 mod deploy;
 mod init;
+mod manifest;
 mod new_app;
+mod sdk_guard;
 mod spec_load;
 mod specs;
 mod test_schema;
@@ -46,22 +48,30 @@ enum Cmd {
     /// Build every app's cdylib, copy validated plugins into `plugins/`,
     /// codesign on macOS.
     Compile(compile::CompileArgs),
-    /// Deploy tracked `aomi.toml` apps through your Builder account.
-    Deploy(cli::DeployArgs),
-    /// Show local, Build CI, and backend deployment status.
+    /// Print a built plugin's manifest (including declared secret slots) as JSON.
+    Manifest(manifest::ManifestArgs),
+    /// Deploy lifecycle: preflight, run, activate, and status.
+    Deploy(Box<cli::DeployArgs>),
+    /// Alias for `deploy status` for one release cycle.
     Status(cli::StatusArgs),
-    /// Activate platform releases by release tag.
+    /// Alias for `deploy activate` for one release cycle.
     Activate(cli::ActivateArgs),
-    /// Admin/legacy setup: install the GitHub App and save an activation token.
+    /// Connect: install the Aomi GitHub App and save your activation token.
     Connect(cli::ConnectArgs),
     /// Log in with GitHub and link this CLI to your Aomi Builder account.
     Login(cli::LoginArgs),
-    /// Mint, list, or revoke platform/app activation tokens.
+    /// Mint an activation token. Operator-only and hidden from `--help`: app
+    /// developers are given a token, they never mint one. Hiding is not the
+    /// authorization boundary — `token mint` needs the admin signing key, and
+    /// the backend verifies that signature.
+    #[command(hide = true)]
     Token(cli::TokenArgs),
-    /// Resolve a connected source repo to its `app_source_id`.
-    Source(cli::SourceArgs),
+    /// Create a platform-bound Project from an installed GitHub repository.
+    Project(cli::ProjectArgs),
     /// List a platform's apps.
     Apps(cli::AppsArgs),
+    /// Check or fix the app repo's aomi-sdk pin against the backend.
+    Sdk(sdk_guard::SdkArgs),
     /// Ask platform ops for legacy onboarding details.
     Request(cli::RequestArgs),
 }
@@ -81,15 +91,19 @@ async fn main() -> Result<()> {
         Cmd::TightenSpec(args) => tighten::run(args),
         Cmd::Init(args) => init::run(args),
         Cmd::Compile(args) => compile::run(args),
-        Cmd::Deploy(args) => cli::deploy::run(args).await,
-        Cmd::Status(args) => cli::status::run(args).await,
-        Cmd::Activate(args) => cli::activate::run(args).await,
-        Cmd::Connect(args) => cli::connect::run(args).await,
-        Cmd::Login(args) => cli::login::run(args).await,
-        Cmd::Token(args) => cli::token::run(args).await,
-        Cmd::Source(args) => cli::source::run(args).await,
-        Cmd::Apps(args) => cli::apps::run(args).await,
-        Cmd::Request(args) => cli::request::run(args).await,
+        Cmd::Manifest(args) => manifest::run(args),
+        Cmd::Deploy(args) => args.run().await.map_err(git_error),
+        Cmd::Status(args) => args.run().await.map_err(git_error),
+        Cmd::Activate(args) => cli::deploy::run_activate_step(args)
+            .await
+            .map_err(git_error),
+        Cmd::Connect(args) => args.run().await.map_err(git_error),
+        Cmd::Login(args) => args.run().await.map_err(git_error),
+        Cmd::Token(args) => args.run().await.map_err(git_error),
+        Cmd::Project(args) => args.run().await.map_err(git_error),
+        Cmd::Apps(args) => args.run().await.map_err(git_error),
+        Cmd::Sdk(args) => sdk_guard::run(args).await,
+        Cmd::Request(args) => args.run().await.map_err(git_error),
     }
 }
 

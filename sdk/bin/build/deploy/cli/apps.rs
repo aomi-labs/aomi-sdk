@@ -7,10 +7,6 @@ use super::shared::resolve_activation;
 use crate::deploy::backend::BackendClient;
 use crate::deploy::platform::Platform;
 
-pub async fn run(args: AppsArgs) -> eyre::Result<()> {
-    args.run().await.map_err(crate::git_error)
-}
-
 #[derive(Debug, Args, Clone)]
 pub struct AppsArgs {
     #[command(subcommand)]
@@ -43,7 +39,7 @@ pub struct AppsListArgs {
 
 impl AppsListArgs {
     pub async fn run(self) -> Result<()> {
-        let (url, token) = resolve_activation(&self.backend, &self.activation_token)?;
+        let (url, token) = resolve_activation("apps list", &self.backend, &self.activation_token)?;
         let value = BackendClient::new(url, token)?
             .list_apps(&self.platform)
             .await?;

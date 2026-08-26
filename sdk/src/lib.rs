@@ -143,6 +143,7 @@ mod ffi;
 mod handle;
 pub mod route;
 mod secrets;
+mod skill;
 pub mod testing;
 mod types;
 
@@ -150,6 +151,7 @@ pub use abi::*;
 pub use handle::*;
 pub use route::*;
 pub use secrets::*;
+pub use skill::*;
 pub use types::*;
 
 // Re-export serde_json and schemars for convenience in plugin code.

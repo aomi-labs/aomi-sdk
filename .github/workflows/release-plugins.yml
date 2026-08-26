@@ -28,6 +28,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Require host-compatible SDK
+        run: |
+          git fetch --no-tags origin \
+            +refs/heads/main:refs/remotes/origin/main
+          python3 scripts/check_release_sdk.py \
+            --release "${GITHUB_SHA}" \
+            --host origin/main
+
       - name: Resolve app release tag
         id: resolve
         run: |
