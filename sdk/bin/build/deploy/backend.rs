@@ -6,8 +6,8 @@ use serde::de::DeserializeOwned;
 
 use super::platform::Platform;
 use super::types::{
-    ActivateInput, ActivateResult, MintTokenInput, MintTokenResult, OAuthStart, SourceResult,
-    SyncSourceInput,
+    ActivateInput, ActivateResult, CreateProjectInput, DeploymentStatusResult, MintTokenInput,
+    MintTokenResult, OAuthStart, PlatformAppResult, ProjectResult,
 };
 
 /// GET the aomi-build GitHub App install URL for `platform`. Query params mirror
@@ -138,39 +138,21 @@ impl BackendClient {
         .await
     }
 
-    /// List a platform's activation tokens: `GET /api/platforms/:platform/tokens`.
-    pub async fn list_tokens(&self, platform: &Platform) -> Result<serde_json::Value> {
-        self.get(
-            &format!("/api/platforms/{}/tokens", platform.as_str()),
-            "token list",
-        )
-        .await
-    }
+    // Token list/revoke have no client here on purpose. The backend still
+    // serves `GET`/`DELETE /api/platforms/:name/tokens[/:id]` as the incident
+    // and break-glass path; routine operation is mint-and-deliver, so the CLI
+    // does not carry a second way to reach them.
 
-    /// Revoke a token: `DELETE /api/platforms/:platform/tokens/:id`.
-    pub async fn revoke_token(&self, platform: &Platform, id: i64) -> Result<serde_json::Value> {
-        self.delete(
-            &format!("/api/platforms/{}/tokens/{id}", platform.as_str()),
-            "token revoke",
-        )
-        .await
-    }
-
-    /// Resolve-or-bind an installed source repo:
-    /// `POST /api/platforms/:platform/sources/sync-installed`. Returns the
-    /// `app_source` row whose `id` deploy needs.
-    pub async fn sync_installed(
+    /// Connect an installed GitHub repository as a platform-bound Project.
+    pub async fn create_project(
         &self,
         platform: &Platform,
-        request: &SyncSourceInput,
-    ) -> Result<SourceResult> {
+        request: &CreateProjectInput,
+    ) -> Result<ProjectResult> {
         self.post(
-            &format!(
-                "/api/platforms/{}/sources/sync-installed",
-                platform.as_str()
-            ),
+            &format!("/api/platforms/{}/projects", platform.as_str()),
             request,
-            "source sync",
+            "project creation",
         )
         .await
     }
@@ -180,6 +162,39 @@ impl BackendClient {
         self.get(
             &format!("/api/platforms/{}/apps", platform.as_str()),
             "apps list",
+        )
+        .await
+    }
+
+    pub async fn get_app(
+        &self,
+        platform: &Platform,
+        app: &str,
+        release_tag: &str,
+    ) -> Result<PlatformAppResult> {
+        self.get_query(
+            &format!("/api/platforms/{}/apps/{}", platform.as_str(), app),
+            &[("release_tag", release_tag)],
+            "app status",
+        )
+        .await
+    }
+
+    /// Build status of a deployment:
+    /// `GET /api/platforms/:platform/deployments/:id/status`. Matches the
+    /// portal's poll source — used to gate activation on the release build.
+    pub async fn deployment_status(
+        &self,
+        platform: &Platform,
+        deployment_id: &str,
+    ) -> Result<DeploymentStatusResult> {
+        self.get(
+            &format!(
+                "/api/platforms/{}/deployments/{}/status",
+                platform.as_str(),
+                deployment_id
+            ),
+            "deployment status",
         )
         .await
     }
@@ -225,31 +240,32 @@ impl BackendClient {
             .send()
             .await
             .with_context(|| format!("failed to call {operation} endpoint {endpoint}"))?;
-
-        let status = response.status();
-        let text = response
-            .text()
-            .await
-            .with_context(|| format!("failed to read {operation} response body"))?;
-        if !matches!(status.as_u16(), 200 | 201) {
-            bail!(
-                "{operation} endpoint {endpoint} returned {status}: {}",
-                text.trim()
-            );
-        }
-        serde_json::from_str(&text)
-            .with_context(|| format!("{operation} endpoint {endpoint} returned invalid JSON"))
+        decode_response(response, operation, &endpoint).await
     }
 
     async fn get<Resp: DeserializeOwned>(&self, path: &str, operation: &str) -> Result<Resp> {
         self.send(reqwest::Method::GET, path, operation).await
     }
 
-    async fn delete<Resp: DeserializeOwned>(&self, path: &str, operation: &str) -> Result<Resp> {
-        self.send(reqwest::Method::DELETE, path, operation).await
+    async fn get_query<Resp: DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+        operation: &str,
+    ) -> Result<Resp> {
+        let endpoint = self.endpoint(path);
+        let response = self
+            .http
+            .get(&endpoint)
+            .bearer_auth(&self.bearer)
+            .query(query)
+            .send()
+            .await
+            .with_context(|| format!("failed to call {operation} endpoint {endpoint}"))?;
+        decode_response(response, operation, &endpoint).await
     }
 
-    /// Bodyless request (GET/DELETE) sharing `post`'s status + JSON handling.
+    /// Bodyless request (GET) sharing `post`'s status + JSON handling.
     async fn send<Resp: DeserializeOwned>(
         &self,
         method: reqwest::Method,
@@ -264,19 +280,26 @@ impl BackendClient {
             .send()
             .await
             .with_context(|| format!("failed to call {operation} endpoint {endpoint}"))?;
-
-        let status = response.status();
-        let text = response
-            .text()
-            .await
-            .with_context(|| format!("failed to read {operation} response body"))?;
-        if !matches!(status.as_u16(), 200 | 201) {
-            bail!(
-                "{operation} endpoint {endpoint} returned {status}: {}",
-                text.trim()
-            );
-        }
-        serde_json::from_str(&text)
-            .with_context(|| format!("{operation} endpoint {endpoint} returned invalid JSON"))
+        decode_response(response, operation, &endpoint).await
     }
+}
+
+async fn decode_response<Resp: DeserializeOwned>(
+    response: reqwest::Response,
+    operation: &str,
+    endpoint: &str,
+) -> Result<Resp> {
+    let status = response.status();
+    let text = response
+        .text()
+        .await
+        .with_context(|| format!("failed to read {operation} response body"))?;
+    if !status.is_success() {
+        bail!(
+            "{operation} endpoint {endpoint} returned {status}: {}",
+            text.trim()
+        );
+    }
+    serde_json::from_str(&text)
+        .with_context(|| format!("{operation} endpoint {endpoint} returned invalid JSON"))
 }

@@ -10,10 +10,6 @@ use crate::deploy::app::AomiAppFiles;
 use crate::deploy::discord;
 use crate::deploy::platform::{Platform, normalize_github_repo};
 
-pub async fn run(args: RequestArgs) -> eyre::Result<()> {
-    args.run().await.map_err(crate::git_error)
-}
-
 #[derive(Debug, Args, Clone)]
 pub struct RequestArgs {
     /// Email where platform ops will send activation details.
@@ -28,7 +24,7 @@ pub struct RequestArgs {
     #[arg(long, value_name = "NAME")]
     pub app: Option<String>,
 
-    /// Platform tag. Falls back to aomi.toml, then `community`.
+    /// Platform tag. Defaults to `community`.
     #[arg(long, value_name = "NAME")]
     pub platform: Option<Platform>,
 
@@ -79,7 +75,6 @@ impl RequestArgs {
             .platform
             .as_ref()
             .map(|p| p.to_string())
-            .or_else(|| app_cfg.as_ref().and_then(|a| a.platform.clone()))
             .filter(|s| !s.trim().is_empty())
             .unwrap_or_else(|| "community".to_string());
 

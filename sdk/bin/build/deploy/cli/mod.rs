@@ -5,20 +5,20 @@
 //! never handle a GitHub token, never clone or push a platform repo, and never
 //! generate release tags or manifests — the backend owns all of that.
 //!
-//! Each command lives in its own file with a `run(args)` entry point, dispatched
-//! from `main.rs` like the codegen commands (`cli::deploy::run(args)`). Cross-
-//! command helpers (env/credential resolution, git facts) live in `shared`.
+//! Each command lives in its own file; cross-command helpers (env/credential
+//! resolution, git facts) live in `shared`.
 //!
 //! ```text
-//! deploy                     # deploy tracked aomi.toml apps from a source ref
-//!   --platform <NAME>        # aomi.toml [app].platform (default community)
-//!   --app-source-id <ID>     # connected GitHub App install (AOMI_APP_SOURCE_ID)
-//!   --branch <NAME>          # deprecated; checkout the branch locally instead
+//! deploy                     # lifecycle: preflight → run → activate → status
+//!   --repo <OWNER/REPO>      # resolve the existing Project (default: git origin)
 //!   --commit <SHA>           # deploy this source commit (default: HEAD)
-//!   --aomi-toml <PATH>       # repeatable; default: all tracked aomi.toml
 //!   --backend <URL>          # AOMI_BACKEND_URL
+//!   --activation-token <T>   # AOMI_APP_ACTIVATION_TOKEN
 //!   --preflight              # resolve + print the plan without opening a PR
 //!   --json
+//!
+//! project create --repo <OWNER/REPO> --platform <NAME>
+//!                            # writes .aomi/config.json, then creates Project
 //!
 //! activate [APP]...          # activate release tags (default: deployment.json tags)
 //!   --platform <NAME>        # default: deployment.json platform
@@ -31,7 +31,13 @@
 //!
 //! status                     # local deployment.json + backend per-app state
 //!   --backend <URL>
+//!   --activation-token <T>
 //!   --json
+//!
+//! token mint                 # admin-only activation-token issuance
+//!   --backend <URL>          # AOMI_BACKEND_URL
+//!   --admin-key <PEM|PATH>   # AOMI_ADMIN_KEY
+//!   --admin-kid <KID>        # AOMI_ADMIN_KID
 //!
 //! request                    # legacy ops onboarding request (Discord)
 //! ```
@@ -40,9 +46,11 @@ pub mod activate;
 pub mod apps;
 pub mod connect;
 pub mod deploy;
+pub mod inputs;
 pub mod login;
+pub mod project;
+pub mod release;
 pub mod request;
-pub mod source;
 pub mod status;
 pub mod token;
 
@@ -51,9 +59,9 @@ pub(crate) mod shared;
 pub use activate::ActivateArgs;
 pub use apps::AppsArgs;
 pub use connect::ConnectArgs;
-pub use deploy::DeployArgs;
+pub use deploy::{DeployArgs, DeployStepArgs};
 pub use login::LoginArgs;
+pub use project::ProjectArgs;
 pub use request::RequestArgs;
-pub use source::SourceArgs;
 pub use status::StatusArgs;
 pub use token::TokenArgs;

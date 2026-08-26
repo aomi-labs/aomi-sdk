@@ -1,13 +1,12 @@
 //! Global CLI identity persisted at `~/.config/aomi/config.toml`.
 //!
-//! This is account-level state established by `aomi-build connect`: which
-//! backend and Build UI to talk to, the verified GitHub Builder identity, and
-//! the CLI session returned by browser login. Per-project deploy state stays in
-//! `.aomi/deployment.json`.
+//! This is account-level state established by `aomi-build login` or `connect`:
+//! which backend and Build UI to use, the verified GitHub Builder identity, and
+//! any CLI/admin credentials. Per-project state stays in `.aomi/deployment.json`.
 //!
-//! The file holds session/token secrets, so it is written `0600`.
+//! The file holds a secret (the activation token), so it is written `0600`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -52,25 +51,40 @@ impl AomiConfig {
         PathBuf::from(home).join(".config").join("aomi")
     }
 
-    pub fn path() -> PathBuf {
-        Self::dir().join("config.toml")
-    }
-
     /// Load the config, or a default when it's missing/unreadable. A malformed
     /// file falls back to default rather than failing every command.
     pub fn load() -> Self {
-        match std::fs::read_to_string(Self::path()) {
+        Self::load_in(&Self::dir())
+    }
+
+    /// Read-modify-write the on-disk config under `mutate`.
+    ///
+    /// Saving a stale struct wholesale can drop fields written by another code
+    /// path. Always merge onto the current file.
+    pub fn update(mutate: impl FnOnce(&mut Self)) -> Result<PathBuf> {
+        Self::update_in(&Self::dir(), mutate)
+    }
+
+    /// Directory-scoped variants. The config home is process-global, so tests
+    /// address a directory directly rather than mutating `XDG_CONFIG_HOME` out
+    /// from under whatever else is running in parallel.
+    pub(crate) fn load_in(dir: &Path) -> Self {
+        match std::fs::read_to_string(dir.join("config.toml")) {
             Ok(text) => toml::from_str(&text).unwrap_or_default(),
             Err(_) => Self::default(),
         }
     }
 
-    /// Atomically write the config `0600`. Returns the path.
-    pub fn save(&self) -> Result<PathBuf> {
-        let dir = Self::dir();
-        std::fs::create_dir_all(&dir)
+    pub(crate) fn update_in(dir: &Path, mutate: impl FnOnce(&mut Self)) -> Result<PathBuf> {
+        let mut config = Self::load_in(dir);
+        mutate(&mut config);
+        config.save_in(dir)
+    }
+
+    pub(crate) fn save_in(&self, dir: &Path) -> Result<PathBuf> {
+        std::fs::create_dir_all(dir)
             .with_context(|| format!("failed to create {}", dir.display()))?;
-        let path = Self::path();
+        let path = dir.join("config.toml");
         let body = toml::to_string_pretty(self).context("failed to serialize config")?;
         let tmp = path.with_extension("toml.tmp");
         std::fs::write(&tmp, body).with_context(|| format!("failed to write {}", tmp.display()))?;

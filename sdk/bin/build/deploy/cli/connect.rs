@@ -1,16 +1,17 @@
 //! `connect` — install the Aomi GitHub App and save your activation token.
 
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use clap::Args;
 
-use super::shared::{BACKEND_URL_ENV, resolve_activation_token, resolve_backend};
+use super::login::saved_builder_github_identity;
+use super::shared::{
+    missing_backend, resolve_activation_token, resolve_backend, resolve_build_url,
+};
+use crate::deploy::backend::BackendClient;
 use crate::deploy::config::AomiConfig;
 use crate::deploy::flow::{TokenCheck, oauth_install_url, validate_activation_token};
 use crate::deploy::platform::{Platform, normalize_github_repo};
-
-pub async fn run(args: ConnectArgs) -> eyre::Result<()> {
-    args.run().await.map_err(crate::git_error)
-}
+use crate::deploy::types::CreateProjectInput;
 
 #[derive(Debug, Args, Clone)]
 pub struct ConnectArgs {
@@ -30,6 +31,11 @@ pub struct ConnectArgs {
     /// Backend base URL (default: AOMI_BACKEND_URL, then saved config).
     #[arg(long, value_name = "URL")]
     pub backend: Option<String>,
+
+    /// Aomi Build URL to save alongside the connection for later Build
+    /// commands. Inferred from known backends when omitted.
+    #[arg(long = "build-url", value_name = "URL")]
+    pub build_url: Option<String>,
 
     /// Activation token to store (issued by your Aomi admin). Prompted if omitted.
     #[arg(long, value_name = "TOKEN")]
@@ -56,13 +62,13 @@ fn prompt_installation_id() -> Result<i64> {
 
 impl ConnectArgs {
     pub async fn run(self) -> Result<()> {
-        let backend_url = resolve_backend(&self.backend).ok_or_else(|| {
-            anyhow!("connect needs a backend URL — set --backend or {BACKEND_URL_ENV}")
-        })?;
+        let backend_url =
+            resolve_backend(&self.backend).ok_or_else(|| missing_backend("connect"))?;
         let repo = match &self.repo {
             Some(r) => Some(normalize_github_repo(r)?),
             None => None,
         };
+        let build_url = resolve_build_url(&self.build_url, Some(&backend_url));
 
         // 1. GitHub App install URL. After the user installs, GitHub redirects
         //    *their browser* (not this CLI) to the App's configured callback,
@@ -123,28 +129,65 @@ impl ConnectArgs {
             }
         }
 
-        // 4. Persist account identity.
-        let mut config = AomiConfig::load();
-        config.backend_url = Some(backend_url);
-        config.platform = Some(self.platform.to_string());
-        config.installation_id = Some(installation_id);
-        config.activation_token = Some(token);
-        let path = config.save()?;
+        // 4. Connect the selected source, claiming it when a Builder identity
+        //    was saved by an earlier `aomi-build login`. The claim is
+        //    opportunistic — with no login the project is still created,
+        //    keyed off the activation token alone.
+        let claimed = match repo.as_ref() {
+            Some(repo) => {
+                let identity = saved_builder_github_identity();
+                if identity.is_none() {
+                    println!(
+                        "  no Builder login found — creating the project on the activation \
+                         token alone (run `aomi-build login` first to claim it for your \
+                         GitHub account)"
+                    );
+                }
+                let project = BackendClient::new(backend_url.clone(), token.clone())?
+                    .create_project(
+                        &self.platform,
+                        &CreateProjectInput {
+                            repo: repo.clone(),
+                            github_user_id: identity.as_ref().map(|(id, _)| id.clone()),
+                        },
+                    )
+                    .await?;
+                Some((identity.and_then(|(_, login)| login), project))
+            }
+            None => None,
+        };
+
+        // 5. Merge the platform credentials onto any identity saved above.
+        let path = AomiConfig::update(|config| {
+            config.backend_url = Some(backend_url);
+            if let Some(build_url) = build_url {
+                config.build_url = Some(build_url);
+            }
+            config.platform = Some(self.platform.to_string());
+            config.installation_id = Some(installation_id);
+            config.activation_token = Some(token);
+        })?;
 
         println!();
         println!("Connected. Saved to {}", path.display());
         println!("  installation_id: {installation_id}");
+        if let Some((builder_login, project)) = claimed {
+            if let Some(login) = builder_login {
+                println!("  Builder: @{login}");
+            }
+            println!(
+                "  project: {} (project_id {})",
+                project.project.repository_link, project.project.id
+            );
+        }
         println!();
         println!("Next:");
         println!(
-            "  aomi-build scaffold --repo-name <name> --installation-id {installation_id} --platform {}",
+            "  aomi-build project create --repo <owner/repo> --platform {}",
             self.platform
         );
-        println!("  # or, from an existing source repo:");
-        println!(
-            "  aomi-build source sync --repo <owner/repo> --platform {}",
-            self.platform
-        );
+        println!("  # then, from that repository with .aomi/config.json committed:");
+        println!("  aomi-build deploy");
         Ok(())
     }
 }

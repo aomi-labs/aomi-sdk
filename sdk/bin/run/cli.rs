@@ -55,6 +55,10 @@ pub struct Cli {
     #[arg(long)]
     pub model: Option<String>,
 
+    /// Run one prompt and exit instead of opening the interactive REPL.
+    #[arg(long)]
+    pub prompt: Option<String>,
+
     /// Max tool-call rounds rig is allowed inside a single user turn before
     /// it must produce a text response. 0 means "no tool round-trips".
     #[arg(long, default_value_t = 20)]
@@ -133,15 +137,27 @@ impl Cli {
         match provider {
             Provider::Anthropic => {
                 let agent = agent::build_anthropic(&model, &preamble, tools, max_tokens)?;
-                repl::run(agent, &session_id, &loaded.manifest.name, max_turns).await
+                if let Some(prompt) = &self.prompt {
+                    repl::run_prompt(agent, prompt, max_turns).await
+                } else {
+                    repl::run(agent, &session_id, &loaded.manifest.name, max_turns).await
+                }
             }
             Provider::Openai => {
                 let agent = agent::build_openai(&model, &preamble, tools, max_tokens)?;
-                repl::run(agent, &session_id, &loaded.manifest.name, max_turns).await
+                if let Some(prompt) = &self.prompt {
+                    repl::run_prompt(agent, prompt, max_turns).await
+                } else {
+                    repl::run(agent, &session_id, &loaded.manifest.name, max_turns).await
+                }
             }
             Provider::Openrouter => {
                 let agent = agent::build_openrouter(&model, &preamble, tools, max_tokens)?;
-                repl::run(agent, &session_id, &loaded.manifest.name, max_turns).await
+                if let Some(prompt) = &self.prompt {
+                    repl::run_prompt(agent, prompt, max_turns).await
+                } else {
+                    repl::run(agent, &session_id, &loaded.manifest.name, max_turns).await
+                }
             }
         }
     }

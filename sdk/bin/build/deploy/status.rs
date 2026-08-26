@@ -2,26 +2,22 @@
 //! view, per app. GitHub credentials and CI/release verification live on the
 //! backend; the CLI never calls the GitHub API here.
 
-use std::time::Duration;
-
-use super::types::LocalDeployment;
+use super::backend::BackendClient;
+use super::platform::Platform;
+use super::state::LocalDeployment;
 use serde::Serialize;
-
-const UA: &str = concat!("aomi-build/", env!("CARGO_PKG_VERSION"));
-const PROBE_TIMEOUT: Duration = Duration::from_secs(12);
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(6);
 
 #[derive(Debug, Serialize)]
 pub struct StatusResult {
     pub platform: String,
+    pub deployment_id: String,
     pub pr_url: String,
     pub deploy_branch: String,
     pub deployed: bool,
     pub activated: bool,
     pub project_url: Option<String>,
-    pub build_state: Option<String>,
-    pub build_message: Option<String>,
     pub backend: Option<String>,
+    pub deployment: DeploymentBackendStatus,
     pub apps: Vec<AppStatus>,
 }
 
@@ -41,8 +37,30 @@ pub struct AppStatus {
 pub enum BackendAppStatus {
     NotChecked,
     NotRegistered,
-    Found { is_active: bool, loaded: bool },
-    Unknown { detail: String },
+    Found {
+        is_active: bool,
+        artifact_ready: bool,
+        loaded: bool,
+    },
+    Unknown {
+        detail: String,
+    },
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "snake_case", tag = "deployment_state")]
+pub enum DeploymentBackendStatus {
+    NotChecked,
+    Found {
+        state: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        ci_url: Option<String>,
+    },
+    Unknown {
+        detail: String,
+    },
 }
 
 impl StatusResult {
@@ -54,21 +72,23 @@ impl StatusResult {
         activation_token: Option<String>,
     ) -> Self {
         let platform = state.deployment.platform.platform.clone();
+        let platform_tag = Platform::new(&platform);
         let client = match (&backend_url, &activation_token) {
-            (Some(url), Some(token)) => probe_client(url, token).ok(),
+            (Some(url), Some(token)) => BackendClient::new(url.clone(), token.clone()).ok(),
             _ => None,
+        };
+        let deployment = match &client {
+            None => DeploymentBackendStatus::NotChecked,
+            Some(client) => {
+                fetch_deployment_status(client, &platform_tag, &state.deployment.id).await
+            }
         };
 
         let mut apps = Vec::with_capacity(state.deployment.platform.apps.len());
         for app in &state.deployment.platform.apps {
             let backend = match &client {
                 None => BackendAppStatus::NotChecked,
-                Some(client) => {
-                    match fetch_app(client, &platform, &app.name, &app.release_tag).await {
-                        Ok(status) => status,
-                        Err(detail) => BackendAppStatus::Unknown { detail },
-                    }
-                }
+                Some(client) => fetch_app(client, &platform_tag, &app.name, &app.release_tag).await,
             };
             apps.push(AppStatus {
                 name: app.name.clone(),
@@ -80,14 +100,14 @@ impl StatusResult {
 
         Self {
             platform,
+            deployment_id: state.deployment.id.clone(),
             pr_url: state.deployment.platform.pr_url.clone().unwrap_or_default(),
             deploy_branch: state.deployment.platform.deploy_branch.clone(),
             deployed: state.state.deployed,
             activated: state.state.activated,
             project_url: state.project_url.clone(),
-            build_state: None,
-            build_message: None,
             backend: backend_url,
+            deployment,
             apps,
         }
     }
@@ -97,28 +117,41 @@ impl StatusResult {
         let mut out = String::new();
         let _ = writeln!(out, "Deployment status");
         let _ = writeln!(out, "  platform      : {}", self.platform);
+        let _ = writeln!(out, "  deployment_id : {}", self.deployment_id);
         let _ = writeln!(out, "  pr            : {}", self.pr_url);
         let _ = writeln!(out, "  deploy_branch : {}", self.deploy_branch);
         if let Some(url) = &self.project_url {
             let _ = writeln!(out, "  project       : {url}");
-        }
-        if let Some(state) = &self.build_state {
-            let _ = writeln!(out, "  release build : {state}");
-            if let Some(message) = &self.build_message {
-                let _ = writeln!(out, "  build detail  : {message}");
-            }
         }
         let _ = writeln!(
             out,
             "  local state   : deployed={} activated={}",
             self.deployed, self.activated
         );
-        match &self.backend {
-            Some(url) => {
-                let _ = writeln!(out, "  backend       : {url}");
+        let _ = writeln!(
+            out,
+            "  backend       : {}",
+            self.backend.as_deref().unwrap_or("not checked")
+        );
+        match &self.deployment {
+            DeploymentBackendStatus::NotChecked => {}
+            DeploymentBackendStatus::Found {
+                state,
+                message,
+                ci_url,
+            } => {
+                let detail = message.as_deref().unwrap_or("");
+                if detail.is_empty() {
+                    let _ = writeln!(out, "  deploy state  : {state}");
+                } else {
+                    let _ = writeln!(out, "  deploy state  : {state} ({detail})");
+                }
+                if let Some(url) = ci_url {
+                    let _ = writeln!(out, "  build logs    : {url}");
+                }
             }
-            None => {
-                let _ = writeln!(out, "  backend       : not checked");
+            DeploymentBackendStatus::Unknown { detail } => {
+                let _ = writeln!(out, "  deploy state  : unknown ({detail})");
             }
         }
         for app in &self.apps {
@@ -132,9 +165,16 @@ impl StatusResult {
                 BackendAppStatus::Unknown { detail } => {
                     let _ = writeln!(out, "      backend   : unknown ({detail})");
                 }
-                BackendAppStatus::Found { is_active, loaded } => {
+                BackendAppStatus::Found {
+                    is_active,
+                    artifact_ready,
+                    loaded,
+                } => {
                     let health = if *loaded { "loaded" } else { "not loaded" };
-                    let _ = writeln!(out, "      backend   : active={is_active} {health}");
+                    let _ = writeln!(
+                        out,
+                        "      backend   : active={is_active} artifact_ready={artifact_ready} {health}"
+                    );
                 }
             }
         }
@@ -142,77 +182,66 @@ impl StatusResult {
     }
 }
 
-struct ProbeClient {
-    base_url: String,
-    bearer: String,
-    http: reqwest::Client,
-}
-
-fn probe_client(backend_url: &str, bearer: &str) -> Result<ProbeClient, String> {
-    let base_url = backend_url.trim().trim_end_matches('/').to_string();
-    if base_url.is_empty() || bearer.trim().is_empty() {
-        return Err("missing backend URL or activation token".to_string());
+async fn fetch_deployment_status(
+    client: &BackendClient,
+    platform: &Platform,
+    deployment_id: &str,
+) -> DeploymentBackendStatus {
+    match client.deployment_status(platform, deployment_id).await {
+        Ok(status) => DeploymentBackendStatus::Found {
+            state: status.state,
+            message: status.message,
+            ci_url: status.ci.and_then(|ci| ci.url),
+        },
+        Err(err) => DeploymentBackendStatus::Unknown {
+            detail: err.to_string(),
+        },
     }
-    let client = reqwest::Client::builder()
-        .timeout(PROBE_TIMEOUT)
-        .connect_timeout(CONNECT_TIMEOUT)
-        .user_agent(UA)
-        .build()
-        .unwrap_or_else(|_| reqwest::Client::new());
-    Ok(ProbeClient {
-        base_url,
-        bearer: bearer.to_string(),
-        http: client,
-    })
 }
 
 async fn fetch_app(
-    client: &ProbeClient,
-    platform: &str,
+    client: &BackendClient,
+    platform: &Platform,
     name: &str,
     release_tag: &str,
-) -> Result<BackendAppStatus, String> {
-    let mut url = reqwest::Url::parse(&format!("{}/", client.base_url))
-        .map_err(|e| format!("invalid backend URL: {e}"))?;
-    {
-        let mut segments = url
-            .path_segments_mut()
-            .map_err(|_| "backend URL cannot be a base URL".to_string())?;
-        segments
-            .push("api")
-            .push("platforms")
-            .push(platform)
-            .push("apps")
-            .push(name);
+) -> BackendAppStatus {
+    match client.get_app(platform, name, release_tag).await {
+        Ok(live) => BackendAppStatus::Found {
+            is_active: live.app.is_active,
+            artifact_ready: live.app.artifact_ready,
+            loaded: live.app.loaded,
+        },
+        Err(err) if err.to_string().contains("returned 404") => BackendAppStatus::NotRegistered,
+        Err(err) => BackendAppStatus::Unknown {
+            detail: err.to_string(),
+        },
     }
-    url.query_pairs_mut()
-        .append_pair("release_tag", release_tag);
+}
 
-    let resp = client
-        .http
-        .get(url)
-        .bearer_auth(&client.bearer)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?;
-    if resp.status().as_u16() == 404 {
-        return Ok(BackendAppStatus::NotRegistered);
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn report_prints_build_logs_url() {
+        let report = StatusResult {
+            platform: "community".into(),
+            deployment_id: "dep_1".into(),
+            pr_url: String::new(),
+            deploy_branch: "publish".into(),
+            deployed: true,
+            activated: false,
+            project_url: None,
+            backend: None,
+            deployment: DeploymentBackendStatus::Found {
+                state: "failed".into(),
+                message: Some("release build failed".into()),
+                ci_url: Some("https://github.com/aomi-labs/community-apps/actions/runs/1".into()),
+            },
+            apps: vec![],
+        };
+        assert!(report.render().contains(
+            "build logs    : https://github.com/aomi-labs/community-apps/actions/runs/1"
+        ));
     }
-    if !resp.status().is_success() {
-        return Err(format!("backend returned {}", resp.status()));
-    }
-    let value: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
-    let Some(app) = value.get("app") else {
-        return Ok(BackendAppStatus::NotRegistered);
-    };
-    Ok(BackendAppStatus::Found {
-        is_active: app
-            .get("is_active")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false),
-        loaded: app
-            .get("loaded")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false),
-    })
 }

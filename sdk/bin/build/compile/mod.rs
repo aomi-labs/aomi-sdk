@@ -4,7 +4,7 @@
 //! Ported from the old `cargo xtask build-aomi` subcommand. Public API:
 //! [`CompileArgs`] (clap) + [`run`] (eyre).
 
-mod validate;
+pub(crate) mod validate;
 
 use std::env;
 use std::fs;
@@ -125,15 +125,23 @@ pub fn run(args: CompileArgs) -> Result<()> {
             }
         }
 
-        let validation_errors = validate::validate_plugin(&dest);
-        if !validation_errors.is_empty() {
-            for err in &validation_errors {
-                eprintln!("  validation error: {err}");
+        let plugin_manifest = match validate::inspect_plugin(&dest) {
+            Ok(manifest) => manifest,
+            Err(validation_errors) => {
+                for err in &validation_errors {
+                    eprintln!("  validation error: {err}");
+                }
+                eprintln!("  [SKIP] {pkg_name} — validation failed");
+                let _ = fs::remove_file(&dest);
+                failed.push(manifest.package_name);
+                continue;
             }
-            eprintln!("  [SKIP] {pkg_name} — validation failed");
-            let _ = fs::remove_file(&dest);
-            failed.push(manifest.package_name);
-            continue;
+        };
+
+        // Print the app's resolved permission manifest so guard drift is
+        // visible at release review — this is what the app can do on-chain.
+        if let Some(rendered) = validate::render_permissions(&plugin_manifest) {
+            println!("{rendered}");
         }
 
         built += 1;
