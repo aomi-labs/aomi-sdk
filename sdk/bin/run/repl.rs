@@ -71,6 +71,17 @@ where
     }
 }
 
+/// Run one prompt and exit. This is the non-interactive path used by
+/// orchestrators such as `aomi-workbench` for smoke tests.
+pub async fn run_prompt<M>(agent: Arc<Agent<M>>, prompt: &str, max_turns: usize) -> Result<()>
+where
+    M: CompletionModel + 'static,
+    M::StreamingResponse: WasmCompatSend + GetTokenUsage + Clone + Unpin,
+{
+    let mut history: Vec<Message> = Vec::new();
+    run_one_turn(&agent, prompt, &mut history, max_turns).await
+}
+
 async fn run_one_turn<M>(
     agent: &Arc<Agent<M>>,
     prompt: &str,

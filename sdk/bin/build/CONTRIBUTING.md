@@ -34,10 +34,18 @@ cargo install --git https://github.com/aomi-labs/aomi-sdk --features cli aomi-sd
 |---|---|
 | `aomi-build init` | Scaffold a bare app skeleton (`aomi.toml`, `Cargo.toml`, `src/lib.rs`). |
 | `aomi-build compile` | Build the app as a Rust `cdylib` locally (codesigns on macOS). |
-| `aomi-build deploy` | Send a source-bound deploy request to the backend. |
-| `aomi-build status` | Show local deploy state + the backend's runtime registry per app. |
-| `aomi-build activate` | Activate a built release by tag / PR / branch. |
+| `aomi-build deploy` | Run the full backend deploy lifecycle: SDK check, preflight, deploy, wait, activate, verify. |
+| `aomi-build deploy preflight` | Validate backend/source/app inputs without platform repo writes. |
+| `aomi-build deploy run` | Create/update the platform deployment and write `.aomi/deployment.json`. |
+| `aomi-build deploy activate` | Activate release tags from `.aomi/deployment.json` and verify runtime load. |
+| `aomi-build deploy status` | Show local deploy state + backend deployment/app runtime state. |
+| `aomi-build sdk check` | Verify the app pins the SDK version required by the platform. |
+| `aomi-build sdk fix` | Update the app's SDK pin when possible. |
 | `aomi-build request` | Ask ops (via Discord) for source access or an activation token. |
+
+For one release cycle, `aomi-build status` aliases `aomi-build deploy status`,
+`aomi-build activate` aliases `aomi-build deploy activate`, and
+`aomi-build deploy --preflight` aliases `aomi-build deploy preflight`.
 
 (The `gen-specs` / `gen-client` / `gen-tool` / `new-app` / `tighten-spec`
 commands are for *generating* an app from an API spec — out of scope here.)
@@ -78,18 +86,19 @@ platform repo for `required_sdk_version`):
 crate-type = ["cdylib"]
 
 [dependencies]
-aomi-sdk = "=3.0.0"
+aomi-sdk = "=3.0.2"
 ```
 
-Do **not** put GitHub tokens or a `git` field in `aomi.toml`. Source access is
-bound by `app_source_id`, not by the manifest.
+Do **not** put GitHub tokens or a `git` field in `aomi.toml`. Repository access
+and platform binding belong to the Project.
 
 ## 2. Connect a source repo
 
-Install the Aomi GitHub App on your source repo and note the resulting
-`app_source_id` (from ops or the portal). `aomi-build deploy` sends this id to
-the backend; the backend mints short-lived GitHub App tokens server-side to read
-your source and write the platform repo.
+Install the Aomi GitHub App on your source repo. `aomi-build deploy` can use
+`--project-id`/`AOMI_PROJECT_ID` directly, or `--repo owner/repo` to create the
+platform-bound Project. The backend mints
+short-lived GitHub App tokens server-side to read your source and write the
+platform repo.
 
 ## 3. Build locally
 
@@ -101,31 +110,57 @@ aomi-build compile          # produces the cdylib the platform CI will also buil
 ## 4. Deploy
 
 ```bash
-export AOMI_BACKEND_URL=https://staging-api.aomi.dev
-export AOMI_APP_SOURCE_ID=<your-app-source-id>
-export AOMI_APP_ACTIVATION_TOKEN=<platform-or-app-token>
-
-aomi-build deploy --platform community --aomi-toml aomi.toml
+aomi-build deploy \
+  --platform community \
+  --repo owner/repo \
+  --backend https://api.aomi.dev \
+  --activation-token <platform-or-app-token>
 ```
 
-Resolution order for each input: CLI flag (`--backend`, `--app-source-id`,
-`--activation-token`) → environment variable → error if missing.
+That command is the full lifecycle: SDK check, preflight, backend deploy, wait
+for readiness, activate, then verify every selected app is active,
+artifact-ready, and loaded. Use `--fix-sdk` when the CLI should update the SDK
+pin before continuing.
+
+A developer receiving only the `aomi-build` binary still needs:
+
+- a committed and pushed source repo containing `.aomi/config.json` and its referenced `aomi.toml` files
+- the Aomi GitHub App installed on that repo
+- backend URL and a valid platform/app activation token
+- either `--repo owner/repo` or `--project-id <id>`
+
+They do not need a GitHub PAT, platform repo write access, database access, or
+an admin private key.
+
+Resolution order:
+
+| Input | Resolution |
+|---|---|
+| backend | `--backend` → `AOMI_BACKEND_URL` → saved config |
+| platform | `--platform` → `aomi.toml` → saved config → `community` |
+| token | `--activation-token` → `AOMI_APP_ACTIVATION_TOKEN` → saved config |
+| project | `--project-id` → `AOMI_PROJECT_ID` → `.aomi/deployment.json` → `--repo owner/repo` project creation |
+| commit | `--commit` → local `HEAD`; branches are rejected |
+
+Admin-only token minting follows the same flag/env rule:
+`AOMI_ADMIN_KEY` -> `--admin-key <pkcs8-pem-or-path>` and `AOMI_ADMIN_KID`
+-> `--admin-kid <kid>`.
 
 `deploy` sends:
 
 ```json
 POST /api/platforms/community/deploy
 {
-  "app_source_id": 123,
+  "project_id": 123,
   "source_ref": "<commit-sha>",
-  "aomi_toml_paths": ["aomi.toml"],
   "preflight": false
 }
 ```
 
-Run `--preflight` first: with credentials it validates source commit access,
-archive fetch, `aomi.toml` parsing, and backend manifest generation without
-opening a platform PR; without credentials it just prints the request.
+Use `aomi-build deploy preflight` to validate source commit access, archive
+fetch, `aomi.toml` parsing, and backend manifest generation without opening a
+platform PR. Use `aomi-build deploy run` when you only want to create/update the
+platform deployment and write `.aomi/deployment.json`.
 
 The backend then: fetches the exact source commit archive, stages each app under
 `apps/<installation-id>/<repo-key>/<app>/`, writes
@@ -143,13 +178,12 @@ tagged `apps-<installation-id>-<repo-key>-<app>-<short-commit>`.
 ## 5. Check status
 
 ```bash
-aomi-build status --backend https://staging-api.aomi.dev        # or --json
+aomi-build deploy status --backend https://api.aomi.dev        # or --json
 ```
 
-`status` merges your local `.aomi/deployment.json` with the backend's **runtime
-registry** (`GET /api/control/apps/status`) and reports, per app, whether it is
-`active` and `loaded`. Before activation an app shows as not registered/not
-loaded — that's expected while CI is still building.
+`deploy status` reads your local `.aomi/deployment.json`, queries the backend
+deployment status when available, and checks the platform app endpoint for the
+recorded apps. Before activation an app may not be active or loaded yet.
 
 ## 6. Activate
 
@@ -157,13 +191,13 @@ Activation is backend-owned; the CLI passes release tags through.
 
 ```bash
 # By tag (explicit, repeatable):
-aomi-build activate \
+aomi-build deploy activate \
   --release-tag apps-<installation-id>-<repo-key>-<app>-<short-commit> \
   --platform community \
-  --target-tag staging
+  --target-tag prod
 
-# Or by PR / branch:
-aomi-build activate --pr https://github.com/aomi-labs/community-apps/pull/9 --target-tag staging
+# Or use the release tags recorded in .aomi/deployment.json:
+aomi-build deploy activate
 ```
 
 `activate` sends:
@@ -179,7 +213,8 @@ POST /api/platforms/community/apps/activate
 
 The backend resolves the target, checks CI, fetches the release artifact,
 validates SDK version + target + hashes, and loads the app. Confirm with
-`aomi-build status` — the app should report `loaded`.
+`aomi-build deploy status` — the app should report `is_active=true`,
+`artifact_ready=true`, and `loaded=true`.
 
 `server_tags` is the build's declared scope: ops can **narrow** at activate time
 (`staging` only) but cannot **widen** to `prod` unless the source commit declared
@@ -225,11 +260,14 @@ one-shot when you want a working agent in your account with zero local setup.
 
 | Error | Cause | Fix |
 |---|---|---|
-| `deploy needs --app-source-id` | CLI doesn't know which connected source repo to deploy | pass `--app-source-id` or set `AOMI_APP_SOURCE_ID` |
-| `deploy requires an activation token` | backend deploy needs platform/app authority | export `AOMI_APP_ACTIVATION_TOKEN` or `aomi-build request` one |
+| `deploy needs a project id` | CLI cannot identify the platform-bound Project | pass `--repo owner/repo`, pass `--project-id <id>`, or set `AOMI_PROJECT_ID` |
+| `deploy needs an activation token` | backend deploy needs platform/app authority | pass `--activation-token <token>`, export `AOMI_APP_ACTIVATION_TOKEN`, or `aomi-build request` one |
 | `git tree is dirty` | uncommitted files in your source repo | commit, or ignore `.aomi/`, `target/`, `Cargo.lock` |
+| `source is bound to platform ...` | source/app row is already bound to a different platform | deploy to the bound platform or ask ops to repair the binding |
+| `deployment failed before activation: no CI ran` | backend created no candidate CI run | check the platform PR and backend deploy status |
 | `candidate app dir must be apps/<installation-id>/<repo-key>/<app>` | staged path doesn't match the backend contract | redeploy through the backend (don't hand-push the platform repo) |
-| `sdk_version mismatch` | `aomi-sdk` dep doesn't match `platform.json` | pin the exact `required_sdk_version` |
+| `sdk_version mismatch` | `aomi-sdk` dep doesn't match `platform.json` | run `aomi-build deploy --fix-sdk` or pin the exact `required_sdk_version` |
+| final verification is not loaded | activation returned but runtime has not loaded the app | retry `aomi-build deploy activate`; if it repeats, inspect backend/runtime logs |
 | `... returned 502` | release tarball not built yet, or backend can't reach GitHub | retry after CI finishes |
 
 ## Quick reference
@@ -239,6 +277,6 @@ one-shot when you want a working agent in your account with zero local setup.
 | `https://staging-api.aomi.dev` / `https://api.aomi.dev` | staging / production backend |
 | `POST /api/platforms/:platform/deploy` | source fetch, staging, manifest generation |
 | `POST /api/platforms/:platform/apps/activate` | artifact resolution + activation |
-| `GET /api/control/apps/status` | runtime registry (`is_active` / `loaded`) |
-| `AOMI_BACKEND_URL` / `AOMI_APP_SOURCE_ID` / `AOMI_APP_ACTIVATION_TOKEN` | CLI inputs |
+| platform app endpoint | app verification (`is_active` / `artifact_ready` / `loaded`) |
+| `--backend` / `--project-id` / `--activation-token` | CLI deploy inputs; env fallbacks are `AOMI_BACKEND_URL` / `AOMI_PROJECT_ID` / `AOMI_APP_ACTIVATION_TOKEN` |
 | `.aomi/deployment.json` | the backend's deploy record, kept locally |

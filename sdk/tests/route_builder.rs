@@ -86,7 +86,6 @@ fn svm_host_route_target_names_match_host_tools() {
         <host::SvmCommitTx as RouteTarget>::tool_name(),
         "svm_commit_tx"
     );
-    assert_eq!(<host::SvmSignTx as RouteTarget>::tool_name(), "svm_sign_tx");
     assert_eq!(
         <host::SvmSignData as RouteTarget>::tool_name(),
         "svm_sign_data"
@@ -200,9 +199,7 @@ fn svm_lane_1_stage_simulate_route_plan_serializes() {
 #[test]
 fn svm_lane_2_stage_simulate_route_plan_serializes() {
     // Lane 2 canonical chain — venue-built tx blob → stage_tx →
-    // simulate_tx. Mirrors what a future byreal `build_swap` would
-    // emit once it routes through Lane 2 instead of the transitional
-    // inline `SvmSignTx` path.
+    // simulate_tx.
     let plan = ToolReturn::route(json!({"status": "previewed"}))
         .next(|next| {
             next.add::<host::SvmStageTx>(json!({
@@ -276,15 +273,20 @@ fn route_builder_serializes_bound_artifact_plan() {
 }
 
 #[test]
-fn route_builder_serializes_solana_sign_plan() {
+fn route_builder_serializes_solana_venue_commit_plan() {
+    // Venue-broadcast pattern (byreal-style): stage the venue blob with
+    // `broadcaster: "venue"`, commit under kernel policy, and the app's
+    // submit continuation awaits the bound signed bytes.
     let tool_return = ToolReturn::route(json!({"status": "awaiting_wallet"}))
         .next(|next| {
-            next.add::<host::SvmSignTx>(json!({
-                "unsigned_tx": "AgAB...base64...",
+            next.add::<host::SvmStageTx>(json!({
+                "tx": "AgAB...base64...",
                 "description": "Swap 1 USDC for 0.005 SOL via byreal RFQ",
-            }))
-            .bind_as("signed_tx")
-            .note("sign this Solana swap");
+                "broadcaster": "venue",
+            }));
+            next.add::<host::SvmCommitTx>(json!({}))
+                .bind_as("signed_tx")
+                .note("commit with { tx_id } from the stage step");
         })
         .after::<SubmitOrder>(json!({"venue": "byreal-rfq"}))
         .awaits("signed_tx")
@@ -298,14 +300,20 @@ fn route_builder_serializes_solana_sign_plan() {
             "__aomi_tool_value": {"status": "awaiting_wallet"},
             "__aomi_tool_routes": [
                 {
-                    "tool": "svm_sign_tx",
+                    "tool": "svm_stage_tx",
                     "args": {
-                        "unsigned_tx": "AgAB...base64...",
+                        "tx": "AgAB...base64...",
                         "description": "Swap 1 USDC for 0.005 SOL via byreal RFQ",
+                        "broadcaster": "venue",
                     },
                     "trigger": {"type": "on_sync_return"},
+                },
+                {
+                    "tool": "svm_commit_tx",
+                    "args": {},
+                    "trigger": {"type": "on_sync_return"},
                     "bind_as": "signed_tx",
-                    "prompt": "sign this Solana swap",
+                    "prompt": "commit with { tx_id } from the stage step",
                 },
                 {
                     "tool": "submit_order",

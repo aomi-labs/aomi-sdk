@@ -1,80 +1,115 @@
-# `svm_sign_tx` — runtime contract
+# Solana venue-broadcast commit — app-facing contract
 
-The SDK marker for this host primitive lives in [sdk/src/builder.rs](../sdk/src/builder.rs) (look for `host_target!(SvmSignTx, "svm_sign_tx")`). The host runtime now exposes the same verb; this doc records the app-facing contract.
+> **2026-07-04:** the `svm_sign_tx` verb this doc used to describe is
+> retired. Sign-only is no longer a tool — it is the **venue cell** of
+> `svm_commit_tx`, selected by the staged artifact's `broadcaster`
+> config. The SDK markers live in [sdk/src/builder.rs](../sdk/src/builder.rs)
+> (`host_target!(SvmStageTx, ...)` / `host_target!(SvmCommitTx, ...)`);
+> the old `SvmSignTx` marker is deleted.
 
-2026-05-29 verification note: `product-mono` currently has a separate
-agent-facing `svm-core` namespace (`svm_stage_ix` → `svm_simulate_tx` →
-`svm_commit_tx`, plus `svm_commit_message`). It does not implement a
-`sign_tx_solana` tool. This doc remains specifically about supporting
-existing app route plans, especially `apps/byreal`, that emit the SDK
-`host::SignTxSolana` marker and expect signed serialized transaction bytes
-to be routed into a submit tool.
+## The model
 
-## Why this primitive exists
+Two orthogonal decisions route every SVM commit, and **neither is made
+by the app's tools or the LLM**:
 
-Existing route-oriented host signing primitives (`commit_tx`, `evm_commit_message`) are EVM-only. The byreal app ([apps/byreal](../apps/byreal)) - and any future Solana app - needs an equivalent for SVM. We chose a **sign-only, singular** primitive that mirrors `evm_commit_message`'s shape: app builds an unsigned tx, host wallet signs, app submits. No batching, no host-side broadcast - those are caller concerns.
+- **Who signs** — kernel policy on the user's wallet
+  (`public_keys.signing_mode`, resolved by the host's signing gate):
+  `human_sync` routes to the connected wallet, `autonomous` signs
+  server-side via the delegated provider grant, `denied` rejects.
+- **Who submits** — the `Broadcaster` config
+  (`"wallet" | "venue" | "aomi"`): the app manifest's
+  `broadcast = { default, allowed }` block declares the operator
+  policy (see `BroadcastConfig` in [sdk/src/types.rs](../sdk/src/types.rs));
+  a stage call may pin `broadcaster` explicitly for flows with a hard
+  venue constraint (RFQ fills only settle through the venue). User
+  preferences and runtime retries resolve within `allowed`.
 
-## Tool contract
+`broadcaster: "venue"` is the app-broadcast pattern: the signed bytes
+return to the app's own `submit_*` tool and the venue broadcasts
+(byreal `send-swap-tx`, Jupiter `/execute`, Raydium tx-API).
 
-**Name:** `svm_sign_tx` (verbatim — must match the SDK marker).
+## Route-plan contract (what an app emits)
 
-**Args (LLM-facing, direct form):**
-```json
-{
-  "unsigned_tx": "<base64-encoded serialized Solana transaction bytes>",
-  "description": "<human-readable summary for the wallet UX>"
-}
+The canonical venue flow is a three-node plan — see byreal's
+`build_venue_commit_routes` in
+[apps/byreal/src/tool/mod.rs](../apps/byreal/src/tool/mod.rs):
+
+```rust
+ToolReturn::route(preview)
+    .next(|next| {
+        next.add::<host::SvmStageTx>(json!({
+            "tx": unsigned_tx_b64,          // base64 VersionedTransaction from the venue
+            "description": description,
+            "broadcaster": "venue",          // the artifact pin
+        }));
+        next.add::<host::SvmCommitTx>(json!({}))
+            .note("Call with { \"tx_id\": <pending_tx_id> } from the stage step.")
+            .bind_as("signed_tx");
+    })
+    .after::<SubmitSwap>(submit_template)
+    .awaits("signed_tx")
 ```
 
-**Args (LLM-facing, staged form):**
-```json
-{
-  "tx_id": 42,
-  "description": "<optional override>"
-}
-```
+1. **`svm_stage_tx`** decodes and validates the venue blob (payer must
+   equal the connected wallet), stamps `broadcaster` +
+   `preserve_blockhash` (default `true`; venue blobs must stay
+   byte-stable), and mints a `pending_tx_id`.
+2. **`svm_commit_tx { tx_id }`** executes under kernel policy. On a
+   human-sync wallet the FE gets a sign-only request
+   (`request_kind: "sign_transaction"`); on an autonomous-armed wallet
+   the kernel signs server-side with **no FE round-trip** — either way
+   the base64 signed bytes bind to the `signed_tx` alias.
+3. The **`submit_*` continuation** fires with `signed_tx` spliced into
+   its args and forwards the bytes to the venue endpoint.
 
-`unsigned_tx` is the output of `VersionedTransaction.serialize()` (or legacy `Transaction.serialize()`) base64-encoded. Versioned (v0) transactions are the common case; legacy is acceptable too. The wallet must support both.
+The app code cannot tell which signer ran — that is what makes venue
+flows schedulable/unattended without app changes.
 
-`description` is free-text (e.g. "Swap 1 USDC for 0.005 SOL via byreal RFQ"). Display it to the user alongside the wallet's own decoded view.
+## Bound artifact (unchanged from the old verb)
 
-**Bound artifact (what the SDK route plan awaits):** the signed transaction bytes, base64-encoded, as a single string. Apps bind this via `.bind_as("signed_tx")` and the runtime splices it into the matching `submit_*` continuation's `signed_tx` arg.
+The signed transaction bytes, base64-encoded, as a single string —
+the **full serialized signed tx**, not the 64-byte signature blob;
+byreal's submit endpoints take the whole serialized tx. Apps bind it
+via `.bind_as("signed_tx")` and the runtime splices it into the
+matching `submit_*` continuation's `signed_tx` arg.
 
-```json
-"<base64-encoded serialized signed tx, ready to broadcast or hand off>"
-```
+## Wallet expectations (unchanged)
 
-Do not return the transaction signature (the 64-byte sigblob) instead — apps need the full signed tx because byreal's submit endpoints take the whole serialized tx, not just the sig.
-
-## Runtime outline
-
-1. Register the tool in the host runtime's tool catalog under the exact name `svm_sign_tx`.
-2. Validate args: either `unsigned_tx` or `tx_id` must be present.
-3. For direct args, decode → `VersionedTransaction::deserialize(&base64::decode(unsigned_tx)?)`. If that fails, fall back to legacy `Transaction::deserialize`. Reject if neither parses. For staged args, resolve `tx_id` through the host's pending SVM transaction store and reconstruct the unsigned transaction bytes from the staged blob.
-4. Resolve the connected SVM wallet from session state. The convention used by app code ([apps/byreal/src/tool/mod.rs](../apps/byreal/src/tool/mod.rs) `resolve_address(_, ctx, "svm")`) is `domain.svm.address` in the user_state attributes — make sure the wallet adapter populates that on connect.
-5. Hand the deserialized tx to the wallet adapter (Phantom / Backpack / Solflare via the standard Solana wallet adapter) for `signTransaction(tx)`. Wallets typically render their own decoded preview alongside `description`.
-6. On approval, re-serialize the signed tx (`signedTx.serialize()`), base64-encode, return as the bound artifact.
-7. On user reject, return a structured error the runtime treats as terminal — same way `evm_commit_message` rejection is handled.
-
-**Do not broadcast.** Byreal's submit endpoints (and other Solana dApp patterns) want pre-broadcast bytes so they can route through their own RPCs / sequencers. If a future use case needs a sign-and-broadcast variant, add `host::SignAndSendTxSolana` as a separate primitive — don't conflate.
-
-## Reference files
-
-- **SDK marker + unit test:** [sdk/src/builder.rs](../sdk/src/builder.rs) — search for `SvmSignTx` and `route_builder_serializes_solana_sign_plan`.
-- **App-side route builder:** [apps/byreal/src/tool/mod.rs](../apps/byreal/src/tool/mod.rs) — `build_svm_sign_tx_routes` shows exactly what shape the runtime will see in `args` for the `svm_sign_tx` step.
-- **App-side consumers:** [apps/byreal/src/tool/spot.rs](../apps/byreal/src/tool/spot.rs) `BuildSwap` + `SubmitSwap`, and [apps/byreal/src/tool/lp.rs](../apps/byreal/src/tool/lp.rs) `BuildClaimRewards` + `SubmitClaimRewards`.
-- **Mirror primitive (EVM):** existing `evm_commit_message` in the host runtime.
-- **Wire-format reference:** [byreal-cli/src/core/transaction.ts](https://github.com/byreal-git/byreal-cli/blob/main/src/core/transaction.ts) shows the exact `deserialize / sign / serialize` flow we expect.
-
-## Validation
-
-After implementing, the byreal app's spot/lp write tools become exercisable end-to-end. Useful smoke tests:
-
-1. **Manual:** in a chat session, ask the LLM to swap $0.50 USDC for SOL on byreal. Watch the LLM call `byreal_spot_build_swap`, the runtime invoke `svm_sign_tx`, the wallet prompt, then `byreal_spot_submit_swap`. Verify the tx lands on Solana.
-2. **Automated:** see the scaffolded gate at [apps/byreal/tests/byreal_solana_smoke.rs](../apps/byreal/tests/byreal_solana_smoke.rs). Read smokes already pass (3/3); a write smoke can be added by mirroring the perps `place_live_smoke_order` in [apps/byreal/src/testing.rs](../apps/byreal/src/testing.rs) — sign locally with `solana-sdk` Keypair gated on `BANANA_SOLANA_PRIVATE_KEY`, but route through `byreal::testing::*` helpers so the byreal HTTP client paths are exercised.
+- The staged blob is `VersionedTransaction::serialize()` base64; v0 is
+  the common case, legacy acceptable.
+- The FE signature request shows `description` alongside the wallet's
+  own decoded view; the wallet signs, it does **not** broadcast.
+- Single sign per commit: wallets prompt once per tx. Batch flows issue
+  separate stage + commit step pairs, each binding a distinct alias.
 
 ## Conventions to match
 
-- **Domain attribute:** `domain.svm.address` — use this key when the wallet adapter publishes the connected pubkey. Apps look it up via `resolve_address(_, ctx, "svm")`.
-- **Chain-id convention:** Solana doesn't use EVM-style numeric chain IDs. If the host needs one for routing, use the string `"solana:mainnet"` / `"solana:devnet"` (Solana CAIP-2). Don't repurpose `--chain` flags from the EVM path.
-- **Single sign per call:** keep it singular. Wallets prompt once per tx; batch flows must issue separate `SvmSignTx` route steps. There is intentionally no plural form.
+- **Domain attribute:** `domain.svm.address` — the connected pubkey.
+  Apps look it up via `resolve_address(_, ctx, "svm")`.
+- **Chain-id convention:** Solana uses CAIP-2 strings
+  (`"solana:mainnet"` / `"solana:devnet"`), not EVM numeric chain ids.
+
+## Errors worth knowing
+
+- Fee-payer mismatch → staged rejection at `svm_stage_tx` (re-quote
+  with the connected address).
+- `signing_denied` / `signing_wallet_owned_by_other_account` → kernel
+  gate rejection at commit; not negotiable mid-run.
+- Blockhash expiry: venue blobs cannot be refreshed (bytes are
+  venue-authoritative) — on expiry, re-quote and re-stage. This is the
+  expected path, not an exception.
+
+## Reference files
+
+- **SDK markers + plan test:** [sdk/src/builder.rs](../sdk/src/builder.rs)
+  (SVM section) and `route_builder_serializes_solana_venue_commit_plan`
+  in [sdk/tests/route_builder.rs](../sdk/tests/route_builder.rs).
+- **App-side route builder:** [apps/byreal/src/tool/mod.rs](../apps/byreal/src/tool/mod.rs)
+  — `build_venue_commit_routes`.
+- **App-side consumers:** [apps/byreal/src/tool/spot.rs](../apps/byreal/src/tool/spot.rs)
+  `BuildSwap` + `SubmitSwap`, and
+  [apps/byreal/src/tool/lp.rs](../apps/byreal/src/tool/lp.rs)
+  `BuildClaimRewards` + `SubmitClaimRewards`.
+- **Host-side source of truth:** product-mono
+  `aomi/crates/tools/src/svm/tx/{stage_tx,commit}.rs` and
+  `aomi/crates/tools/src/svm/gate.rs`.
