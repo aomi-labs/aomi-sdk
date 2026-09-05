@@ -1,0 +1,15 @@
+[package]
+name = "morpho-vaults"
+version = "0.1.0"
+edition = "2024"
+description = "Morpho Vault monitor and deposit/withdraw assistant for Vault V1 and Vault V2"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+aomi-sdk = { path = "../../sdk" }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "query", "rustls"] }
+schemars = "1.0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
