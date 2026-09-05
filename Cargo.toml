@@ -43,6 +43,9 @@ exclude = [
     "apps/limitless",
     "apps/zora",
     "apps/krexa",
+    "apps/vaultsfyi",
+    "apps/cambrian",
+    "apps/morpho-vaults",
     "apps/stablefx",
 ]
 resolver = "2"

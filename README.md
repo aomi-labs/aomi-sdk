@@ -64,6 +64,9 @@ contributor** row.
 - `prediction`
 - `social`
 - `x`
+- `cambrian`
+- `vaultsfyi`
+- `morpho-vaults`
 
 ## What Can I Build?
 
