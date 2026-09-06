@@ -34,14 +34,17 @@ dyn_aomi_app!(
         tool::BuildWorldTrade,
     ],
     namespaces = ["evm-core"],
-    skill = {
-        id: "world-markets/trading",
-        sections: {
-            instructions: "skill/instructions.md",
-            workflows: "skill/workflows.md",
-            action_rules: "skill/action-rules.md",
-            safety: "skill/safety.md",
+    skills = [
+        {
+            id: "world-markets/trading",
+            description: "Trade listed world markets within the app's risk limits",
+            sections: {
+                instructions: "skill/instructions.md",
+                workflows: "skill/workflows.md",
+                action_rules: "skill/action-rules.md",
+                safety: "skill/safety.md",
+            },
+            guard: "skill/guard.json",
         },
-        guard: "skill/guard.json",
-    },
+    ],
 );

@@ -3,10 +3,23 @@ mod common;
 use std::fs;
 use std::process::Command;
 
-fn cargo_check_temp_crate(crate_name: &str, source: &str) -> std::process::Output {
+/// Writes a temp crate and `cargo check`s it. `extra_files` are paths relative
+/// to `src/` plus contents — for shapes that `include_str!` skill sections.
+fn cargo_check_temp_crate(
+    crate_name: &str,
+    source: &str,
+    extra_files: &[(&str, &str)],
+) -> std::process::Output {
     let temp_dir = tempfile::tempdir().expect("failed to create temp crate");
     let src_dir = temp_dir.path().join("src");
     fs::create_dir_all(&src_dir).expect("failed to create src dir");
+    for (path, contents) in extra_files {
+        let full = src_dir.join(path);
+        if let Some(parent) = full.parent() {
+            fs::create_dir_all(parent).expect("failed to create extra file dir");
+        }
+        fs::write(full, contents).expect("failed to write extra file");
+    }
 
     let cargo_toml = format!(
         r#"[package]
@@ -74,6 +87,7 @@ impl DynAomiTool for Tool {
 
 dyn_aomi_app!(app = App, name = "shape_sync", version = "0.1.0", preamble = "shape", tools = [Tool]);
 "#,
+        &[],
     );
 
     assert!(
@@ -122,6 +136,7 @@ impl DynAomiTool for Tool {
 
 dyn_aomi_app!(app = App, name = "shape_async", version = "0.1.0", preamble = "shape", tools = [Tool]);
 "#,
+        &[],
     );
 
     assert!(
@@ -170,6 +185,7 @@ dyn_aomi_app!(
     namespaces = []
 );
 "#,
+        &[],
     );
 
     assert!(
@@ -216,6 +232,7 @@ dyn_aomi_app!(
     evm_execution = AomiSponsored4337
 );
 "#,
+        &[],
     );
 
     assert!(
@@ -257,6 +274,7 @@ impl DynAomiTool for Tool {
 
 dyn_aomi_app!(app = App, name = "shape_fail", version = "0.1.0", preamble = "shape", tools = [Tool]);
 "#,
+        &[],
     );
 
     assert!(
@@ -297,10 +315,76 @@ impl DynAomiTool for Tool {
 
 dyn_aomi_app!(app = App, name = "shape_fail_schema", version = "0.1.0", preamble = "shape", tools = [Tool]);
 "#,
+        &[],
     );
 
     assert!(
         !output.status.success(),
         "expected missing JsonSchema bound to fail compilation"
+    );
+}
+
+const SKILL_FILES: &[(&str, &str)] = &[
+    ("skill/instructions.md", "Operating rules."),
+    ("skill/safety.md", "Never commit."),
+    ("skill/playbook.md", "Open a world, apply, read, revert."),
+    (
+        "skill/guard.json",
+        r#"{"evm":{"contracts":{"R":"0x1111111111111111111111111111111111111111"}}}"#,
+    ),
+];
+
+const MULTI_SKILL_APP: &str = r#"
+use aomi_sdk::{DynAomiTool, DynToolCallCtx, dyn_aomi_app, schemars::JsonSchema, serde_json::{json, Value}};
+use serde::Deserialize;
+
+#[derive(Clone, Default)]
+struct App;
+
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+struct Args {
+    name: String,
+}
+
+struct Tool;
+
+impl DynAomiTool for Tool {
+    type App = App;
+    type Args = Args;
+
+    const NAME: &'static str = "tool";
+    const DESCRIPTION: &'static str = "shape test tool";
+
+    fn run(_app: &Self::App, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
+        Ok(json!({ "hello": args.name }))
+    }
+}
+
+dyn_aomi_app!(app = App, name = "shape-skills", version = "0.1.0", preamble = "shape", tools = [Tool],
+    namespaces = ["evm-reads", "evm-sim"],
+    skills = [
+        {
+            id: "shape-skills/operating",
+            description: "Operating rules",
+            sections: { instructions: "skill/instructions.md", safety: "skill/safety.md" },
+            guard: "skill/guard.json",
+            hooks: { tool: { pre: ["value_at_risk"] } },
+        },
+        {
+            id: "shape-skills/playbook",
+            description: "Fork-simulate and prove post-conditions",
+            tags: ["simulation"],
+            sections: { workflow: "skill/playbook.md" },
+        },
+    ]);
+"#;
+
+#[test]
+fn multi_skill_dyn_app_shape_compiles() {
+    let output = cargo_check_temp_crate("dyn-sdk-shape-pass-skills", MULTI_SKILL_APP, SKILL_FILES);
+    assert!(
+        output.status.success(),
+        "expected multi-skill shape to compile:\n{}",
+        String::from_utf8_lossy(&output.stderr)
     );
 }

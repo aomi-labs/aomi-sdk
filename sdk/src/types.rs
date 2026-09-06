@@ -149,12 +149,12 @@ pub struct DynManifest {
     /// controlled.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub evm_execution: Option<EvmExecutionRequirement>,
-    /// App-scoped skill: structured instruction sections, an optional guard
-    /// table, and host hook bindings, activated by app binding (see
-    /// [`crate::AppSkillManifest`]). Absent → the app has only its plain
-    /// `preamble`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub skill: Option<crate::AppSkillManifest>,
+    /// App-scoped skills: structured instruction sections, optional guard
+    /// tables, and host hook bindings (see [`crate::AppSkillManifest`]).
+    /// Every skill joins only the bound thread's skill index and reaches the
+    /// model after activation. Empty means no app-scoped skills.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skills: Vec<crate::AppSkillManifest>,
 }
 
 /// Operator-declared broadcast policy: who submits this app's signed SVM
@@ -458,7 +458,11 @@ pub trait DynAomiApp: Clone + Default + Send + Sync + 'static {
 
     /// Host-side namespaces this plugin requires. Canonical names only:
     ///
-    /// - EVM: `"evm-core"`
+    /// - EVM meta: `"evm-core"` (reads + stage/simulate/sign-message/commit)
+    /// - EVM lanes: `"evm-reads"` (contract reads, account/context lookups,
+    ///   fork sync) and `"evm-sim"` (`evm_stage_tx` plus session simulation
+    ///   worlds: `sim_open` / `sim_apply` / `sim_call` / `sim_snapshot` /
+    ///   `sim_revert` / `sim_close`; no commit tools)
     /// - SVM meta: `"svm-core"` (expands to the full SVM catalogue)
     /// - SVM lanes (2026-07 recut): `"svm-reads"`, `"svm-write-ix"`
     ///   (compose from instructions: `svm_stage_ix` / `svm_simulate_ix` /
@@ -508,10 +512,10 @@ pub trait DynAomiApp: Clone + Default + Send + Sync + 'static {
         None
     }
 
-    /// App-scoped skill block. Default: none. Typically set via the
-    /// `skill = { ... }` arm of `dyn_aomi_app!`.
-    fn skill(&self) -> Option<crate::AppSkillManifest> {
-        None
+    /// App-scoped skills. Default: none. Set via the `skills = [ ... ]` arm
+    /// of `dyn_aomi_app!`; every skill is activated on demand.
+    fn skills(&self) -> Vec<crate::AppSkillManifest> {
+        Vec::new()
     }
 
     /// Build the full [`DynManifest`] for host consumption.
@@ -526,7 +530,7 @@ pub trait DynAomiApp: Clone + Default + Send + Sync + 'static {
             secrets: self.secrets(),
             broadcast: self.broadcast(),
             evm_execution: self.evm_execution(),
-            skill: self.skill(),
+            skills: self.skills(),
         }
     }
 }

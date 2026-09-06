@@ -63,7 +63,7 @@ mod tests {
             }]),
             broadcast: None,
             evm_execution: None,
-            skill: None,
+            skills: vec![],
         };
         let json: serde_json::Value =
             serde_json::from_str(&serde_json::to_string(&manifest).unwrap()).unwrap();

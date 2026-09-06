@@ -13,7 +13,19 @@ use aomi_sdk::{AOMI_SDK_VERSION, DynFnHandle, DynManifest};
 /// declared⇒allowed defaults expanded. Printed at compile so guard drift is
 /// caught at release review; `None` when the app ships no guard.
 pub(crate) fn render_permissions(manifest: &DynManifest) -> Option<String> {
-    let skill = manifest.skill.as_ref()?;
+    let rendered: Vec<String> = manifest
+        .skills
+        .iter()
+        .filter_map(render_skill_permissions)
+        .collect();
+    if rendered.is_empty() {
+        None
+    } else {
+        Some(rendered.join("\n"))
+    }
+}
+
+fn render_skill_permissions(skill: &aomi_sdk::AppSkillManifest) -> Option<String> {
     let guard = skill.guard.as_ref()?;
     let mut out = String::new();
     let _ = writeln!(out, "  permissions ({}):", guard.id);
@@ -292,12 +304,12 @@ fn validate_manifest(manifest: &DynManifest) -> Vec<String> {
         }
     }
 
-    // App-skill block: structural validation (id scoping, sections, token
-    // budget, guard-table bytes and allowlist references, digest). Shares the
-    // validator with the host's app loader — a build that passes here loads.
-    if let Some(ref skill) = manifest.skill
-        && let Err(skill_errors) = skill.validate(&manifest.name)
-    {
+    // App-skill blocks: structural validation (id scoping, sections, token
+    // activation budget, guard-table bytes and allowlist references, digest,
+    // and unique ids).
+    // Shares the validator with the host's app loader — a build that
+    // passes here loads.
+    if let Err(skill_errors) = aomi_sdk::validate_app_skills(&manifest.name, &manifest.skills) {
         errors.extend(
             skill_errors
                 .into_iter()
@@ -331,7 +343,7 @@ mod tests {
             secrets: None,
             broadcast: None,
             evm_execution: None,
-            skill: None,
+            skills: vec![],
         };
 
         let errors = super::validate_manifest(&manifest);
@@ -352,12 +364,14 @@ mod tests {
             secrets: None,
             broadcast: None,
             evm_execution: None,
-            skill: Some(aomi_sdk::AppSkillManifest::from_parts(
+            skills: vec![aomi_sdk::AppSkillManifest::from_parts(
                 "other-app/trading",
+                "Trade",
+                vec![],
                 vec![("instructions", "content")],
                 None,
                 vec![],
-            )),
+            )],
         };
 
         let errors = super::validate_manifest(&manifest);
@@ -367,6 +381,54 @@ mod tests {
             errors[0].contains("must be `good-app/"),
             "got: {}",
             errors[0]
+        );
+    }
+
+    #[test]
+    fn validate_allows_separate_guards_and_rejects_undescribed_skills() {
+        let guard = r#"{"evm":{"contracts":{"R":"0x1111111111111111111111111111111111111111"},"chain_ids":[1]}}"#;
+        let manifest = DynManifest {
+            sdk_version: AOMI_SDK_VERSION.to_string(),
+            name: "good-app".to_string(),
+            version: "0.1.0".to_string(),
+            preamble: "x".to_string(),
+            tools: vec![],
+            namespaces: None,
+            secrets: None,
+            broadcast: None,
+            evm_execution: None,
+            skills: vec![
+                aomi_sdk::AppSkillManifest::from_parts(
+                    "good-app/one",
+                    "one",
+                    vec![],
+                    vec![("instructions", "a")],
+                    Some(guard),
+                    vec![],
+                ),
+                aomi_sdk::AppSkillManifest::from_parts(
+                    "good-app/two",
+                    "two",
+                    vec![],
+                    vec![("instructions", "b")],
+                    Some(guard),
+                    vec![],
+                ),
+                aomi_sdk::AppSkillManifest::from_parts(
+                    "good-app/playbook",
+                    "",
+                    vec![],
+                    vec![("workflow", "c")],
+                    None,
+                    vec![],
+                ),
+            ],
+        };
+
+        let errors = super::validate_manifest(&manifest);
+        assert!(
+            errors.iter().any(|e| e.contains("needs a description")),
+            "{errors:?}"
         );
     }
 }
