@@ -17,6 +17,47 @@ pub(crate) struct GmxApp;
 const ARBITRUM_API: &str = "https://arbitrum-api.gmxinfra.io";
 const AVALANCHE_API: &str = "https://avalanche-api.gmxinfra.io";
 
+// Account data (positions, orders) moved off the oracle hosts to the GMX API
+// (`https://{chain}.gmxapi.io/v1`, `address` query param). The oracle hosts
+// now answer `/positions` and `/orders` with 500 / timeouts for every account.
+const ARBITRUM_ACCOUNT_API: &str = "https://arbitrum.gmxapi.io/v1";
+const AVALANCHE_ACCOUNT_API: &str = "https://avalanche.gmxapi.io/v1";
+
+fn account_api_for(chain: Option<&str>) -> String {
+    match chain.map(|s| s.to_lowercase()).as_deref() {
+        Some("avalanche") | Some("avax") => std::env::var("GMX_AVALANCHE_ACCOUNT_API_ENDPOINT")
+            .unwrap_or_else(|_| AVALANCHE_ACCOUNT_API.to_string()),
+        _ => std::env::var("GMX_ARBITRUM_ACCOUNT_API_ENDPOINT")
+            .unwrap_or_else(|_| ARBITRUM_ACCOUNT_API.to_string()),
+    }
+}
+
+/// `GET {account_api}/{resource}?address=<account>` on the GMX API. Returns the
+/// JSON array as-is (one object per position / order).
+async fn fetch_account_resource(
+    base: &str,
+    resource: &str,
+    account: &str,
+) -> Result<Value, String> {
+    let url = format!("{base}/{resource}");
+    let response = reqwest::Client::new()
+        .get(&url)
+        .query(&[("address", account)])
+        .send()
+        .await
+        .map_err(|e| format!("[gmx] {resource} {account}: request failed: {e}"))?;
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        let snippet: String = body.chars().take(200).collect();
+        return Err(format!(
+            "[gmx] {resource} {account}: HTTP {status}: {snippet}"
+        ));
+    }
+    serde_json::from_str(&body)
+        .map_err(|e| format!("[gmx] {resource} {account}: invalid JSON: {e}"))
+}
+
 // ============================================================================
 // Helpers
 // ============================================================================
@@ -180,16 +221,15 @@ impl DynAomiTool for GetGmxPositions {
 
     fn run(_app: &GmxApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let chain = resolve_chain_label(args.chain.as_deref());
-        let base = base_url_for(args.chain.as_deref());
+        let base = account_api_for(args.chain.as_deref());
         let account = args.account.clone();
         rt()?.block_on(async move {
-            let client = GmxClient::new(&base);
-            let resp = client
-                .get_positions(&account)
-                .await
-                .map_err(|e| format!("[gmx] positions {account}: {e}"))?
-                .into_inner();
-            ok(resp, chain)
+            let positions = fetch_account_resource(&base, "positions", &account).await?;
+            let count = positions.as_array().map(Vec::len).unwrap_or(0);
+            ok(
+                json!({ "account": account, "count": count, "positions": positions }),
+                chain,
+            )
         })
     }
 }
@@ -217,16 +257,15 @@ impl DynAomiTool for GetGmxOrders {
 
     fn run(_app: &GmxApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let chain = resolve_chain_label(args.chain.as_deref());
-        let base = base_url_for(args.chain.as_deref());
+        let base = account_api_for(args.chain.as_deref());
         let account = args.account.clone();
         rt()?.block_on(async move {
-            let client = GmxClient::new(&base);
-            let resp = client
-                .get_orders(&account)
-                .await
-                .map_err(|e| format!("[gmx] orders {account}: {e}"))?
-                .into_inner();
-            ok(resp, chain)
+            let orders = fetch_account_resource(&base, "orders", &account).await?;
+            let count = orders.as_array().map(Vec::len).unwrap_or(0);
+            ok(
+                json!({ "account": account, "count": count, "orders": orders }),
+                chain,
+            )
         })
     }
 }

@@ -1,0 +1,34 @@
+{
+  "user_story": "Look up a well-known Farcaster account, read its recent casts, and search casts about a topic. Read-only.",
+  "turns": [
+    {
+      "prompt": "Look up the Farcaster user @vitalik.eth and tell me their FID, follower count and bio.",
+      "expected_tools": {
+        "must_call": [
+          "neynar_lookup_user"
+        ]
+      }
+    },
+    {
+      "prompt": "What have they posted recently? Show the 5 latest casts.",
+      "expected_tools": {
+        "must_call": [
+          "neynar_get_user_casts"
+        ]
+      }
+    },
+    {
+      "prompt": "Now search Farcaster for casts mentioning 'base' and summarize the top few.",
+      "expected_tools": {
+        "any_of": [
+          "neynar_search_casts",
+          "neynar_search_channels"
+        ]
+      }
+    }
+  ],
+  "final_assertion": {
+    "no_errors": true,
+    "max_turns": 10
+  }
+}

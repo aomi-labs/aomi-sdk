@@ -82,7 +82,6 @@ paths:
                           - amountOut
                           - expectedDurationSeconds
                           - quoteExpiresAt
-                          - supportedDepositMethods
                           - tags
                           - validBefore
                         routeId:

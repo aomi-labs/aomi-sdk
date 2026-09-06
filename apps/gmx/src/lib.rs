@@ -40,7 +40,7 @@ Pass `chain` on every tool when the user mentions a specific chain; otherwise de
 dyn_aomi_app!(
     app = tool::GmxApp,
     name = "gmx",
-    version = "0.1.0",
+    version = "0.1.1",
     preamble = PREAMBLE,
     tools = [
         tool::GetGmxPrices,

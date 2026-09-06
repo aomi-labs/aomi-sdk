@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2024"
 description = "Morpho Vault monitor and deposit/withdraw assistant for Vault V1 and Vault V2"
 
+# Retired from the official bundle (2026-09-06): superseded by the product-mono
+# `morpho` skill (six injected vault tools + vault-aware guard). Code stays for
+# reference; flip `skip` to re-enable.
+[package.metadata.aomi]
+skip = true
+
 [lib]
 crate-type = ["cdylib"]
 
