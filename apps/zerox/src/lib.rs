@@ -53,7 +53,7 @@ const SECRET_API_KEY: Secret = Secret::new(
 dyn_aomi_app!(
     app = tool::ZeroxApp,
     name = "zerox",
-    version = "0.1.0",
+    version = "0.1.1",
     preamble = PREAMBLE,
     tools = [
         tool::ZeroxGetPrice,

@@ -45,7 +45,7 @@ No API key. Khalani's HTTP surface is unauthenticated. The user signs the deposi
 dyn_aomi_app!(
     app = tool::KhalaniApp,
     name = "khalani",
-    version = "0.1.0",
+    version = "0.1.1",
     preamble = PREAMBLE,
     tools = [
         tool::Quote,

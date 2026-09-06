@@ -1,0 +1,25 @@
+{
+  "user_story": "Run a tiny ad-hoc SQL query on Dune and read the rows back, then check what saved queries the account owns. Read-only; costs a few Dune credits.",
+  "turns": [
+    {
+      "prompt": "Run this SQL on Dune and show me the result rows: SELECT 1 AS one, 'aomi' AS name",
+      "expected_tools": {
+        "must_call": [
+          "dune_run_sql"
+        ]
+      }
+    },
+    {
+      "prompt": "Which saved queries does this Dune account own?",
+      "expected_tools": {
+        "must_call": [
+          "dune_list_my_queries"
+        ]
+      }
+    }
+  ],
+  "final_assertion": {
+    "no_errors": true,
+    "max_turns": 8
+  }
+}

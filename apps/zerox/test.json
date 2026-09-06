@@ -1,0 +1,42 @@
+{
+  "user_story": "Price a 0x swap of 1 WETH into USDC on Ethereum, then build the on-chain swap and stage the transaction(s) for the connected wallet. Nothing is broadcast.",
+  "wallet_seed": {
+    "address": "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+    "chain_id": 1,
+    "is_connected": true
+  },
+  "turns": [
+    {
+      "prompt": "Using 0x on Ethereum, how much USDC would I get for selling 1 WETH (0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2 -> 0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48)?",
+      "expected_tools": {
+        "must_call": [
+          "zerox_get_price"
+        ]
+      }
+    },
+    {
+      "prompt": "Good, build that swap for my connected wallet and stage the transactions. Do not use the gasless path.",
+      "expected_tools": {
+        "must_call": [
+          "zerox_build_swap"
+        ]
+      }
+    }
+  ],
+  "final_assertion": {
+    "user_state": {
+      "pending_txs": {
+        "min_count": 1,
+        "expect_any": [
+          {
+            "chain_id": 1,
+            "data_starts_with": "0x",
+            "data_min_len": 10
+          }
+        ]
+      }
+    },
+    "no_errors": false,
+    "max_turns": 12
+  }
+}

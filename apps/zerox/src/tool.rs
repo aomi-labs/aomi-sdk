@@ -65,6 +65,26 @@ fn ok<T: Serialize>(value: T) -> Result<Value, String> {
     })
 }
 
+/// Retry a 0x call a couple of times on transport-level failures (connection
+/// resets and hung requests show up as `Communication Error` a few percent of
+/// the time against api.0x.org). HTTP-level errors are returned immediately.
+async fn with_transport_retry<T, Fut, F>(mut op: F) -> Result<T, aomi_ext::zerox::Error<()>>
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = Result<T, aomi_ext::zerox::Error<()>>>,
+{
+    let mut attempt = 0;
+    loop {
+        match op().await {
+            Err(aomi_ext::zerox::Error::CommunicationError(_)) if attempt < 2 => {
+                attempt += 1;
+                tokio::time::sleep(Duration::from_millis(500 * attempt as u64)).await;
+            }
+            other => return other,
+        }
+    }
+}
+
 fn rt() -> Result<tokio::runtime::Runtime, String> {
     tokio::runtime::Runtime::new().map_err(|e| format!("[0x] runtime: {e}"))
 }
@@ -236,8 +256,8 @@ impl DynAomiTool for ZeroxGetPrice {
         let client = make_client(&api_key)?;
         let runtime = rt()?;
         runtime.block_on(async move {
-            let resp = client
-                .get_allowance_holder_price(
+            let resp = with_transport_retry(|| {
+                client.get_allowance_holder_price(
                     &buy_addr,
                     chain_id,
                     &amount_wei,
@@ -245,9 +265,10 @@ impl DynAomiTool for ZeroxGetPrice {
                     Some(slippage),
                     taker.as_deref(),
                 )
-                .await
-                .map_err(|e| format!("[0x] get_allowance_holder_price: {e}"))?
-                .into_inner();
+            })
+            .await
+            .map_err(|e| format!("[0x] get_allowance_holder_price: {e}"))?
+            .into_inner();
             ok::<SwapQuote>(resp)
         })
     }
@@ -309,8 +330,8 @@ impl DynAomiTool for ZeroxBuildSwap {
         );
         let quote = runtime
             .block_on(async move {
-                client
-                    .get_allowance_holder_quote(
+                with_transport_retry(|| {
+                    client.get_allowance_holder_quote(
                         &buy_addr_q,
                         chain_id,
                         &amount_q,
@@ -318,7 +339,8 @@ impl DynAomiTool for ZeroxBuildSwap {
                         Some(slippage),
                         Some(&taker_q),
                     )
-                    .await
+                })
+                .await
             })
             .map_err(|e| format!("[0x] get_allowance_holder_quote: {e}"))?
             .into_inner();
