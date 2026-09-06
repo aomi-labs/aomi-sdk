@@ -66,7 +66,7 @@ contributor** row.
 - `x`
 - `cambrian`
 - `vaultsfyi`
-- `morpho-vaults`
+- `morpho-vaults` (retired 2026-09-06, superseded by the product-mono `morpho` skill; `metadata.aomi.skip = true`)
 
 ## What Can I Build?
 
