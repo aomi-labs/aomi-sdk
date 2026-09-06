@@ -29,6 +29,7 @@ exclude = [
     "apps/world-markets",
     "apps/molinar",
     "apps/morpho",
+    "apps/morpho-vaults",
     "apps/neynar",
     "apps/okx",
     "apps/oneinch",
@@ -43,6 +44,8 @@ exclude = [
     "apps/limitless",
     "apps/zora",
     "apps/krexa",
+    "apps/cambrian",
+    "apps/vaultsfyi",
 ]
 resolver = "2"
 

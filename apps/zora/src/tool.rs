@@ -62,13 +62,11 @@ fn urlencode(s: &str) -> String {
     out
 }
 
-/// Resolve the optional Zora API key (falls back to `ZORA_API_KEY` env).
-/// Returning `None` is fine — every Zora endpoint also works unauthenticated
-/// at a lower rate limit.
-fn resolve_key(api_key: Option<&str>) -> Option<String> {
-    api_key
-        .map(str::to_string)
-        .or_else(|| std::env::var("ZORA_API_KEY").ok())
+/// Resolve the optional Zora API key: explicit arg, then the host-provisioned
+/// `ZORA_API_KEY` slot. Returning `None` is fine — every Zora endpoint also
+/// works unauthenticated at a lower rate limit.
+fn resolve_key(ctx: &DynToolCallCtx, api_key: Option<&str>) -> Option<String> {
+    resolve_secret_value(ctx, api_key, "ZORA_API_KEY", "").ok()
 }
 
 /// GET `path_with_query` and decode as JSON. Injects `api-key` header when
@@ -121,8 +119,8 @@ impl DynAomiTool for GetCoin {
     const NAME: &'static str = "zora_get_coin";
     const DESCRIPTION: &'static str = "Get full detail for a Zora coin by address — name, symbol, creator, market data. Use after the user names a coin or one is discovered via `zora_get_trends_by_name`.";
 
-    fn run(_app: &ZoraApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let key = resolve_key(args.api_key.as_deref());
+    fn run(_app: &ZoraApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
+        let key = resolve_key(&ctx, args.api_key.as_deref());
         rt()?.block_on(async move {
             let chain = args.chain.unwrap_or(8453);
             let path = format!("/coin?address={}&chain={}", urlencode(&args.address), chain);
@@ -153,8 +151,8 @@ impl DynAomiTool for GetCoinHolders {
     const DESCRIPTION: &'static str =
         "Get top holders of a Zora coin. Useful to gauge concentration before trading.";
 
-    fn run(_app: &ZoraApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let key = resolve_key(args.api_key.as_deref());
+    fn run(_app: &ZoraApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
+        let key = resolve_key(&ctx, args.api_key.as_deref());
         rt()?.block_on(async move {
             let chain = args.chain_id.unwrap_or(8453);
             let mut path = format!(
@@ -189,8 +187,8 @@ impl DynAomiTool for GetCoinPriceHistory {
     const NAME: &'static str = "zora_get_coin_price_history";
     const DESCRIPTION: &'static str = "Price + volume history for a Zora coin. Use when the user asks for a chart or wants momentum.";
 
-    fn run(_app: &ZoraApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let key = resolve_key(args.api_key.as_deref());
+    fn run(_app: &ZoraApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
+        let key = resolve_key(&ctx, args.api_key.as_deref());
         rt()?.block_on(async move {
             let chain = args.chain.unwrap_or(8453);
             let path = format!(
@@ -222,8 +220,8 @@ impl DynAomiTool for GetTrendsByName {
     const NAME: &'static str = "zora_get_trends_by_name";
     const DESCRIPTION: &'static str = "Search trending Zora creator/content coins by name. Use to discover what's hot or find a coin matching a term.";
 
-    fn run(_app: &ZoraApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let key = resolve_key(args.api_key.as_deref());
+    fn run(_app: &ZoraApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
+        let key = resolve_key(&ctx, args.api_key.as_deref());
         rt()?.block_on(async move {
             // Cap at 10 by default — the raw response per coin is ~3KB and
             // history/sidebar truncation chops off contract addresses past
@@ -303,8 +301,8 @@ impl DynAomiTool for GetFeaturedCreators {
     const NAME: &'static str = "zora_get_featured_creators";
     const DESCRIPTION: &'static str = "Current featured/top creators on Zora. Use when the user wants to discover noteworthy creator-coin issuers.";
 
-    fn run(_app: &ZoraApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let key = resolve_key(args.api_key.as_deref());
+    fn run(_app: &ZoraApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
+        let key = resolve_key(&ctx, args.api_key.as_deref());
         rt()?.block_on(async move {
             let mut path = String::from("/featuredCreators");
             if let Some(first) = args.first {
@@ -345,8 +343,8 @@ impl DynAomiTool for GetProfile {
     const DESCRIPTION: &'static str =
         "Get a full Zora profile by handle, address, or profile ID — bio, stats, deployed coins.";
 
-    fn run(_app: &ZoraApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let key = resolve_key(args.api_key.as_deref());
+    fn run(_app: &ZoraApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
+        let key = resolve_key(&ctx, args.api_key.as_deref());
         rt()?.block_on(async move {
             let path = format!("/profile?identifier={}", urlencode(&args.identifier));
             let resp = public_get(&path, key.as_deref()).await?;

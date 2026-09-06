@@ -52,11 +52,12 @@ fn rt() -> Result<tokio::runtime::Runtime, String> {
     tokio::runtime::Runtime::new().map_err(|e| format!("[lifi] runtime: {e}"))
 }
 
-/// Build a LI.FI client. `LIFI_API_KEY` (header `x-lifi-api-key`) is honoured
-/// when set; quoting and status work without it.
-fn make_client() -> Result<GenClient, String> {
+/// Build a LI.FI client. The `LIFI_API_KEY` slot (header `x-lifi-api-key`)
+/// is honoured when the host has provisioned it; quoting and status work
+/// without it.
+fn make_client(ctx: &DynToolCallCtx) -> Result<GenClient, String> {
     let mut builder = reqwest::ClientBuilder::new().timeout(Duration::from_secs(30));
-    if let Ok(api_key) = std::env::var("LIFI_API_KEY") {
+    if let Ok(api_key) = resolve_secret_value(ctx, None, "LIFI_API_KEY", "") {
         let mut headers = reqwest::header::HeaderMap::new();
         let mut key = reqwest::header::HeaderValue::from_str(&api_key)
             .map_err(|e| format!("[lifi] invalid LIFI_API_KEY: {e}"))?;
@@ -236,7 +237,7 @@ impl DynAomiTool for LifiGetSwapQuote {
     const NAME: &'static str = "lifi_get_swap_quote";
     const DESCRIPTION: &'static str = "Use to preview a same-chain or cross-chain swap via LI.FI (no signing). Returns expected `toAmount`, route summary, and gas/fee estimates. For execution, follow up with `lifi_build_swap_tx`.";
 
-    fn run(_app: &LifiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
+    fn run(_app: &LifiApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
         let (chain_name, _) = get_chain_info(&args.chain)?;
         let from_decimals = get_token_decimals(chain_name, &args.sell_token);
         let amount_wei = amount_to_base_units(args.amount, from_decimals)?;
@@ -252,7 +253,7 @@ impl DynAomiTool for LifiGetSwapQuote {
         let from_chain_id = normalize_lifi_chain_id(&args.chain)?;
         let to_chain_id = normalize_lifi_chain_id(&dest_chain)?;
 
-        let client = make_client()?;
+        let client = make_client(&ctx)?;
         let runtime = rt()?;
         let receiver = args.receiver_address.clone();
         runtime.block_on(async move {
@@ -310,7 +311,7 @@ impl DynAomiTool for LifiBuildSwapTx {
     const NAME: &'static str = "lifi_build_swap_tx";
     const DESCRIPTION: &'static str = "Use when the user is ready to execute a same-chain or cross-chain swap via LI.FI. Returns `{ approval_tx?, main_tx, payload }`. If `approval_tx` is present (ERC-20 sell needing allowance), stage it first via `stage_tx` with `data: { raw }`, then stage `main_tx` the same way; `simulate_batch` on the staged ids; then `commit_tx` once per staged tx. Never re-encode LI.FI calldata.";
 
-    fn run(_app: &LifiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
+    fn run(_app: &LifiApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
         let (chain_name, _) = get_chain_info(&args.chain)?;
         let from_decimals = get_token_decimals(chain_name, &args.sell_token);
         let amount_wei = amount_to_base_units(args.amount, from_decimals)?;
@@ -325,7 +326,7 @@ impl DynAomiTool for LifiBuildSwapTx {
         let from_chain_id = normalize_lifi_chain_id(&args.chain)?;
         let to_chain_id = normalize_lifi_chain_id(&dest_chain)?;
 
-        let client = make_client()?;
+        let client = make_client(&ctx)?;
         let runtime = rt()?;
         let sender = args.sender_address.clone();
         let receiver = args.receiver_address.clone();
@@ -397,7 +398,7 @@ impl DynAomiTool for LifiBuildBridgeTx {
     const NAME: &'static str = "lifi_build_bridge_tx";
     const DESCRIPTION: &'static str = "Use when the user wants to bridge a token from one chain to another via LI.FI. Returns an executable bridge payload (with `executable_tx`) when both `from_address` and `to_address` are provided; otherwise returns a planning-only estimate. Stage and execute the same way as `lifi_build_swap_tx`. After executing, track on-chain finality with `lifi_get_transfer_status`.";
 
-    fn run(_app: &LifiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
+    fn run(_app: &LifiApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
         let (from_chain_name, _) = get_chain_info(&args.from_chain)?;
         let (to_chain_name, _) = get_chain_info(&args.to_chain)?;
         let from_addr = get_token_address(from_chain_name, &args.from_token)?;
@@ -434,7 +435,7 @@ impl DynAomiTool for LifiBuildBridgeTx {
             }));
         }
 
-        let client = make_client()?;
+        let client = make_client(&ctx)?;
         let runtime = rt()?;
         let from_addr_for_async = from_addr.clone();
         let amount_wei_for_async = amount_wei.clone();
@@ -511,7 +512,7 @@ impl DynAomiTool for LifiGetTransferStatus {
     const NAME: &'static str = "lifi_get_transfer_status";
     const DESCRIPTION: &'static str = "Use to track a LI.FI cross-chain transfer by source-chain tx hash. Returns `status` (NOT_FOUND, INVALID, PENDING, DONE, FAILED), substatus, and the destination-chain receipt when complete. Poll periodically while status is PENDING.";
 
-    fn run(_app: &LifiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
+    fn run(_app: &LifiApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
         let from_chain = args
             .from_chain
             .as_ref()
@@ -522,7 +523,7 @@ impl DynAomiTool for LifiGetTransferStatus {
             .as_ref()
             .map(|c| normalize_lifi_chain_id(c))
             .transpose()?;
-        let client = make_client()?;
+        let client = make_client(&ctx)?;
         let runtime = rt()?;
         let bridge = args.bridge.clone();
         let tx_hash = args.tx_hash.clone();
@@ -561,8 +562,8 @@ impl DynAomiTool for LifiListChains {
     const NAME: &'static str = "lifi_list_chains";
     const DESCRIPTION: &'static str = "Use when the user asks 'what chains does LI.FI support?' Returns the supported chain list with names, ids, and native currency. Optionally filter by `chain_types` (EVM, SVM).";
 
-    fn run(_app: &LifiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = make_client()?;
+    fn run(_app: &LifiApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
+        let client = make_client(&ctx)?;
         let runtime = rt()?;
         let chain_types = args.chain_types.clone();
         runtime.block_on(async move {
@@ -595,8 +596,8 @@ impl DynAomiTool for LifiListTokens {
     const NAME: &'static str = "lifi_list_tokens";
     const DESCRIPTION: &'static str = "Use when the user asks 'what tokens are bridgeable on chain X?' or needs a token's address/decimals. Returns the supported-token map keyed by chain ID. Pass `chains` (comma-separated chain IDs) to scope the response.";
 
-    fn run(_app: &LifiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = make_client()?;
+    fn run(_app: &LifiApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
+        let client = make_client(&ctx)?;
         let runtime = rt()?;
         let chains = args.chains.clone();
         runtime.block_on(async move {

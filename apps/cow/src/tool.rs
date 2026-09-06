@@ -69,11 +69,12 @@ fn base_url_for_chain(chain: &str) -> Result<String, String> {
 }
 
 /// Build a generated client with optional Bearer auth. CoW's public API is
-/// accessible without an API key, but `COW_API_KEY` is honoured if set.
-fn make_client(chain: &str) -> Result<CowClient, String> {
+/// accessible without an API key, but the `COW_API_KEY` slot is honoured
+/// when the host has provisioned it.
+fn make_client(chain: &str, ctx: &DynToolCallCtx) -> Result<CowClient, String> {
     let baseurl = base_url_for_chain(chain)?;
     let mut builder = reqwest::ClientBuilder::new().timeout(Duration::from_secs(30));
-    if let Ok(api_key) = std::env::var("COW_API_KEY") {
+    if let Ok(api_key) = resolve_secret_value(ctx, None, "COW_API_KEY", "") {
         let mut headers = reqwest::header::HeaderMap::new();
         let mut bearer = reqwest::header::HeaderValue::from_str(&format!("Bearer {api_key}"))
             .map_err(|e| format!("[cow] invalid COW_API_KEY: {e}"))?;
@@ -427,7 +428,7 @@ impl DynAomiTool for GetCowSwapQuote {
         }
 
         let typed: OrderQuoteRequest = from_value("quote request", body)?;
-        let client = make_client(&chain)?;
+        let client = make_client(&chain, &ctx)?;
         let runtime = rt()?;
         let quote = runtime
             .block_on(async move { client.quote(&typed).await })
@@ -529,7 +530,7 @@ impl DynAomiTool for PlaceCowOrder {
     const NAME: &'static str = "place_cow_order";
     const DESCRIPTION: &'static str = "Routed continuation of get_cow_swap_quote — the host wallet auto-invokes it after binding the EIP-712 signature. Submits the signed order to CoW's orderbook and returns the orderUid you can poll with get_cow_order_status. Do not invoke directly unless you already have a fresh wallet signature for the exact prepared order.";
 
-    fn run(_app: &CowApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
+    fn run(_app: &CowApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
         let signature = args.signature.ok_or_else(|| {
             "[cow] place_cow_order requires a signature; this tool is invoked automatically \
              after get_cow_swap_quote's evm_commit_message step — don't call it manually"
@@ -569,7 +570,7 @@ impl DynAomiTool for PlaceCowOrder {
             "signingScheme":     signing_scheme,
         });
         let body: OrderCreation = from_value("order creation", body_json)?;
-        let client = make_client(&args.chain)?;
+        let client = make_client(&args.chain, &ctx)?;
         let runtime = rt()?;
         runtime.block_on(async move {
             let resp = client
@@ -602,8 +603,8 @@ impl DynAomiTool for GetCowOrder {
     const NAME: &'static str = "get_cow_order";
     const DESCRIPTION: &'static str = "Use when the user wants full detail on a CoW order they previously placed (executed amounts, fees, signature, status). Provide the orderUid returned from place_cow_order. For just the lifecycle state, prefer get_cow_order_status.";
 
-    fn run(_app: &CowApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = make_client(&args.chain)?;
+    fn run(_app: &CowApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
+        let client = make_client(&args.chain, &ctx)?;
         let runtime = rt()?;
         let uid = Uid(args.order_uid);
         runtime.block_on(async move {
@@ -637,8 +638,8 @@ impl DynAomiTool for GetCowOrderStatus {
     const NAME: &'static str = "get_cow_order_status";
     const DESCRIPTION: &'static str = "Use to poll a CoW order's lifecycle state (open / scheduled / active / solved / executing / traded / cancelled). Lighter than get_cow_order. Don't poll faster than every ~3s; CoW solver auctions clear in ~30s.";
 
-    fn run(_app: &CowApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = make_client(&args.chain)?;
+    fn run(_app: &CowApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
+        let client = make_client(&args.chain, &ctx)?;
         let runtime = rt()?;
         let uid = Uid(args.order_uid);
         runtime.block_on(async move {
@@ -676,8 +677,8 @@ impl DynAomiTool for GetCowUserOrders {
     const NAME: &'static str = "get_cow_user_orders";
     const DESCRIPTION: &'static str = "Use when the user asks about their CoW order history on a chain (\"my recent swaps on base\"). Paginated, newest first. Default limit if omitted is CoW's default (~10).";
 
-    fn run(_app: &CowApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = make_client(&args.chain)?;
+    fn run(_app: &CowApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
+        let client = make_client(&args.chain, &ctx)?;
         let runtime = rt()?;
         let owner = Address(args.owner_address);
         let limit = args.limit.map(|v| v as i64);
@@ -717,14 +718,14 @@ impl DynAomiTool for CancelCowOrders {
     const NAME: &'static str = "cancel_cow_orders";
     const DESCRIPTION: &'static str = "Use when the user wants to cancel open CoW orders (only orders not yet executed can be cancelled). Requires a cancellation signature from the order owner — the host wallet must sign the cancellation message before calling this. Pass `signing_scheme=\"eip712\"` when in doubt.";
 
-    fn run(_app: &CowApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
+    fn run(_app: &CowApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
         let body_json = json!({
             "orderUids": args.order_uids,
             "signature": args.signature,
             "signingScheme": args.signing_scheme,
         });
         let body: OrderCancellations = from_value("cancellation", body_json)?;
-        let client = make_client(&args.chain)?;
+        let client = make_client(&args.chain, &ctx)?;
         let runtime = rt()?;
         runtime.block_on(async move {
             client
@@ -762,7 +763,7 @@ impl DynAomiTool for GetCowTrades {
     const NAME: &'static str = "get_cow_trades";
     const DESCRIPTION: &'static str = "Use when the user wants the on-chain settlement record (executed amounts, tx hashes) for either a wallet (`owner`) or one specific order (`order_uid`). Pass exactly one. Use get_cow_user_orders when the user wants the order book view rather than fills.";
 
-    fn run(_app: &CowApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
+    fn run(_app: &CowApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
         match (&args.owner, &args.order_uid) {
             (Some(_), Some(_)) => {
                 return Err(
@@ -774,7 +775,7 @@ impl DynAomiTool for GetCowTrades {
             }
             _ => {}
         }
-        let client = make_client(&args.chain)?;
+        let client = make_client(&args.chain, &ctx)?;
         let runtime = rt()?;
         let owner = args.owner.map(Address);
         let order_uid = args.order_uid.map(Uid);
@@ -810,8 +811,8 @@ impl DynAomiTool for GetCowNativePrice {
     const NAME: &'static str = "get_cow_native_price";
     const DESCRIPTION: &'static str = "Use to read CoW's internal estimate of a token's price in the chain's native asset (ETH on mainnet/arbitrum/base, xDAI on gnosis, etc.). Useful for sanity-checking a quote before signing. `token_address` must be a 0x address — symbol shorthand not supported here.";
 
-    fn run(_app: &CowApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let client = make_client(&args.chain)?;
+    fn run(_app: &CowApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
+        let client = make_client(&args.chain, &ctx)?;
         let runtime = rt()?;
         let addr = Address(args.token_address);
         runtime.block_on(async move {

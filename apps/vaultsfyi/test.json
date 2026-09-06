@@ -1,0 +1,41 @@
+{
+  "user_story": "Find the best USDC vault on Base via vaults.fyi and deposit 100 USDC into it — exercises find_vaults → get_action_context → build_vault_tx → routed staging through to pending_txs.",
+  "wallet_seed": {
+    "address": "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+    "chain_id": 8453,
+    "is_connected": true
+  },
+  "turns": [
+    {
+      "prompt": "What's the best USDC vault on Base right now with at least $10M TVL? Use vaults.fyi.",
+      "expected_tools": {
+        "any_of": ["vaultsfyi_find_vaults", "vaultsfyi_get_deposit_options"]
+      }
+    },
+    {
+      "prompt": "Deposit 100 USDC into the top one. Stage the transaction so I can sign it.",
+      "expected_tools": {
+        "must_call": ["vaultsfyi_build_vault_tx"]
+      }
+    }
+  ],
+  "final_assertion": {
+    "user_state": {
+      "pending_txs": {
+        "min_count": 1,
+        "expect_any": [
+          {
+            "chain_id": 8453,
+            "data_starts_with": "0x",
+            "data_min_len": 10
+          }
+        ]
+      },
+      "pending_eip712s": {
+        "max_count": 0
+      }
+    },
+    "no_errors": false,
+    "max_turns": 12
+  }
+}

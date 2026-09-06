@@ -7,7 +7,8 @@
 //! into the runtime secret vault. At tool-call time the host pre-resolves
 //! the slots for this app and injects raw values into
 //! [`DynToolCallCtx::secrets`](crate::DynToolCallCtx::secrets); tools read
-//! them via [`resolve_secret_value`](crate::resolve_secret_value).
+//! them via [`resolve_secret_value`](crate::resolve_secret_value). That is
+//! the only channel: the plugin never reads the host process environment.
 //!
 //! ```rust,ignore
 //! use aomi_sdk::Secret;

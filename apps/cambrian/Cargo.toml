@@ -1,0 +1,20 @@
+[package]
+name = "cambrian"
+version = "0.1.0"
+edition = "2024"
+description = "Aomi app for the Cambrian DeFi data API (Base, Ethereum, Solana): prices, pools, lending yields, wallets, holders"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# Standalone package (root workspace lists apps/* under `exclude`). The empty
+# table also stops cargo's upward workspace walk from escaping a git worktree
+# into the main checkout's workspace.
+[workspace]
+
+[dependencies]
+aomi-sdk = { path = "../../sdk" }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "charset", "http2", "json", "query", "rustls"] }
+schemars = "1.0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

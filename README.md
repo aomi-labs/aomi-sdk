@@ -63,6 +63,7 @@ contributor** row.
 - `polymarket`
 - `prediction`
 - `social`
+- `vaultsfyi`
 - `x`
 
 ## What Can I Build?
@@ -82,7 +83,7 @@ Apps in this repository may depend on:
 
 - `sdk`
 - public HTTP APIs
-- environment variables for third-party API keys
+- declared secret slots (`secrets = [...]` in `dyn_aomi_app!`) for third-party API keys, filled by the host at call time — never the host process environment
 - documented host interoperability conventions
 
 Apps in this repository must not depend on:

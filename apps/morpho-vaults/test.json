@@ -1,0 +1,50 @@
+{
+  "user_story": "Monitor Morpho vaults: find the best USDC vault on Ethereum, inspect its governance and liquidity, check a wallet's positions, then stage a small deposit through the host wallet.",
+  "wallet_seed": {
+    "address": "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+    "chain_id": 1,
+    "is_connected": true
+  },
+  "turns": [
+    {
+      "prompt": "What are the best USDC vaults on Morpho on Ethereum right now? Show net APY, TVL and curator.",
+      "expected_tools": {
+        "must_call": ["morpho_find_vaults"]
+      }
+    },
+    {
+      "prompt": "Give me a full overview of the Steakhouse USDC vault at 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB on Ethereum, including anything pending in governance.",
+      "expected_tools": {
+        "any_of": ["morpho_vault_overview", "morpho_vault_governance"]
+      }
+    },
+    {
+      "prompt": "Do I have any Morpho vault positions?",
+      "expected_tools": {
+        "must_call": ["morpho_user_vault_positions"]
+      }
+    },
+    {
+      "prompt": "Deposit 25 USDC into the Steakhouse USDC vault 0xBEEF01735c132Ada46AA9aA4c54623cAA92A64CB on Ethereum. I confirm the vault, chain, asset and amount; stage it for me to sign.",
+      "expected_tools": {
+        "must_call": ["morpho_deposit"]
+      }
+    }
+  ],
+  "final_assertion": {
+    "user_state": {
+      "pending_txs": {
+        "min_count": 2,
+        "expect_any": [
+          {
+            "chain_id": 1,
+            "data_starts_with": "0x6e553f65",
+            "data_min_len": 10
+          }
+        ]
+      }
+    },
+    "no_errors": true,
+    "max_turns": 12
+  }
+}

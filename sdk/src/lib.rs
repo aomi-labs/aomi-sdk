@@ -173,10 +173,13 @@ pub const __AOMI_SDK_VERSION_CSTR: &str = concat!(env!("CARGO_PKG_VERSION"), "\0
 /// 1. `arg_value` — what the LLM (or upstream caller) passed explicitly.
 /// 2. `ctx.secrets[name]` — values injected by the host from the per-app
 ///    secret vault (see `DynToolCallCtx::secrets`).
-/// 3. Environment variable `name` — legacy fallback for CLI / tests where
-///    no vault is in scope.
 ///
-/// Returns `missing_message` when none of the three resolves.
+/// Returns `missing_message` when neither resolves. The host process
+/// environment is deliberately **not** consulted: plugins are `dlopen`'d into
+/// the backend, so an env rung would let any plugin declaring a slot named
+/// like a host variable read it, bypassing the vault. Local runners
+/// (`aomi-run`, tests via `testing::TestCtxBuilder::secret`) populate
+/// `ctx.secrets` themselves.
 pub fn resolve_secret_value(
     ctx: &crate::DynToolCallCtx,
     arg_value: Option<&str>,
@@ -196,15 +199,49 @@ pub fn resolve_secret_value(
         return Ok(value);
     }
 
-    if let Some(value) = std::env::var(name)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    {
-        return Ok(value);
+    Err(missing_message.to_string())
+}
+
+#[cfg(test)]
+mod resolve_secret_tests {
+    use super::*;
+
+    fn ctx(secrets: &[(&str, &str)]) -> DynToolCallCtx {
+        DynToolCallCtx {
+            session_id: "s".into(),
+            tool_name: "t".into(),
+            call_id: "c".into(),
+            state_attributes: Default::default(),
+            secrets: secrets
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+        }
     }
 
-    Err(missing_message.to_string())
+    #[test]
+    fn explicit_arg_beats_ctx() {
+        let c = ctx(&[("K", "vault")]);
+        assert_eq!(
+            resolve_secret_value(&c, Some(" arg "), "K", "m").unwrap(),
+            "arg"
+        );
+        assert_eq!(
+            resolve_secret_value(&c, Some("  "), "K", "m").unwrap(),
+            "vault"
+        );
+    }
+
+    #[test]
+    fn process_env_is_never_consulted() {
+        // SAFETY: test-only, single-threaded access to a unique variable name.
+        unsafe { std::env::set_var("AOMI_SDK_TEST_NEVER_READ", "leaked") };
+        let c = ctx(&[]);
+        let err =
+            resolve_secret_value(&c, None, "AOMI_SDK_TEST_NEVER_READ", "missing").unwrap_err();
+        assert_eq!(err, "missing");
+        unsafe { std::env::remove_var("AOMI_SDK_TEST_NEVER_READ") };
+    }
 }
 
 /// Internal helpers for macros. Do not use directly.

@@ -1,0 +1,21 @@
+{
+  "user_story": "Read-only DeFi research on Base via Cambrian: check WETH's current price and 24h trend, then find the best USDC lending yields.",
+  "turns": [
+    {
+      "prompt": "What is WETH trading at on Base right now, and how has it moved over the last 24 hours?",
+      "expected_tools": {
+        "any_of": ["cambrian_get_token_price", "cambrian_get_price_history"]
+      }
+    },
+    {
+      "prompt": "Now show me the highest supply APY lending vaults for USDC on Base with at least $1M TVL.",
+      "expected_tools": {
+        "must_call": ["cambrian_find_lending_yields"]
+      }
+    }
+  ],
+  "final_assertion": {
+    "no_errors": false,
+    "max_turns": 8
+  }
+}
