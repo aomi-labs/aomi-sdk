@@ -1,11 +1,6 @@
 //! App-scoped skill manifest: structured, versioned instruction + guard
-//! content that ships inside the app artifact and activates by app binding.
-//!
-//! Unlike host skills (model-selected via `activate_skills`), an app skill is
-//! **server-selected**: the host bakes its sections into the app's composed
-//! preamble at app-build time and pre-activates it for hook/guard purposes.
-//! It is never catalog-visible and no model text can summon it into another
-//! app.
+//! content that ships inside the app artifact. Every app skill joins only its
+//! bound app's catalog and reaches the model through `activate_skills`.
 //!
 //! The [`GuardTable`] here is the shared guard *data* schema ("code stays
 //! compiled, data goes hot"): the host's compiled guard interpreters read
@@ -17,11 +12,9 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
-/// Whole-skill token budget (chars/4 estimate over all sections). Larger than
-/// the 4k host-skill activation budget: an app skill is the app's whole
-/// model-facing contract, not one of several activations competing for
-/// context.
-pub const APP_SKILL_TOKEN_BUDGET: usize = 8_000;
+/// Whole-skill token budget (chars/4 estimate over all sections). App skills
+/// activate through the host's skill engine and share its default 4k window.
+pub const APP_SKILL_TOKEN_BUDGET: usize = 4_000;
 
 /// Canonical Solana cluster wire forms accepted in [`SvmGuard::clusters`].
 pub const CLUSTERS: [&str; 4] = ["mainnet-beta", "devnet", "testnet", "localnet"];
@@ -149,6 +142,12 @@ pub struct DynToolHookBinding {
 pub struct AppSkillManifest {
     /// `"<app-name>/<slug>"`, e.g. `"world-markets/trading"`.
     pub id: String,
+    /// One-line intent rendered into the pass-1 skill index.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub description: String,
+    /// "When to use" keywords for the skill index.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
     pub sections: Vec<AppSkillSection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guard: Option<GuardTable>,
@@ -171,6 +170,8 @@ impl AppSkillManifest {
     /// `manifest()`), never in a validated production artifact.
     pub fn from_parts(
         id: &str,
+        description: &str,
+        tags: Vec<String>,
         sections: Vec<(&str, &str)>,
         guard_json: Option<&str>,
         hooks: Vec<DynToolHookBinding>,
@@ -193,14 +194,31 @@ impl AppSkillManifest {
                 content: content.to_string(),
             })
             .collect();
-        let content_digest = digest(id, &sections, guard.as_ref());
+        let content_digest = digest(id, description, &sections, guard.as_ref());
         Self {
             id: id.to_string(),
+            description: description.trim().to_string(),
+            tags,
             sections,
             guard,
             hooks,
             content_digest,
         }
+    }
+
+    /// The slug half of `"<app>/<slug>"` (the whole id if unscoped).
+    pub fn slug(&self) -> &str {
+        self.id.rsplit('/').next().unwrap_or(&self.id)
+    }
+
+    /// Render every section as `### {name}\n{content}` blocks joined by a
+    /// blank line for the activated skill instruction payload.
+    pub fn render_sections(&self) -> String {
+        self.sections
+            .iter()
+            .map(|section| format!("### {}\n{}", section.name, section.content.trim()))
+            .collect::<Vec<_>>()
+            .join("\n\n")
     }
 
     /// Rough token estimate over every section (chars/4, same estimator as
@@ -254,6 +272,12 @@ impl AppSkillManifest {
                 "skill sections estimate {est} tokens, over the {APP_SKILL_TOKEN_BUDGET} budget"
             ));
         }
+        if self.description.trim().is_empty() {
+            errors.push(format!(
+                "skill `{}` needs a description (the model selects it from the skill index)",
+                self.id
+            ));
+        }
 
         for binding in &self.hooks {
             if binding.tool.trim().is_empty() {
@@ -287,7 +311,12 @@ impl AppSkillManifest {
             validate_guard(guard, &mut errors);
         }
 
-        let expected = digest(&self.id, &self.sections, self.guard.as_ref());
+        let expected = digest(
+            &self.id,
+            &self.description,
+            &self.sections,
+            self.guard.as_ref(),
+        );
         if self.content_digest != expected {
             errors.push(format!(
                 "content_digest mismatch: manifest says {}, content hashes to {expected}",
@@ -454,14 +483,40 @@ fn is_hex_bytes(value: &str, bytes: usize) -> bool {
         .is_some_and(|hex| hex.len() == bytes * 2 && hex.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
-/// sha256 over the canonical rendering of id + sections + guard. The guard
-/// serializes through its typed form (`BTreeMap`s, fixed field order), so the
-/// digest is stable across whitespace/key-order differences in the source
-/// `guard.json`.
-fn digest(id: &str, sections: &[AppSkillSection], guard: Option<&GuardTable>) -> String {
+/// Validate a whole `skills` set: every entry valid on its own and ids unique.
+pub fn validate_app_skills(app_name: &str, skills: &[AppSkillManifest]) -> Result<(), Vec<String>> {
+    let mut errors = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for skill in skills {
+        if let Err(mut own) = skill.validate(app_name) {
+            errors.append(&mut own);
+        }
+        if !seen.insert(skill.id.as_str()) {
+            errors.push(format!("duplicate app skill id `{}`", skill.id));
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
+}
+
+/// sha256 over the canonical rendering of id + description +
+/// sections + guard. The guard serializes through its typed form
+/// (`BTreeMap`s, fixed field order), so the digest is stable across
+/// whitespace/key-order differences in the source `guard.json`.
+fn digest(
+    id: &str,
+    description: &str,
+    sections: &[AppSkillSection],
+    guard: Option<&GuardTable>,
+) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(id.as_bytes());
+    hasher.update([0u8]);
+    hasher.update(description.trim().as_bytes());
     hasher.update([0u8]);
     for section in sections {
         hasher.update(section.name.as_bytes());
@@ -485,6 +540,126 @@ fn digest(id: &str, sections: &[AppSkillSection], guard: Option<&GuardTable>) ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn description_enters_the_digest_and_wire_form_has_no_mode() {
+        let skill = AppSkillManifest::from_parts(
+            "app/x",
+            "when the task needs x",
+            vec!["x".into()],
+            vec![("instructions", "hi")],
+            None,
+            vec![],
+        );
+        let described = AppSkillManifest::from_parts(
+            "app/x",
+            "described",
+            vec![],
+            vec![("instructions", "hi")],
+            None,
+            vec![],
+        );
+        assert_ne!(
+            skill.content_digest, described.content_digest,
+            "description is digest-covered"
+        );
+        assert!(described.validate("app").is_ok());
+        assert!(skill.validate("app").is_ok());
+
+        let json = serde_json::to_string(&skill).unwrap();
+        assert!(!json.contains("activation"));
+        let round_trip: AppSkillManifest = serde_json::from_str(&json).unwrap();
+        assert_eq!(round_trip, skill);
+    }
+
+    #[test]
+    fn skill_requires_a_description_and_fits_the_activation_budget() {
+        let undescribed = AppSkillManifest::from_parts(
+            "app/x",
+            "   ",
+            vec![],
+            vec![("instructions", "hi")],
+            None,
+            vec![],
+        );
+        let errors = undescribed.validate("app").unwrap_err();
+        assert!(
+            errors.iter().any(|e| e.contains("needs a description")),
+            "{errors:?}"
+        );
+
+        let big = "x".repeat(APP_SKILL_TOKEN_BUDGET * 4 + 4);
+        let over = AppSkillManifest::from_parts(
+            "app/x",
+            "big",
+            vec![],
+            vec![("instructions", &big)],
+            None,
+            vec![],
+        );
+        let errors = over.validate("app").unwrap_err();
+        assert!(
+            errors.iter().any(|e| e.contains("over the 4000 budget")),
+            "{errors:?}"
+        );
+    }
+
+    #[test]
+    fn validate_app_skills_enforces_unique_ids_and_allows_separate_guards() {
+        let guard = r#"{"evm":{"contracts":{"R":"0x1111111111111111111111111111111111111111"},"chain_ids":[1]}}"#;
+        let a = AppSkillManifest::from_parts(
+            "app/a",
+            "a",
+            vec![],
+            vec![("instructions", "a")],
+            Some(guard),
+            vec![],
+        );
+        let b = AppSkillManifest::from_parts(
+            "app/b",
+            "b",
+            vec![],
+            vec![("instructions", "b")],
+            Some(guard),
+            vec![],
+        );
+        let c = AppSkillManifest::from_parts(
+            "app/c",
+            "c",
+            vec![],
+            vec![("workflow", "c")],
+            Some(guard),
+            vec![],
+        );
+        assert!(
+            validate_app_skills("app", &[a.clone(), c.clone()]).is_ok(),
+            "each activated skill may carry its own guard"
+        );
+        assert!(validate_app_skills("app", &[a.clone(), b]).is_ok());
+        let errors = validate_app_skills("app", &[a.clone(), a]).unwrap_err();
+        assert!(
+            errors.iter().any(|e| e.contains("duplicate app skill id")),
+            "{errors:?}"
+        );
+        assert!(validate_app_skills("app", &[]).is_ok());
+    }
+
+    #[test]
+    fn render_sections_preserves_declared_order() {
+        let skill = AppSkillManifest::from_parts(
+            "app/x",
+            "x",
+            vec![],
+            vec![("instructions", "  one  "), ("safety", "two\n")],
+            None,
+            vec![],
+        );
+        assert_eq!(
+            skill.render_sections(),
+            "### instructions\none\n\n### safety\ntwo"
+        );
+        assert_eq!(skill.slug(), "x");
+    }
 
     fn guard_json() -> &'static str {
         r#"{
@@ -510,6 +685,8 @@ mod tests {
     fn skill() -> AppSkillManifest {
         AppSkillManifest::from_parts(
             "world-markets/trading",
+            "Trade world markets",
+            vec![],
             vec![
                 ("instructions", "Trade world markets."),
                 ("safety", "Never exceed limits."),
@@ -536,7 +713,7 @@ mod tests {
 
         let mut c = skill();
         c.sections[0].content.push_str(" (edited)");
-        let recomputed = digest(&c.id, &c.sections, c.guard.as_ref());
+        let recomputed = digest(&c.id, &c.description, &c.sections, c.guard.as_ref());
         assert_ne!(c.content_digest, recomputed, "digest must cover sections");
         assert!(
             c.validate("world-markets").is_err(),
@@ -562,7 +739,7 @@ mod tests {
             .unwrap()
             .allowed_contracts
             .push("UNDECLARED".to_string());
-        s.content_digest = digest(&s.id, &s.sections, s.guard.as_ref());
+        s.content_digest = digest(&s.id, &s.description, &s.sections, s.guard.as_ref());
         let errors = s.validate("world-markets").expect_err("must fail");
         assert!(
             errors
@@ -582,7 +759,7 @@ mod tests {
                 .insert("BAD".to_string(), "not-base58!!".to_string());
             svm.clusters.push("mainnet".to_string()); // alias, not canonical
         }
-        s.content_digest = digest(&s.id, &s.sections, s.guard.as_ref());
+        s.content_digest = digest(&s.id, &s.description, &s.sections, s.guard.as_ref());
         let errors = s.validate("world-markets").expect_err("must fail");
         assert!(errors.iter().any(|e| e.contains("selector `BAD`")));
         assert!(errors.iter().any(|e| e.contains("program `BAD`")));
@@ -639,6 +816,8 @@ mod tests {
         }"#;
         let skill = AppSkillManifest::from_parts(
             "world-markets/trading",
+            "Trade world markets",
+            vec![],
             vec![("instructions", "Trade.")],
             Some(guard),
             vec![],
@@ -654,6 +833,8 @@ mod tests {
         // Deterministic digest over the filled form.
         let again = AppSkillManifest::from_parts(
             "world-markets/trading",
+            "Trade world markets",
+            vec![],
             vec![("instructions", "Trade.")],
             Some(guard),
             vec![],
@@ -664,19 +845,32 @@ mod tests {
     #[test]
     fn invalid_guard_json_panics_with_context() {
         let result = std::panic::catch_unwind(|| {
-            AppSkillManifest::from_parts("a/b", vec![("i", "x")], Some("{ not json"), vec![])
+            AppSkillManifest::from_parts(
+                "a/b",
+                "b",
+                vec![],
+                vec![("i", "x")],
+                Some("{ not json"),
+                vec![],
+            )
         });
         assert!(result.is_err());
     }
 
     #[test]
     fn empty_sections_and_over_budget_fail() {
-        let empty = AppSkillManifest::from_parts("a/b", vec![], None, vec![]);
+        let empty = AppSkillManifest::from_parts("a/b", "b", vec![], vec![], None, vec![]);
         assert!(empty.validate("a").is_err());
 
         let big = "x".repeat((APP_SKILL_TOKEN_BUDGET + 1) * 4);
-        let over =
-            AppSkillManifest::from_parts("a/b", vec![("instructions", big.as_str())], None, vec![]);
+        let over = AppSkillManifest::from_parts(
+            "a/b",
+            "b",
+            vec![],
+            vec![("instructions", big.as_str())],
+            None,
+            vec![],
+        );
         let errors = over.validate("a").expect_err("over budget must fail");
         assert!(errors.iter().any(|e| e.contains("over the")));
     }
