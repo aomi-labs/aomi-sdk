@@ -347,33 +347,36 @@ macro_rules! declare_dyn {
 ///     evm_execution = AomiSponsored4337);
 /// ```
 ///
-/// **With an app-scoped skill** (structured instruction sections + guard
-/// table + host hook bindings, see [`AppSkillManifest`](crate::AppSkillManifest)).
-/// Section and guard values are file paths relative to the invoking source
-/// file, embedded via `include_str!` at compile time:
+/// **With app-scoped skills** — each skill joins only the bound app's skill
+/// index and reaches the model after `activate_skills`. Section and guard
+/// values are file paths relative to the invoking source file and embedded
+/// via `include_str!` at compile time:
 /// ```rust,ignore
-/// dyn_aomi_app!(app = WorldMarketsApp, name = "world-markets", version = "0.3.0",
+/// dyn_aomi_app!(app = NavApp, name = "nav", version = "0.1.0",
 ///     preamble = SHORT_ROLE_LINE,
-///     tools = [GetWorldMarket, PreviewWorldTrade, BuildWorldTrade],
-///     namespaces = ["svm-reads", "svm-write-tx"],
-///     skill = {
-///         id: "world-markets/trading",
-///         sections: {
-///             instructions: "skill/instructions.md",
-///             workflows: "skill/workflows.md",
-///             action_rules: "skill/action-rules.md",
-///             safety: "skill/safety.md",
+///     tools = [OpenValuation, ProposeNode],
+///     namespaces = ["evm-reads", "evm-sim"],
+///     skills = [
+///         {
+///             id: "nav/operating",
+///             description: "NAV operating workflow",
+///             sections: { instructions: "skill/instructions.md", safety: "skill/safety.md" },
+///             guard: "skill/guard.json",
 ///         },
-///         guard: "skill/guard.json",
-///         hooks: { build_world_trade: { pre: ["value_at_risk"] } },
-///     });
+///         {
+///             id: "nav/sim-playbook",
+///             description: "Fork-simulate a call sequence and prove post-conditions",
+///             tags: ["simulation", "postconditions"],
+///             sections: { workflow: "skill/sim-playbook.md" },
+///         },
+///     ]);
 /// ```
 ///
 #[macro_export]
 macro_rules! dyn_aomi_app {
     // One arm, canonical key order, optional blocks each preceded by a comma:
     //   app, name, version, preamble, tools,
-    //   [secrets], [namespaces], [broadcast], [evm_execution], [skill]
+    //   [secrets], [namespaces], [broadcast], [evm_execution], [skills]
     // Optional blocks expand their `DynAomiApp` method override only when
     // present; absent blocks fall back to the trait defaults.
     (
@@ -386,13 +389,15 @@ macro_rules! dyn_aomi_app {
         $(, namespaces = [ $( $ns:expr ),* $(,)? ] )?
         $(, broadcast = { default: $bc_default:expr, allowed: [ $( $bc_allowed:expr ),* $(,)? ] } )?
         $(, evm_execution = $evm_execution:ident )?
-        $(, skill = {
-            id: $skill_id:expr,
-            sections: { $( $section_name:ident : $section_path:expr ),+ $(,)? }
-            $(, guard: $guard_path:expr )?
-            $(, hooks: { $( $hook_tool:ident : { $( $hook_kind:ident : [ $( $hook_name:expr ),* $(,)? ] ),+ $(,)? } ),+ $(,)? } )?
+        $(, skills = [ $( {
+            id: $s_id:expr,
+            description: $s_description:expr
+            $(, tags: [ $( $s_tag:expr ),* $(,)? ] )?
+            , sections: { $( $s_section_name:ident : $s_section_path:expr ),+ $(,)? }
+            $(, guard: $s_guard_path:expr )?
+            $(, hooks: { $( $s_hook_tool:ident : { $( $s_hook_kind:ident : [ $( $s_hook_name:expr ),* $(,)? ] ),+ $(,)? } ),+ $(,)? } )?
             $(,)?
-        } )?
+        } ),+ $(,)? ] )?
         $(,)?
     ) => {
         impl $crate::DynAomiApp for $app_type {
@@ -433,34 +438,44 @@ macro_rules! dyn_aomi_app {
                 }
             )?
 
-            $(
-                fn skill(&self) -> ::std::option::Option<$crate::AppSkillManifest> {
-                    // Section/guard paths resolve relative to the invoking
-                    // source file (standard `include_str!` semantics), and the
-                    // content is embedded at compile time — a missing file is
-                    // a compile error, and the release digest covers it.
-                    #[allow(unused_mut, unused_assignments)]
-                    let mut guard_json: ::std::option::Option<&'static str> =
-                        ::std::option::Option::None;
-                    $( guard_json = ::std::option::Option::Some(include_str!($guard_path)); )?
-                    #[allow(unused_mut, unused_assignments)]
-                    let mut hooks: ::std::vec::Vec<$crate::DynToolHookBinding> =
-                        ::std::vec::Vec::new();
-                    $(
-                        hooks = ::std::vec![ $(
-                            $crate::__app_skill_hook_binding!(
-                                $hook_tool $(, $hook_kind : [ $( $hook_name ),* ] )+
-                            )
-                        ),+ ];
-                    )?
-                    ::std::option::Option::Some($crate::AppSkillManifest::from_parts(
-                        $skill_id,
-                        ::std::vec![ $( (stringify!($section_name), include_str!($section_path)) ),+ ],
-                        guard_json,
-                        hooks,
-                    ))
-                }
-            )?
+            fn skills(&self) -> ::std::vec::Vec<$crate::AppSkillManifest> {
+                // Section/guard paths resolve relative to the invoking
+                // source file (standard `include_str!` semantics), and the
+                // content is embedded at compile time — a missing file is
+                // a compile error, and the release digest covers it.
+                #[allow(unused_mut)]
+                let mut skills: ::std::vec::Vec<$crate::AppSkillManifest> = ::std::vec::Vec::new();
+                $( $(
+                    skills.push({
+                        #[allow(unused_mut, unused_assignments)]
+                        let mut guard_json: ::std::option::Option<&'static str> =
+                            ::std::option::Option::None;
+                        $( guard_json = ::std::option::Option::Some(include_str!($s_guard_path)); )?
+                        #[allow(unused_mut, unused_assignments)]
+                        let mut hooks: ::std::vec::Vec<$crate::DynToolHookBinding> =
+                            ::std::vec::Vec::new();
+                        $(
+                            hooks = ::std::vec![ $(
+                                $crate::__app_skill_hook_binding!(
+                                    $s_hook_tool $(, $s_hook_kind : [ $( $s_hook_name ),* ] )+
+                                )
+                            ),+ ];
+                        )?
+                        #[allow(unused_mut, unused_assignments)]
+                        let mut tags: ::std::vec::Vec<::std::string::String> = ::std::vec::Vec::new();
+                        $( tags = ::std::vec![ $( $s_tag.to_string() ),* ]; )?
+                        $crate::AppSkillManifest::from_parts(
+                            $s_id,
+                            $s_description,
+                            tags,
+                            ::std::vec![ $( (stringify!($s_section_name), include_str!($s_section_path)) ),+ ],
+                            guard_json,
+                            hooks,
+                        )
+                    });
+                )+ )?
+                skills
+            }
 
             fn start_tool(
                 &self,
