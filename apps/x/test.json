@@ -1,0 +1,33 @@
+{
+  "user_story": "Look up an X account, read its recent posts, and search recent posts on a topic through the official X API. Read-only.",
+  "turns": [
+    {
+      "prompt": "Who is @aomi_labs on X? Followers, bio, when they joined.",
+      "expected_tools": {
+        "must_call": [
+          "get_x_user"
+        ]
+      }
+    },
+    {
+      "prompt": "Show me their 5 most recent posts with engagement.",
+      "expected_tools": {
+        "must_call": [
+          "get_x_user_posts"
+        ]
+      }
+    },
+    {
+      "prompt": "Search X for the latest posts about 'onchain agents' in English, no reposts, and summarize the top 3.",
+      "expected_tools": {
+        "must_call": [
+          "search_x"
+        ]
+      }
+    }
+  ],
+  "final_assertion": {
+    "no_errors": true,
+    "max_turns": 10
+  }
+}

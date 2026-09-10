@@ -189,8 +189,9 @@ pub(crate) struct RunSqlArgs {
     pub api_key: Option<String>,
     /// Raw SQL to execute against Dune's catalog (e.g. "SELECT * FROM ethereum.transactions LIMIT 10").
     pub sql: String,
-    /// Performance tier: "small" (default, cheapest), "medium", or "large".
-    /// Use "large" only for queries that scan a lot of data.
+    /// Performance tier: omit to use the plan's default (free plans reject an
+    /// explicit tier); otherwise "small", "medium", or "large". Use "large"
+    /// only for queries that scan a lot of data.
     #[serde(default)]
     pub performance: Option<String>,
     /// Maximum seconds to wait for the query to finish (default 60).
@@ -215,7 +216,11 @@ impl DynAomiTool for RunSql {
         {
             Some("medium") => Some(ModelsExecuteSqlRequestPerformance::Medium),
             Some("large") => Some(ModelsExecuteSqlRequestPerformance::Large),
-            Some("small") | None => Some(ModelsExecuteSqlRequestPerformance::Small),
+            Some("small") => Some(ModelsExecuteSqlRequestPerformance::Small),
+            // Omit the field so Dune applies the plan's default tier: free
+            // plans reject an explicit `small` with "performance tier is not
+            // available with your subscription".
+            None => None,
             Some(other) => {
                 return Err(format!(
                     "[dune] performance must be small|medium|large, got {other}"

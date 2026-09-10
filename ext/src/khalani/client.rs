@@ -1,7 +1,7 @@
 #[allow(unused_imports)]
 pub use progenitor_client::{ByteStream, ClientInfo, Error, ResponseValue};
 #[allow(unused_imports)]
-use progenitor_client::{ClientHooks, OperationInfo, RequestBuilderExt, encode_path};
+use progenitor_client::{encode_path, ClientHooks, OperationInfo, RequestBuilderExt};
 /// Types used as operation parameters and responses.
 #[allow(clippy::all)]
 pub mod types {
@@ -11,12 +11,18 @@ pub mod types {
         pub struct ConversionError(::std::borrow::Cow<'static, str>);
         impl ::std::error::Error for ConversionError {}
         impl ::std::fmt::Display for ConversionError {
-            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> Result<(), ::std::fmt::Error> {
+            fn fmt(
+                &self,
+                f: &mut ::std::fmt::Formatter<'_>,
+            ) -> Result<(), ::std::fmt::Error> {
                 ::std::fmt::Display::fmt(&self.0, f)
             }
         }
         impl ::std::fmt::Debug for ConversionError {
-            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> Result<(), ::std::fmt::Error> {
+            fn fmt(
+                &self,
+                f: &mut ::std::fmt::Formatter<'_>,
+            ) -> Result<(), ::std::fmt::Error> {
                 ::std::fmt::Debug::fmt(&self.0, f)
             }
         }
@@ -271,9 +277,9 @@ pub mod types {
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
     pub struct BuildDepositResponseApprovalsItemRequest {
         /**EIP-1193 method. Common values:
-          - `wallet_switchEthereumChain` (params: [{chainId}])
-          - `eth_sendTransaction`        (params: [{from,to,data,value?,chainId?}])
-        */
+  - `wallet_switchEthereumChain` (params: [{chainId}])
+  - `eth_sendTransaction`        (params: [{from,to,data,value?,chainId?}])
+*/
         pub method: ::std::string::String,
         pub params: ::std::vec::Vec<BuildDepositResponseApprovalsItemRequestParamsItem>,
     }
@@ -351,8 +357,8 @@ pub mod types {
         }
     }
     /**Viem-style chain config. Keys vary across chains; only `id` and `name`
-    are reliably present.
-    */
+are reliably present.
+*/
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -448,9 +454,9 @@ pub mod types {
         }
     }
     /**One of four request shapes; server dispatches by which fields are present.
-    See `info.description` and `apps/khalani/src/types.rs` for the canonical
-    / fromAddress / userAddress / legacy variants.
-    */
+See `info.description` and `apps/khalani/src/types.rs` for the canonical
+/ fromAddress / userAddress / legacy variants.
+*/
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -557,8 +563,8 @@ pub mod types {
         }
     }
     /**One of three request shapes (signed-EIP-712 / signed-transaction / legacy);
-    server dispatches by which fields are present.
-    */
+server dispatches by which fields are present.
+*/
     ///
     /// <details><summary>JSON schema</summary>
     ///
@@ -614,7 +620,10 @@ pub mod types {
             default,
             skip_serializing_if = "::serde_json::Map::is_empty"
         )]
-        pub submitted_data: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+        pub submitted_data: ::serde_json::Map<
+            ::std::string::String,
+            ::serde_json::Value,
+        >,
         #[serde(
             rename = "transactionHash",
             default,
@@ -664,7 +673,9 @@ pub mod types {
     /// </details>
     #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug)]
     pub struct GetOrdersByAddressResponse {
-        pub data: ::std::vec::Vec<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
+        pub data: ::std::vec::Vec<
+            ::serde_json::Map<::std::string::String, ::serde_json::Value>,
+        >,
     }
     ///`GetQuoteResponse`
     ///
@@ -713,7 +724,6 @@ pub mod types {
     ///              "amountOut",
     ///              "expectedDurationSeconds",
     ///              "quoteExpiresAt",
-    ///              "supportedDepositMethods",
     ///              "tags",
     ///              "validBefore"
     ///            ],
@@ -801,7 +811,6 @@ pub mod types {
     ///        "amountOut",
     ///        "expectedDurationSeconds",
     ///        "quoteExpiresAt",
-    ///        "supportedDepositMethods",
     ///        "tags",
     ///        "validBefore"
     ///      ],
@@ -870,7 +879,6 @@ pub mod types {
     ///    "amountOut",
     ///    "expectedDurationSeconds",
     ///    "quoteExpiresAt",
-    ///    "supportedDepositMethods",
     ///    "tags",
     ///    "validBefore"
     ///  ],
@@ -916,7 +924,11 @@ pub mod types {
         pub expected_duration_seconds: i64,
         #[serde(rename = "quoteExpiresAt")]
         pub quote_expires_at: i64,
-        #[serde(rename = "supportedDepositMethods")]
+        #[serde(
+            rename = "supportedDepositMethods",
+            default,
+            skip_serializing_if = "::std::vec::Vec::is_empty"
+        )]
         pub supported_deposit_methods: ::std::vec::Vec<::std::string::String>,
         pub tags: ::std::vec::Vec<::std::string::String>,
         #[serde(rename = "validBefore")]
@@ -1079,7 +1091,7 @@ pub mod types {
         Hash,
         Ord,
         PartialEq,
-        PartialOrd,
+        PartialOrd
     )]
     pub enum QuoteRequestTradeType {
         #[serde(rename = "EXACT_INPUT")]
@@ -1097,7 +1109,9 @@ pub mod types {
     }
     impl ::std::str::FromStr for QuoteRequestTradeType {
         type Err = self::error::ConversionError;
-        fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        fn from_str(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
             match value {
                 "EXACT_INPUT" => Ok(Self::ExactInput),
                 "EXACT_OUTPUT" => Ok(Self::ExactOutput),
@@ -1107,7 +1121,9 @@ pub mod types {
     }
     impl ::std::convert::TryFrom<&str> for QuoteRequestTradeType {
         type Error = self::error::ConversionError;
-        fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        fn try_from(
+            value: &str,
+        ) -> ::std::result::Result<Self, self::error::ConversionError> {
             value.parse()
         }
     }
@@ -1152,9 +1168,7 @@ pub mod types {
     }
     impl ::std::default::Default for SearchTokensResponse {
         fn default() -> Self {
-            Self {
-                data: Default::default(),
-            }
+            Self { data: Default::default() }
         }
     }
     ///`Token`
@@ -1242,9 +1256,7 @@ impl Client {
         #[cfg(not(target_arch = "wasm32"))]
         let client = {
             let dur = ::std::time::Duration::from_secs(15u64);
-            reqwest::ClientBuilder::new()
-                .connect_timeout(dur)
-                .timeout(dur)
+            reqwest::ClientBuilder::new().connect_timeout(dur).timeout(dur)
         };
         #[cfg(target_arch = "wasm32")]
         let client = reqwest::ClientBuilder::new();
@@ -1282,19 +1294,20 @@ impl ClientHooks<()> for &Client {}
 impl Client {
     /**Quote a cross-chain swap or transfer for a given pair and amount
 
-    Sends a `POST` request to `/v1/quotes`
+Sends a `POST` request to `/v1/quotes`
 
-    */
+*/
     pub async fn get_quote<'a>(
         &'a self,
         body: &'a types::QuoteRequest,
     ) -> Result<ResponseValue<types::GetQuoteResponse>, Error<()>> {
         let url = format!("{}/v1/quotes", self.baseurl,);
         let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
-        header_map.append(
-            ::reqwest::header::HeaderName::from_static("api-version"),
-            ::reqwest::header::HeaderValue::from_static(Self::api_version()),
-        );
+        header_map
+            .append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(Self::api_version()),
+            );
         #[allow(unused_mut)]
         let mut request = self
             .client
@@ -1320,24 +1333,25 @@ impl Client {
     }
     /**Build the EIP-712 typed data or raw tx for a quoted route
 
-    Accepts one of four request shapes (canonical / fromAddress / userAddress / legacy)
-    depending on the deposit method. Modeled here as a permissive object — the actual
-    shape is dispatched by the server based on which fields are present.
+Accepts one of four request shapes (canonical / fromAddress / userAddress / legacy)
+depending on the deposit method. Modeled here as a permissive object — the actual
+shape is dispatched by the server based on which fields are present.
 
 
-    Sends a `POST` request to `/v1/deposit/build`
+Sends a `POST` request to `/v1/deposit/build`
 
-    */
+*/
     pub async fn build_deposit<'a>(
         &'a self,
         body: &'a types::DepositBuildRequest,
     ) -> Result<ResponseValue<types::BuildDepositResponse>, Error<()>> {
         let url = format!("{}/v1/deposit/build", self.baseurl,);
         let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
-        header_map.append(
-            ::reqwest::header::HeaderName::from_static("api-version"),
-            ::reqwest::header::HeaderValue::from_static(Self::api_version()),
-        );
+        header_map
+            .append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(Self::api_version()),
+            );
         #[allow(unused_mut)]
         let mut request = self
             .client
@@ -1363,13 +1377,13 @@ impl Client {
     }
     /**Submit a signed EIP-712 payload or a settled transaction hash
 
-    Accepts one of three request shapes (signed-EIP-712 / signed-transaction / legacy).
-    Modeled here as a permissive object dispatched by the server.
+Accepts one of three request shapes (signed-EIP-712 / signed-transaction / legacy).
+Modeled here as a permissive object dispatched by the server.
 
 
-    Sends a `PUT` request to `/v1/deposit/submit`
+Sends a `PUT` request to `/v1/deposit/submit`
 
-    */
+*/
     pub async fn submit_deposit<'a>(
         &'a self,
         body: &'a types::DepositSubmitRequest,
@@ -1379,10 +1393,11 @@ impl Client {
     > {
         let url = format!("{}/v1/deposit/submit", self.baseurl,);
         let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
-        header_map.append(
-            ::reqwest::header::HeaderName::from_static("api-version"),
-            ::reqwest::header::HeaderValue::from_static(Self::api_version()),
-        );
+        header_map
+            .append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(Self::api_version()),
+            );
         #[allow(unused_mut)]
         let mut request = self
             .client
@@ -1408,15 +1423,15 @@ impl Client {
     }
     /**List recent orders for a user address
 
-    Sends a `GET` request to `/v1/orders/{address}`
+Sends a `GET` request to `/v1/orders/{address}`
 
-    Arguments:
-    - `address`: EVM address (0x-prefixed, 20 bytes).
-    - `limit`
-    - `offset`
-    - `order_ids`: Comma-separated order IDs to filter to.
-    - `status`
-    */
+Arguments:
+- `address`: EVM address (0x-prefixed, 20 bytes).
+- `limit`
+- `offset`
+- `order_ids`: Comma-separated order IDs to filter to.
+- `status`
+*/
     pub async fn get_orders_by_address<'a>(
         &'a self,
         address: &'a str,
@@ -1426,15 +1441,14 @@ impl Client {
         status: Option<&'a str>,
     ) -> Result<ResponseValue<types::GetOrdersByAddressResponse>, Error<()>> {
         let url = format!(
-            "{}/v1/orders/{}",
-            self.baseurl,
-            encode_path(&address.to_string()),
+            "{}/v1/orders/{}", self.baseurl, encode_path(& address.to_string()),
         );
         let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
-        header_map.append(
-            ::reqwest::header::HeaderName::from_static("api-version"),
-            ::reqwest::header::HeaderValue::from_static(Self::api_version()),
-        );
+        header_map
+            .append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(Self::api_version()),
+            );
         #[allow(unused_mut)]
         let mut request = self
             .client
@@ -1463,14 +1477,14 @@ impl Client {
     }
     /**List supported tokens, optionally filtered by chain or substring
 
-    Sends a `GET` request to `/v1/tokens`
+Sends a `GET` request to `/v1/tokens`
 
-    Arguments:
-    - `chain_ids`: Single chain id (despite the plural name).
-    - `limit`
-    - `offset`
-    - `q`: Substring match on symbol/name/address.
-    */
+Arguments:
+- `chain_ids`: Single chain id (despite the plural name).
+- `limit`
+- `offset`
+- `q`: Substring match on symbol/name/address.
+*/
     pub async fn list_tokens<'a>(
         &'a self,
         chain_ids: Option<i64>,
@@ -1480,10 +1494,11 @@ impl Client {
     ) -> Result<ResponseValue<types::ListTokensResponse>, Error<()>> {
         let url = format!("{}/v1/tokens", self.baseurl,);
         let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
-        header_map.append(
-            ::reqwest::header::HeaderName::from_static("api-version"),
-            ::reqwest::header::HeaderValue::from_static(Self::api_version()),
-        );
+        header_map
+            .append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(Self::api_version()),
+            );
         #[allow(unused_mut)]
         let mut request = self
             .client
@@ -1512,9 +1527,9 @@ impl Client {
     }
     /**Search tokens by symbol/name/address — required `q` query
 
-    Sends a `GET` request to `/v1/tokens/search`
+Sends a `GET` request to `/v1/tokens/search`
 
-    */
+*/
     pub async fn search_tokens<'a>(
         &'a self,
         chain_ids: Option<i64>,
@@ -1524,10 +1539,11 @@ impl Client {
     ) -> Result<ResponseValue<types::SearchTokensResponse>, Error<()>> {
         let url = format!("{}/v1/tokens/search", self.baseurl,);
         let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
-        header_map.append(
-            ::reqwest::header::HeaderName::from_static("api-version"),
-            ::reqwest::header::HeaderValue::from_static(Self::api_version()),
-        );
+        header_map
+            .append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(Self::api_version()),
+            );
         #[allow(unused_mut)]
         let mut request = self
             .client
@@ -1556,18 +1572,19 @@ impl Client {
     }
     /**List supported chains with viem-style metadata
 
-    Sends a `GET` request to `/v1/chains`
+Sends a `GET` request to `/v1/chains`
 
-    */
+*/
     pub async fn list_chains<'a>(
         &'a self,
     ) -> Result<ResponseValue<::std::vec::Vec<types::Chain>>, Error<()>> {
         let url = format!("{}/v1/chains", self.baseurl,);
         let mut header_map = ::reqwest::header::HeaderMap::with_capacity(1usize);
-        header_map.append(
-            ::reqwest::header::HeaderName::from_static("api-version"),
-            ::reqwest::header::HeaderValue::from_static(Self::api_version()),
-        );
+        header_map
+            .append(
+                ::reqwest::header::HeaderName::from_static("api-version"),
+                ::reqwest::header::HeaderValue::from_static(Self::api_version()),
+            );
         #[allow(unused_mut)]
         let mut request = self
             .client
