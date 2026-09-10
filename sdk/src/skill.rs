@@ -503,9 +503,13 @@ pub fn validate_app_skills(app_name: &str, skills: &[AppSkillManifest]) -> Resul
 }
 
 /// sha256 over the canonical rendering of id + description +
-/// sections + guard. The guard serializes through its typed form
-/// (`BTreeMap`s, fixed field order), so the digest is stable across
-/// whitespace/key-order differences in the source `guard.json`.
+/// sections + guard. The guard is rendered through [`canonical_json`]
+/// (object keys sorted bytewise, no whitespace), so the digest is stable
+/// across whitespace/key-order differences in the source `guard.json` *and*
+/// across `serde_json` feature sets: a plugin workspace and the host
+/// workspace may resolve `serde_json/preserve_order` differently, and
+/// `Value::to_string` would otherwise emit keys in struct-field order on one
+/// side and sorted order on the other. See `guard_digest_is_pinned`.
 fn digest(
     id: &str,
     description: &str,
@@ -525,15 +529,52 @@ fn digest(
         hasher.update([0u8]);
     }
     if let Some(guard) = guard {
-        let canonical = serde_json::to_value(guard)
-            .unwrap_or(Value::Null)
-            .to_string();
-        hasher.update(canonical.as_bytes());
+        let value = serde_json::to_value(guard).unwrap_or(Value::Null);
+        hasher.update(canonical_json(&value).as_bytes());
     }
     let mut out = String::with_capacity(64);
     for byte in hasher.finalize() {
         let _ = write!(out, "{byte:02x}");
     }
+    out
+}
+
+/// Compact JSON with object keys sorted bytewise at every depth. Leaf
+/// scalars render through `serde_json`, whose scalar formatting does not
+/// depend on any feature flag; only the map iteration order does, and this
+/// walker imposes its own.
+fn canonical_json(value: &Value) -> String {
+    fn walk(value: &Value, out: &mut String) {
+        match value {
+            Value::Object(map) => {
+                let mut entries: Vec<(&String, &Value)> = map.iter().collect();
+                entries.sort_by(|a, b| a.0.cmp(b.0));
+                out.push('{');
+                for (i, (key, value)) in entries.into_iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    out.push_str(&Value::String(key.clone()).to_string());
+                    out.push(':');
+                    walk(value, out);
+                }
+                out.push('}');
+            }
+            Value::Array(items) => {
+                out.push('[');
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    walk(item, out);
+                }
+                out.push(']');
+            }
+            scalar => out.push_str(&scalar.to_string()),
+        }
+    }
+    let mut out = String::new();
+    walk(value, &mut out);
     out
 }
 
@@ -718,6 +759,86 @@ mod tests {
         assert!(
             c.validate("world-markets").is_err(),
             "stale digest must fail validation"
+        );
+    }
+
+    /// Pins the guard digest to a literal so a `serde_json` feature flip
+    /// (`preserve_order` on in the host graph, off in a plugin workspace)
+    /// or a struct-field reorder cannot silently change it. Community
+    /// plugins built against 5.0.0 with default `serde_json` features
+    /// already produce this value; hosts that resolved `preserve_order`
+    /// used to disagree. Re-run this test with
+    /// `--features serde_json/preserve_order` to prove the invariant.
+    #[test]
+    fn guard_digest_is_pinned() {
+        let guard = GuardTable {
+            id: "world-markets/trading".into(),
+            evm: Some(EvmGuard {
+                contracts: BTreeMap::from([
+                    (
+                        "ROUTER".to_string(),
+                        "0x1111111111111111111111111111111111111111".to_string(),
+                    ),
+                    (
+                        "VAULT".to_string(),
+                        "0x2222222222222222222222222222222222222222".to_string(),
+                    ),
+                    (
+                        "USDC".to_string(),
+                        "0x3333333333333333333333333333333333333333".to_string(),
+                    ),
+                ]),
+                selectors: BTreeMap::from([
+                    ("deposit".to_string(), "deposit()".to_string()),
+                    ("buy".to_string(), "buy(uint256,address)".to_string()),
+                    ("raw".to_string(), "0xd0e30db0".to_string()),
+                ]),
+                allowed_contracts: vec!["ROUTER".into(), "VAULT".into()],
+                approve_spenders: vec!["ROUTER".into()],
+                allowed_selectors: vec!["deposit".into(), "buy".into()],
+                chain_ids: vec![1, 8453],
+            }),
+            svm: Some(SvmGuard {
+                program_ids: BTreeMap::from([(
+                    "JUP".to_string(),
+                    "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4".to_string(),
+                )]),
+                discriminators: BTreeMap::from([("route".to_string(), "route".to_string())]),
+                allowed_programs: vec!["JUP".into()],
+                allowed_discriminators: vec!["route".into()],
+                clusters: vec!["mainnet-beta".into()],
+            }),
+            limits: Some(LimitGuard {
+                hard_cap: Some(1_000_000),
+                confirm_cap: Some(10_000),
+            }),
+        };
+        let sections = vec![AppSkillSection {
+            name: "instructions".into(),
+            content: "Trade.".into(),
+        }];
+        let d = digest(
+            "world-markets/trading",
+            "Trade world markets",
+            &sections,
+            Some(&guard),
+        );
+        assert_eq!(
+            d, "a7673b23c6cd66c29e4975e55d4dc38de1b4591f86c29db29cb66adcfdc13c71",
+            "guard digest drifted: the canonical form must not depend on \
+             serde_json features or struct field order"
+        );
+        // Guard-less digests never touch a JSON map; pin one too so the
+        // shared prefix (id, description, sections) stays put.
+        let bare = digest(
+            "world-markets/trading",
+            "Trade world markets",
+            &sections,
+            None,
+        );
+        assert_eq!(
+            bare,
+            "99a32dc0f409d4182ef5c852b8ceb163c50c2544788d4cb5d92159b1e5f77bde"
         );
     }
 
