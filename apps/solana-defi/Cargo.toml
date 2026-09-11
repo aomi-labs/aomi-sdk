@@ -1,0 +1,15 @@
+[package]
+name = "solana-defi"
+version = "0.1.0"
+edition = "2024"
+description = "Aomi Solana DeFi market discovery, position reads and unsigned preparation"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+aomi-sdk = { path = "../../sdk" }
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "blocking"] }
+schemars = "1.0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
