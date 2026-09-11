@@ -1,0 +1,32 @@
+name: Solana DeFi preparation
+
+on:
+  pull_request:
+    branches: [publish]
+    paths:
+      - apps/solana-defi/service/**
+      - .github/workflows/solana-defi.yml
+  push:
+    branches: [publish]
+    paths:
+      - apps/solana-defi/service/**
+      - .github/workflows/solana-defi.yml
+
+permissions:
+  contents: read
+
+jobs:
+  service-tests:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/solana-defi/service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/solana-defi/service/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm test
