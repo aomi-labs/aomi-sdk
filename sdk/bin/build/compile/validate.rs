@@ -309,7 +309,9 @@ fn validate_manifest(manifest: &DynManifest) -> Vec<String> {
     // and unique ids).
     // Shares the validator with the host's app loader — a build that
     // passes here loads.
-    if let Err(skill_errors) = aomi_sdk::validate_app_skills(&manifest.name, &manifest.skills) {
+    if let Err(skill_errors) =
+        aomi_sdk::validate_app_skills_with_tools(&manifest.name, &manifest.skills, &manifest.tools)
+    {
         errors.extend(
             skill_errors
                 .into_iter()

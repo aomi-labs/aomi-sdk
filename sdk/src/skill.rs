@@ -148,14 +148,20 @@ pub struct AppSkillManifest {
     /// "When to use" keywords for the skill index.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
+    /// App-defined dynamic tools owned by this skill. The plugin registers
+    /// their implementations at load time, but the host withholds their
+    /// schemas and rejects dispatch until this skill is active.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub injected_tools: Vec<String>,
     pub sections: Vec<AppSkillSection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub guard: Option<GuardTable>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hooks: Vec<DynToolHookBinding>,
-    /// sha256 over the canonicalized id + sections + guard table, computed
-    /// by [`AppSkillManifest::from_parts`]. Lets the host verify the skill
-    /// content it loaded is exactly what the release digest covers.
+    /// sha256 over the canonicalized id, description, tags, owned tools,
+    /// sections, guard table, and hooks, computed by
+    /// [`AppSkillManifest::from_parts`]. Lets the host verify the skill content
+    /// it loaded is exactly what the release digest covers.
     pub content_digest: String,
 }
 
@@ -173,6 +179,31 @@ impl AppSkillManifest {
         description: &str,
         tags: Vec<String>,
         sections: Vec<(&str, &str)>,
+        guard_json: Option<&str>,
+        hooks: Vec<DynToolHookBinding>,
+    ) -> Self {
+        Self::from_parts_with_tools(
+            id,
+            description,
+            tags,
+            sections,
+            Vec::new(),
+            guard_json,
+            hooks,
+        )
+    }
+
+    /// Assemble a skill that owns app-defined dynamic tools.
+    ///
+    /// Prefer the `tools: [TypedTool, ...]` field on [`crate::dyn_aomi_app!`];
+    /// it supplies this list from each tool type's `DynAomiTool::NAME` and
+    /// also registers those types in the app's manifest and dispatch router.
+    pub fn from_parts_with_tools(
+        id: &str,
+        description: &str,
+        tags: Vec<String>,
+        sections: Vec<(&str, &str)>,
+        injected_tools: Vec<String>,
         guard_json: Option<&str>,
         hooks: Vec<DynToolHookBinding>,
     ) -> Self {
@@ -194,11 +225,20 @@ impl AppSkillManifest {
                 content: content.to_string(),
             })
             .collect();
-        let content_digest = digest(id, description, &sections, guard.as_ref());
+        let content_digest = digest(
+            id,
+            description,
+            &tags,
+            &injected_tools,
+            &sections,
+            guard.as_ref(),
+            &hooks,
+        );
         Self {
             id: id.to_string(),
             description: description.trim().to_string(),
             tags,
+            injected_tools,
             sections,
             guard,
             hooks,
@@ -279,6 +319,25 @@ impl AppSkillManifest {
             ));
         }
 
+        let mut seen_tools = std::collections::HashSet::new();
+        for tool in &self.injected_tools {
+            if tool.is_empty()
+                || !tool
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "_-".contains(c))
+            {
+                errors.push(format!(
+                    "skill `{}` owns invalid tool name `{tool}` (expected lowercase ASCII letters, digits, `_` or `-`)",
+                    self.id
+                ));
+            } else if !seen_tools.insert(tool.as_str()) {
+                errors.push(format!(
+                    "skill `{}` owns tool `{tool}` more than once",
+                    self.id
+                ));
+            }
+        }
+
         for binding in &self.hooks {
             if binding.tool.trim().is_empty() {
                 errors.push("hook binding with empty tool name".to_string());
@@ -311,12 +370,7 @@ impl AppSkillManifest {
             validate_guard(guard, &mut errors);
         }
 
-        let expected = digest(
-            &self.id,
-            &self.description,
-            &self.sections,
-            self.guard.as_ref(),
-        );
+        let expected = self.computed_digest();
         if self.content_digest != expected {
             errors.push(format!(
                 "content_digest mismatch: manifest says {}, content hashes to {expected}",
@@ -329,6 +383,18 @@ impl AppSkillManifest {
         } else {
             Err(errors)
         }
+    }
+
+    fn computed_digest(&self) -> String {
+        digest(
+            &self.id,
+            &self.description,
+            &self.tags,
+            &self.injected_tools,
+            &self.sections,
+            self.guard.as_ref(),
+            &self.hooks,
+        )
     }
 }
 
@@ -502,8 +568,53 @@ pub fn validate_app_skills(app_name: &str, skills: &[AppSkillManifest]) -> Resul
     }
 }
 
-/// sha256 over the canonical rendering of id + description +
-/// sections + guard. The guard is rendered through [`canonical_json`]
+/// Validate app skills against the complete dynamic-tool manifest.
+///
+/// This is the build/load boundary for tool ownership: every owned name must
+/// resolve to exactly one app tool and no tool may be owned by two skills.
+/// Ordinary app tools simply appear in `tools` without an owner.
+pub fn validate_app_skills_with_tools(
+    app_name: &str,
+    skills: &[AppSkillManifest],
+    tools: &[crate::DynToolMetadata],
+) -> Result<(), Vec<String>> {
+    let mut errors = validate_app_skills(app_name, skills)
+        .err()
+        .unwrap_or_default();
+    let available = tools
+        .iter()
+        .map(|tool| tool.name.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    let mut owners = std::collections::HashMap::<&str, &str>::new();
+
+    for skill in skills {
+        for tool in &skill.injected_tools {
+            if !available.contains(tool.as_str()) {
+                errors.push(format!(
+                    "skill `{}` owns missing app tool `{tool}`",
+                    skill.id
+                ));
+            }
+            if let Some(previous) = owners.insert(tool.as_str(), skill.id.as_str())
+                && previous != skill.id
+            {
+                errors.push(format!(
+                    "app tool `{tool}` has conflicting skill owners `{previous}` and `{}`",
+                    skill.id
+                ));
+            }
+        }
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
+}
+
+/// sha256 over the canonical rendering of every model- and policy-relevant
+/// skill field. The guard is rendered through [`canonical_json`]
 /// (object keys sorted bytewise, no whitespace), so the digest is stable
 /// across whitespace/key-order differences in the source `guard.json` *and*
 /// across `serde_json` feature sets: a plugin workspace and the host
@@ -513,14 +624,27 @@ pub fn validate_app_skills(app_name: &str, skills: &[AppSkillManifest]) -> Resul
 fn digest(
     id: &str,
     description: &str,
+    tags: &[String],
+    injected_tools: &[String],
     sections: &[AppSkillSection],
     guard: Option<&GuardTable>,
+    hooks: &[DynToolHookBinding],
 ) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(id.as_bytes());
     hasher.update([0u8]);
     hasher.update(description.trim().as_bytes());
+    hasher.update([0u8]);
+    for tag in tags {
+        hasher.update(tag.as_bytes());
+        hasher.update([0u8]);
+    }
+    hasher.update([0u8]);
+    for tool in injected_tools {
+        hasher.update(tool.as_bytes());
+        hasher.update([0u8]);
+    }
     hasher.update([0u8]);
     for section in sections {
         hasher.update(section.name.as_bytes());
@@ -531,6 +655,21 @@ fn digest(
     if let Some(guard) = guard {
         let value = serde_json::to_value(guard).unwrap_or(Value::Null);
         hasher.update(canonical_json(&value).as_bytes());
+    }
+    hasher.update([0u8]);
+    for binding in hooks {
+        hasher.update(binding.tool.as_bytes());
+        hasher.update([0u8]);
+        for name in &binding.pre_call {
+            hasher.update(name.as_bytes());
+            hasher.update([0u8]);
+        }
+        hasher.update([0u8]);
+        for name in &binding.post_call {
+            hasher.update(name.as_bytes());
+            hasher.update([0u8]);
+        }
+        hasher.update([0u8]);
     }
     let mut out = String::with_capacity(64);
     for byte in hasher.finalize() {
@@ -754,7 +893,7 @@ mod tests {
 
         let mut c = skill();
         c.sections[0].content.push_str(" (edited)");
-        let recomputed = digest(&c.id, &c.description, &c.sections, c.guard.as_ref());
+        let recomputed = c.computed_digest();
         assert_ne!(c.content_digest, recomputed, "digest must cover sections");
         assert!(
             c.validate("world-markets").is_err(),
@@ -765,9 +904,9 @@ mod tests {
     /// Pins the guard digest to a literal so a `serde_json` feature flip
     /// (`preserve_order` on in the host graph, off in a plugin workspace)
     /// or a struct-field reorder cannot silently change it. Community
-    /// plugins built against 5.0.0 with default `serde_json` features
-    /// already produce this value; hosts that resolved `preserve_order`
-    /// used to disagree. Re-run this test with
+    /// plugins built against the same SDK with default `serde_json` features
+    /// produce this value; hosts that resolve `preserve_order` must agree.
+    /// Re-run this test with
     /// `--features serde_json/preserve_order` to prove the invariant.
     #[test]
     fn guard_digest_is_pinned() {
@@ -820,11 +959,14 @@ mod tests {
         let d = digest(
             "world-markets/trading",
             "Trade world markets",
+            &[],
+            &[],
             &sections,
             Some(&guard),
+            &[],
         );
         assert_eq!(
-            d, "a7673b23c6cd66c29e4975e55d4dc38de1b4591f86c29db29cb66adcfdc13c71",
+            d, "53d69871c3351eadab85dfb60839f9898a8203cc573e60e971e8e6327c5f59af",
             "guard digest drifted: the canonical form must not depend on \
              serde_json features or struct field order"
         );
@@ -833,12 +975,67 @@ mod tests {
         let bare = digest(
             "world-markets/trading",
             "Trade world markets",
+            &[],
+            &[],
             &sections,
             None,
+            &[],
         );
         assert_eq!(
             bare,
-            "99a32dc0f409d4182ef5c852b8ceb163c50c2544788d4cb5d92159b1e5f77bde"
+            "3754204e3d7f8868f9778eccda3bd05488b45a4ef15580ab3eb3831d98c5eaad"
+        );
+    }
+
+    #[test]
+    fn owned_tools_are_digest_covered_and_validated_against_the_app() {
+        let owned = AppSkillManifest::from_parts_with_tools(
+            "app/writing",
+            "Draft a greeting",
+            vec!["writing".into()],
+            vec![("instructions", "Be concise.")],
+            vec!["draft_greeting".into()],
+            None,
+            vec![],
+        );
+        let mut edited = owned.clone();
+        edited.injected_tools[0] = "draft_salutation".into();
+        assert_ne!(owned.content_digest, edited.computed_digest());
+
+        let tools = vec![crate::DynToolMetadata {
+            name: "draft_greeting".into(),
+            app: "app".into(),
+            description: "Draft".into(),
+            parameters_schema: serde_json::json!({}),
+            supports_async: false,
+            namespace: None,
+        }];
+        validate_app_skills_with_tools("app", std::slice::from_ref(&owned), &tools)
+            .expect("owned tool resolves");
+
+        let missing = validate_app_skills_with_tools("app", std::slice::from_ref(&owned), &[])
+            .expect_err("missing owned tool must fail");
+        assert!(
+            missing
+                .iter()
+                .any(|error| error.contains("missing app tool"))
+        );
+
+        let other = AppSkillManifest::from_parts_with_tools(
+            "app/other",
+            "Also draft",
+            vec![],
+            vec![("instructions", "Use another style.")],
+            vec!["draft_greeting".into()],
+            None,
+            vec![],
+        );
+        let conflict = validate_app_skills_with_tools("app", &[owned, other], &tools)
+            .expect_err("one tool cannot have two owners");
+        assert!(
+            conflict
+                .iter()
+                .any(|error| error.contains("conflicting skill owners"))
         );
     }
 
@@ -860,7 +1057,7 @@ mod tests {
             .unwrap()
             .allowed_contracts
             .push("UNDECLARED".to_string());
-        s.content_digest = digest(&s.id, &s.description, &s.sections, s.guard.as_ref());
+        s.content_digest = s.computed_digest();
         let errors = s.validate("world-markets").expect_err("must fail");
         assert!(
             errors
@@ -880,7 +1077,7 @@ mod tests {
                 .insert("BAD".to_string(), "not-base58!!".to_string());
             svm.clusters.push("mainnet".to_string()); // alias, not canonical
         }
-        s.content_digest = digest(&s.id, &s.description, &s.sections, s.guard.as_ref());
+        s.content_digest = s.computed_digest();
         let errors = s.validate("world-markets").expect_err("must fail");
         assert!(errors.iter().any(|e| e.contains("selector `BAD`")));
         assert!(errors.iter().any(|e| e.contains("program `BAD`")));

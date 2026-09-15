@@ -54,8 +54,14 @@
 //!     name = "greeter",
 //!     version = "0.1.0",
 //!     preamble = "You are a friendly greeter.",
-//!     tools = [Greet],
+//!     tools = [],
 //!     namespaces = ["evm-core"],
+//!     skills = [{
+//!         id: "greeter/writing",
+//!         description: "Write a friendly greeting",
+//!         tools: [Greet],
+//!         sections: { instructions: "skill/writing.md" },
+//!     }],
 //! );
 //! ```
 //!

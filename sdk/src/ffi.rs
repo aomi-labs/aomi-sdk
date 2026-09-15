@@ -354,7 +354,7 @@ macro_rules! declare_dyn {
 /// ```rust,ignore
 /// dyn_aomi_app!(app = NavApp, name = "nav", version = "0.1.0",
 ///     preamble = SHORT_ROLE_LINE,
-///     tools = [OpenValuation, ProposeNode],
+///     tools = [OpenValuation],
 ///     namespaces = ["evm-reads", "evm-sim"],
 ///     skills = [
 ///         {
@@ -367,6 +367,7 @@ macro_rules! declare_dyn {
 ///             id: "nav/sim-playbook",
 ///             description: "Fork-simulate a call sequence and prove post-conditions",
 ///             tags: ["simulation", "postconditions"],
+///             tools: [ProposeNode],
 ///             sections: { workflow: "skill/sim-playbook.md" },
 ///         },
 ///     ]);
@@ -393,6 +394,7 @@ macro_rules! dyn_aomi_app {
             id: $s_id:expr,
             description: $s_description:expr
             $(, tags: [ $( $s_tag:expr ),* $(,)? ] )?
+            $(, tools: [ $( $s_tool_type:ty ),* $(,)? ] )?
             , sections: { $( $s_section_name:ident : $s_section_path:expr ),+ $(,)? }
             $(, guard: $s_guard_path:expr )?
             $(, hooks: { $( $s_hook_tool:ident : { $( $s_hook_kind:ident : [ $( $s_hook_name:expr ),* $(,)? ] ),+ $(,)? } ),+ $(,)? } )?
@@ -406,7 +408,12 @@ macro_rules! dyn_aomi_app {
             fn preamble(&self) -> &'static str { $preamble }
 
             fn tools(&self) -> ::std::vec::Vec<$crate::DynToolMetadata> {
-                ::std::vec![ $( <$tool_type as $crate::DynAomiTool>::descriptor(self) ),* ]
+                #[allow(unused_mut)]
+                let mut tools = ::std::vec![ $( <$tool_type as $crate::DynAomiTool>::descriptor(self) ),* ];
+                $( $(
+                    tools.extend(::std::vec![ $( $( <$s_tool_type as $crate::DynAomiTool>::descriptor(self) ),* )? ]);
+                )+ )?
+                tools
             }
 
             $(
@@ -464,11 +471,12 @@ macro_rules! dyn_aomi_app {
                         #[allow(unused_mut, unused_assignments)]
                         let mut tags: ::std::vec::Vec<::std::string::String> = ::std::vec::Vec::new();
                         $( tags = ::std::vec![ $( $s_tag.to_string() ),* ]; )?
-                        $crate::AppSkillManifest::from_parts(
+                        $crate::AppSkillManifest::from_parts_with_tools(
                             $s_id,
                             $s_description,
                             tags,
                             ::std::vec![ $( (stringify!($s_section_name), include_str!($s_section_path)) ),+ ],
+                            ::std::vec![ $( $( <$s_tool_type as $crate::DynAomiTool>::NAME.to_string() ),* )? ],
                             guard_json,
                             hooks,
                         )
@@ -484,7 +492,11 @@ macro_rules! dyn_aomi_app {
                 ctx_json: &str,
                 sink: $crate::DynAsyncSink,
             ) -> $crate::DynToolDispatch {
-                $crate::__dispatch_tool!(self, name, args_json, ctx_json, sink, [ $( $tool_type ),* ])
+                $crate::__dispatch_tool!(
+                    self, name, args_json, ctx_json, sink,
+                    [ $( $tool_type ),* ],
+                    [ $( $( [ $( $( $s_tool_type ),* )? ] ),+ )? ]
+                )
             }
         }
 
@@ -527,7 +539,7 @@ macro_rules! __app_skill_hook_binding {
 #[macro_export]
 macro_rules! __dispatch_tool {
     ($self:ident, $name:ident, $args_json:ident, $ctx_json:ident, $sink:ident,
-     [ $( $tool_type:ty ),* ]) => {
+     [ $( $tool_type:ty ),* ], [ $( [ $( $skill_tool_type:ty ),* ] ),* ]) => {
         match $name {
             $(
                 <$tool_type as $crate::DynAomiTool>::NAME => {
@@ -572,6 +584,49 @@ macro_rules! __dispatch_tool {
                     }
                 }
             )*
+            $( $(
+                <$skill_tool_type as $crate::DynAomiTool>::NAME => {
+                    let args = match $crate::parse_dyn_args::<<$skill_tool_type as $crate::DynAomiTool>::Args>($args_json) {
+                        Ok(args) => args,
+                        Err(ref err) => {
+                            $crate::__private::log_tool_exec_error($name, err);
+                            return $crate::DynToolDispatch::Ready($crate::DynToolResult::err(err));
+                        }
+                    };
+
+                    let ctx = match $crate::parse_dyn_ctx($ctx_json) {
+                        Ok(ctx) => ctx,
+                        Err(ref err) => {
+                            $crate::__private::log_tool_exec_error($name, err);
+                            return $crate::DynToolDispatch::Ready($crate::DynToolResult::err(err));
+                        }
+                    };
+
+                    if <$skill_tool_type as $crate::DynAomiTool>::IS_ASYNC {
+                        let tool_name = $name.to_string();
+                        let app_clone = $self.clone();
+                        let sink_clone = $sink.clone();
+                        ::std::thread::spawn(move || {
+                            let result = <$skill_tool_type as $crate::DynAomiTool>::run_async(
+                                &app_clone, args, ctx, sink_clone.clone(),
+                            );
+                            if let Err(ref err) = result {
+                                $crate::__private::log_async_tool_error(&tool_name, err);
+                                sink_clone.fail(err);
+                            }
+                        });
+                        $crate::DynToolDispatch::AsyncQueued
+                    } else {
+                        match <$skill_tool_type as $crate::DynAomiTool>::run_with_routes($self, args, ctx) {
+                            Ok(value) => $crate::DynToolDispatch::Ready($crate::DynToolResult::ok(value)),
+                            Err(ref err) => {
+                                $crate::__private::log_tool_exec_error($name, err);
+                                $crate::DynToolDispatch::Ready($crate::DynToolResult::err(err))
+                            }
+                        }
+                    }
+                }
+            )* )*
             _ => {
                 let err = format!("unknown tool: {}", $name);
                 $crate::__private::log_tool_exec_error($name, &err);
