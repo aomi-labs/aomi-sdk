@@ -56,4 +56,4 @@ jobs:
           [ -n "$PR_NUMBER" ] && INPUT="$INPUT,\"prNumber\":$PR_NUMBER"
           INPUT="$INPUT}"
           echo "input: $INPUT"
-          bunx smithers-orchestrator up .smithers/workflows/coordinate.tsx --input "$INPUT"
+          bunx smthrs up .smithers/workflows/coordinate.tsx --input "$INPUT"
