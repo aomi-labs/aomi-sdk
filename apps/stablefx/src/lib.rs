@@ -15,7 +15,8 @@ You execute institutional stablecoin FX trades through Circle StableFX on Arc. S
 6. Poll `stablefx_trade_status` until `taker_funded`, then until settlement completes.
 
 ## Safety and conventions
-- This app is Arc-only. It rejects EIP-712 payloads whose domain chain ID is not Arc Testnet `5042002`.
+- Select Arc Mainnet (`5042`) or Arc Testnet (`5042002`) before using a tool. Configure a `LIVE_API_KEY` for Mainnet and a `TEST_API_KEY` for Testnet in their separate package settings.
+- Before signing on Mainnet, configure `STABLEFX_MAINNET_ESCROW_ADDRESS` from a Circle-confirmed deployment. The app rejects a missing address, the Testnet escrow address, and EIP-712 payloads that do not match the selected chain and escrow.
 - Amounts are decimal strings in human currency units, with at most six fractional digits (for example `"10"` or `"1000.25"`).
 - One side of every pair must be USDC.
 - The same connected wallet must sign the trade and funding payloads.
@@ -23,19 +24,31 @@ You execute institutional stablecoin FX trades through Circle StableFX on Arc. S
 - Quote and funding signatures are over API-generated payloads carried byte-for-byte through routed continuations. Never reconstruct or edit typed data.
 
 ## Authentication
-The account must provide `STABLEFX_API_KEY` through Aomi package settings. The key selects Circle's StableFX environment and is never accepted as a tool argument or shown to the user.
+The account must provide `STABLEFX_API_KEY` for Testnet or `STABLEFX_LIVE_API_KEY` for Mainnet through Aomi package settings. Keys are never accepted as tool arguments or shown to the user. Mainnet trading additionally requires `STABLEFX_MAINNET_ESCROW_ADDRESS` in package settings; never guess this address from a quote.
 "#;
 
 const SECRET_API_KEY: Secret = Secret::new(
     "STABLEFX_API_KEY",
-    "Circle StableFX API key. Use a TEST key for Arc Testnet.",
-    true,
+    "Circle StableFX TEST_API_KEY for Arc Testnet.",
+    false,
+);
+
+const LIVE_API_KEY: Secret = Secret::new(
+    "STABLEFX_LIVE_API_KEY",
+    "Circle StableFX LIVE_API_KEY for Arc Mainnet.",
+    false,
+);
+
+const MAINNET_ESCROW_ADDRESS: Secret = Secret::new(
+    "STABLEFX_MAINNET_ESCROW_ADDRESS",
+    "Circle-confirmed StableFX FxEscrow address on Arc Mainnet. Required before signing a mainnet trade or funding permit.",
+    false,
 );
 
 dyn_aomi_app!(
     app = tool::StableFxApp,
     name = "stablefx",
-    version = "0.1.0",
+    version = "0.2.0",
     preamble = PREAMBLE,
     tools = [
         tool::Quote,
@@ -45,6 +58,6 @@ dyn_aomi_app!(
         tool::FundTrade,
         tool::TradeStatus,
     ],
-    secrets = [SECRET_API_KEY],
+    secrets = [SECRET_API_KEY, LIVE_API_KEY, MAINNET_ESCROW_ADDRESS],
     namespaces = ["evm-core"]
 );
