@@ -288,17 +288,10 @@ fn validate_manifest(manifest: &DynManifest) -> Vec<String> {
     }
 
     // Check each plugin tool against inherited names.
-    let mut seen = HashSet::new();
     for tool in &manifest.tools {
         if inherited.contains(tool.name.as_str()) {
             errors.push(format!(
                 "{}: tool '{}' collides with a host namespace tool",
-                manifest.name, tool.name,
-            ));
-        }
-        if !seen.insert(&tool.name) {
-            errors.push(format!(
-                "{}: duplicate tool '{}' in manifest",
                 manifest.name, tool.name,
             ));
         }
@@ -384,6 +377,34 @@ mod tests {
             "got: {}",
             errors[0]
         );
+    }
+
+    #[test]
+    fn validate_rejects_noncanonical_ordinary_tool_names() {
+        let manifest = DynManifest {
+            sdk_version: AOMI_SDK_VERSION.to_string(),
+            name: "bad-app".to_string(),
+            version: "0.1.0".to_string(),
+            preamble: "x".to_string(),
+            tools: vec![DynToolMetadata {
+                name: "Bad Tool".to_string(),
+                app: "bad-app".to_string(),
+                description: "x".to_string(),
+                parameters_schema: aomi_sdk::serde_json::json!({}),
+                supports_async: false,
+                namespace: None,
+            }],
+            namespaces: None,
+            secrets: None,
+            broadcast: None,
+            evm_execution: None,
+            skills: vec![],
+        };
+
+        let errors = super::validate_manifest(&manifest);
+
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].contains("invalid dynamic tool name `Bad Tool`"));
     }
 
     #[test]

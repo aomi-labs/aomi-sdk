@@ -321,14 +321,10 @@ impl AppSkillManifest {
 
         let mut seen_tools = std::collections::HashSet::new();
         for tool in &self.injected_tools {
-            if tool.is_empty()
-                || !tool
-                    .chars()
-                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "_-".contains(c))
-            {
+            if let Err(reason) = validate_dynamic_tool_name(tool) {
                 errors.push(format!(
-                    "skill `{}` owns invalid tool name `{tool}` (expected lowercase ASCII letters, digits, `_` or `-`)",
-                    self.id
+                    "skill `{}` owns invalid tool name `{tool}`: {reason}",
+                    self.id,
                 ));
             } else if !seen_tools.insert(tool.as_str()) {
                 errors.push(format!(
@@ -568,6 +564,42 @@ pub fn validate_app_skills(app_name: &str, skills: &[AppSkillManifest]) -> Resul
     }
 }
 
+/// Validate one dynamic tool name at SDK build and host load boundaries.
+pub fn validate_dynamic_tool_name(name: &str) -> Result<(), &'static str> {
+    if name.is_empty() {
+        return Err("name cannot be empty");
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '-'))
+    {
+        return Err("expected lowercase ASCII letters, digits, `_` or `-`");
+    }
+    Ok(())
+}
+
+/// Validate canonical names and uniqueness for a dynamic app's complete tool manifest.
+pub fn validate_dynamic_tool_names(tools: &[crate::DynToolMetadata]) -> Result<(), Vec<String>> {
+    let mut errors = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for tool in tools {
+        if let Err(reason) = validate_dynamic_tool_name(&tool.name) {
+            errors.push(format!(
+                "invalid dynamic tool name `{}`: {reason}",
+                tool.name
+            ));
+        }
+        if !seen.insert(tool.name.as_str()) {
+            errors.push(format!("duplicate dynamic tool name `{}`", tool.name));
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
+}
+
 /// Validate app skills against the complete dynamic-tool manifest.
 ///
 /// This is the build/load boundary for tool ownership: every owned name must
@@ -578,9 +610,12 @@ pub fn validate_app_skills_with_tools(
     skills: &[AppSkillManifest],
     tools: &[crate::DynToolMetadata],
 ) -> Result<(), Vec<String>> {
-    let mut errors = validate_app_skills(app_name, skills)
-        .err()
-        .unwrap_or_default();
+    let mut errors = validate_dynamic_tool_names(tools).err().unwrap_or_default();
+    errors.extend(
+        validate_app_skills(app_name, skills)
+            .err()
+            .unwrap_or_default(),
+    );
     let available = tools
         .iter()
         .map(|tool| tool.name.as_str())

@@ -543,88 +543,16 @@ macro_rules! __dispatch_tool {
         match $name {
             $(
                 <$tool_type as $crate::DynAomiTool>::NAME => {
-                    let args = match $crate::parse_dyn_args::<<$tool_type as $crate::DynAomiTool>::Args>($args_json) {
-                        Ok(args) => args,
-                        Err(ref err) => {
-                            $crate::__private::log_tool_exec_error($name, err);
-                            return $crate::DynToolDispatch::Ready($crate::DynToolResult::err(err));
-                        }
-                    };
-
-                    let ctx = match $crate::parse_dyn_ctx($ctx_json) {
-                        Ok(ctx) => ctx,
-                        Err(ref err) => {
-                            $crate::__private::log_tool_exec_error($name, err);
-                            return $crate::DynToolDispatch::Ready($crate::DynToolResult::err(err));
-                        }
-                    };
-
-                    if <$tool_type as $crate::DynAomiTool>::IS_ASYNC {
-                        let tool_name = $name.to_string();
-                        let app_clone = $self.clone();
-                        let sink_clone = $sink.clone();
-                        ::std::thread::spawn(move || {
-                            let result = <$tool_type as $crate::DynAomiTool>::run_async(
-                                &app_clone, args, ctx, sink_clone.clone(),
-                            );
-                            if let Err(ref err) = result {
-                                $crate::__private::log_async_tool_error(&tool_name, err);
-                                sink_clone.fail(err);
-                            }
-                        });
-                        $crate::DynToolDispatch::AsyncQueued
-                    } else {
-                        match <$tool_type as $crate::DynAomiTool>::run_with_routes($self, args, ctx) {
-                            Ok(value) => $crate::DynToolDispatch::Ready($crate::DynToolResult::ok(value)),
-                            Err(ref err) => {
-                                $crate::__private::log_tool_exec_error($name, err);
-                                $crate::DynToolDispatch::Ready($crate::DynToolResult::err(err))
-                            }
-                        }
-                    }
+                    $crate::__run_dyn_tool!(
+                        $tool_type, $self, $name, $args_json, $ctx_json, $sink
+                    )
                 }
             )*
             $( $(
                 <$skill_tool_type as $crate::DynAomiTool>::NAME => {
-                    let args = match $crate::parse_dyn_args::<<$skill_tool_type as $crate::DynAomiTool>::Args>($args_json) {
-                        Ok(args) => args,
-                        Err(ref err) => {
-                            $crate::__private::log_tool_exec_error($name, err);
-                            return $crate::DynToolDispatch::Ready($crate::DynToolResult::err(err));
-                        }
-                    };
-
-                    let ctx = match $crate::parse_dyn_ctx($ctx_json) {
-                        Ok(ctx) => ctx,
-                        Err(ref err) => {
-                            $crate::__private::log_tool_exec_error($name, err);
-                            return $crate::DynToolDispatch::Ready($crate::DynToolResult::err(err));
-                        }
-                    };
-
-                    if <$skill_tool_type as $crate::DynAomiTool>::IS_ASYNC {
-                        let tool_name = $name.to_string();
-                        let app_clone = $self.clone();
-                        let sink_clone = $sink.clone();
-                        ::std::thread::spawn(move || {
-                            let result = <$skill_tool_type as $crate::DynAomiTool>::run_async(
-                                &app_clone, args, ctx, sink_clone.clone(),
-                            );
-                            if let Err(ref err) = result {
-                                $crate::__private::log_async_tool_error(&tool_name, err);
-                                sink_clone.fail(err);
-                            }
-                        });
-                        $crate::DynToolDispatch::AsyncQueued
-                    } else {
-                        match <$skill_tool_type as $crate::DynAomiTool>::run_with_routes($self, args, ctx) {
-                            Ok(value) => $crate::DynToolDispatch::Ready($crate::DynToolResult::ok(value)),
-                            Err(ref err) => {
-                                $crate::__private::log_tool_exec_error($name, err);
-                                $crate::DynToolDispatch::Ready($crate::DynToolResult::err(err))
-                            }
-                        }
-                    }
+                    $crate::__run_dyn_tool!(
+                        $skill_tool_type, $self, $name, $args_json, $ctx_json, $sink
+                    )
                 }
             )* )*
             _ => {
@@ -634,4 +562,55 @@ macro_rules! __dispatch_tool {
             }
         }
     };
+}
+
+/// Internal helper: execute one matched dynamic tool type.
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __run_dyn_tool {
+    ($tool_type:ty, $self:ident, $name:ident, $args_json:ident, $ctx_json:ident, $sink:ident) => {{
+        let args =
+            match $crate::parse_dyn_args::<<$tool_type as $crate::DynAomiTool>::Args>($args_json) {
+                Ok(args) => args,
+                Err(ref err) => {
+                    $crate::__private::log_tool_exec_error($name, err);
+                    return $crate::DynToolDispatch::Ready($crate::DynToolResult::err(err));
+                }
+            };
+
+        let ctx = match $crate::parse_dyn_ctx($ctx_json) {
+            Ok(ctx) => ctx,
+            Err(ref err) => {
+                $crate::__private::log_tool_exec_error($name, err);
+                return $crate::DynToolDispatch::Ready($crate::DynToolResult::err(err));
+            }
+        };
+
+        if <$tool_type as $crate::DynAomiTool>::IS_ASYNC {
+            let tool_name = $name.to_string();
+            let app_clone = $self.clone();
+            let sink_clone = $sink.clone();
+            ::std::thread::spawn(move || {
+                let result = <$tool_type as $crate::DynAomiTool>::run_async(
+                    &app_clone,
+                    args,
+                    ctx,
+                    sink_clone.clone(),
+                );
+                if let Err(ref err) = result {
+                    $crate::__private::log_async_tool_error(&tool_name, err);
+                    sink_clone.fail(err);
+                }
+            });
+            $crate::DynToolDispatch::AsyncQueued
+        } else {
+            match <$tool_type as $crate::DynAomiTool>::run_with_routes($self, args, ctx) {
+                Ok(value) => $crate::DynToolDispatch::Ready($crate::DynToolResult::ok(value)),
+                Err(ref err) => {
+                    $crate::__private::log_tool_exec_error($name, err);
+                    $crate::DynToolDispatch::Ready($crate::DynToolResult::err(err))
+                }
+            }
+        }
+    }};
 }
