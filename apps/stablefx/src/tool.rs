@@ -12,6 +12,9 @@ const ARC_TESTNET_CHAIN_ID: u64 = 5_042_002;
 const ARC_MAINNET_CHAIN_ID: u64 = 5_042;
 const PERMIT2_ADDRESS: &str = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
 const TESTNET_ESCROW_ADDRESS: &str = "0x867650F5eAe8df91445971f14d89fd84F0C9a9f8";
+const ARC_USDC_ADDRESS: &str = "0x3600000000000000000000000000000000000000";
+const MAINNET_EURC_ADDRESS: &str = "0xbEf5f6d51CB62b58e6A8f77868681825C6fe21c1";
+const TESTNET_EURC_ADDRESS: &str = "0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ArcNetwork {
@@ -31,6 +34,18 @@ impl ArcNetwork {
         match self {
             Self::Mainnet => "Arc Mainnet",
             Self::Testnet => "Arc Testnet",
+        }
+    }
+
+    fn token_address(self, currency: &str) -> Result<&'static str, String> {
+        match (self, currency) {
+            (_, "USDC") => Ok(ARC_USDC_ADDRESS),
+            (Self::Mainnet, "EURC") => Ok(MAINNET_EURC_ADDRESS),
+            (Self::Testnet, "EURC") => Ok(TESTNET_EURC_ADDRESS),
+            _ => Err(format!(
+                "[stablefx] cannot safely sign a {currency} permit on {}; supported signing currencies are USDC and EURC",
+                self.name()
+            )),
         }
     }
 
@@ -231,6 +246,7 @@ fn validate_arc_typed_data(
     typed_data: &Value,
     network: ArcNetwork,
     ctx: &DynToolCallCtx,
+    from_currency: &str,
 ) -> Result<(), String> {
     let chain_id = typed_data
         .pointer("/domain/chainId")
@@ -273,6 +289,16 @@ fn validate_arc_typed_data(
                 "[stablefx] refusing unexpected {label} {address}; expected {expected}"
             ));
         }
+    }
+    let token = typed_data
+        .pointer("/message/permitted/token")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "[stablefx] typedData is missing permitted token".to_string())?;
+    let expected_token = network.token_address(from_currency)?;
+    if !token.eq_ignore_ascii_case(expected_token) {
+        return Err(format!(
+            "[stablefx] refusing unexpected permitted token {token}; expected {from_currency} at {expected_token}"
+        ));
     }
     let primary_type = typed_data
         .get("primaryType")
@@ -399,7 +425,7 @@ impl DynAomiTool for AcceptQuote {
         let runtime = rt()?;
         let quote = runtime.block_on(client(&ctx, network)?.quote(&request))?;
         let typed_data = typed_data(&quote)?;
-        validate_arc_typed_data(&typed_data, network, &ctx)?;
+        validate_arc_typed_data(&typed_data, network, &ctx, &request.from.currency)?;
         let message = typed_message(&typed_data)?;
 
         let submit_template = json!({
@@ -531,7 +557,12 @@ impl DynAomiTool for PrepareFunding {
             contract_trade_ids: vec![contract_trade_id],
             trader_type: "taker".to_string(),
         }))?;
-        validate_arc_typed_data(&presign.typed_data, network, &ctx)?;
+        let from_currency = trade
+            .from
+            .get("currency")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "[stablefx] trade is missing source currency".to_string())?;
+        validate_arc_typed_data(&presign.typed_data, network, &ctx, from_currency)?;
         let permit2 = typed_message(&presign.typed_data)?;
 
         let submit_template = json!({
@@ -708,13 +739,14 @@ mod tests {
             },
             "types": {},
             "primaryType": "PermitWitnessTransferFrom",
-            "message": { "spender": TESTNET_ESCROW_ADDRESS },
+            "message": { "spender": TESTNET_ESCROW_ADDRESS, "permitted": { "token": ARC_USDC_ADDRESS } },
         });
         assert!(
             validate_arc_typed_data(
                 &wrong_chain,
                 ArcNetwork::Testnet,
-                &ctx(Some(ARC_TESTNET_CHAIN_ID))
+                &ctx(Some(ARC_TESTNET_CHAIN_ID)),
+                "USDC",
             )
             .is_err()
         );
@@ -730,17 +762,22 @@ mod tests {
             },
             "types": {},
             "primaryType": "PermitWitnessTransferFrom",
-            "message": { "spender": TESTNET_ESCROW_ADDRESS },
+            "message": { "spender": TESTNET_ESCROW_ADDRESS, "permitted": { "token": ARC_USDC_ADDRESS } },
         });
         let context = ctx(Some(ARC_TESTNET_CHAIN_ID));
-        assert!(validate_arc_typed_data(&arc, ArcNetwork::Testnet, &context).is_ok());
+        assert!(validate_arc_typed_data(&arc, ArcNetwork::Testnet, &context, "USDC").is_ok());
 
         arc["domain"]["verifyingContract"] = json!("0x0000000000000000000000000000000000000001");
-        assert!(validate_arc_typed_data(&arc, ArcNetwork::Testnet, &context).is_err());
+        assert!(validate_arc_typed_data(&arc, ArcNetwork::Testnet, &context, "USDC").is_err());
 
         arc["domain"]["verifyingContract"] = json!(PERMIT2_ADDRESS);
         arc["message"]["spender"] = json!("0x0000000000000000000000000000000000000001");
-        assert!(validate_arc_typed_data(&arc, ArcNetwork::Testnet, &context).is_err());
+        assert!(validate_arc_typed_data(&arc, ArcNetwork::Testnet, &context, "USDC").is_err());
+
+        arc["message"]["spender"] = json!(TESTNET_ESCROW_ADDRESS);
+        arc["message"]["permitted"]["token"] = json!(TESTNET_EURC_ADDRESS);
+        assert!(validate_arc_typed_data(&arc, ArcNetwork::Testnet, &context, "USDC").is_err());
+        assert!(validate_arc_typed_data(&arc, ArcNetwork::Testnet, &context, "EURC").is_ok());
     }
 
     #[test]
@@ -755,23 +792,42 @@ mod tests {
             },
             "types": {},
             "primaryType": "PermitWitnessTransferFrom",
-            "message": { "spender": mainnet_escrow },
+            "message": { "spender": mainnet_escrow, "permitted": { "token": ARC_USDC_ADDRESS } },
         });
-        assert!(validate_arc_typed_data(&typed_data, ArcNetwork::Mainnet, &context).is_err());
+        assert!(
+            validate_arc_typed_data(&typed_data, ArcNetwork::Mainnet, &context, "USDC").is_err()
+        );
         context.secrets.insert(
             "STABLEFX_MAINNET_ESCROW_ADDRESS".to_string(),
             TESTNET_ESCROW_ADDRESS.to_string(),
         );
-        assert!(validate_arc_typed_data(&typed_data, ArcNetwork::Mainnet, &context).is_err());
+        assert!(
+            validate_arc_typed_data(&typed_data, ArcNetwork::Mainnet, &context, "USDC").is_err()
+        );
         context.secrets.insert(
             "STABLEFX_MAINNET_ESCROW_ADDRESS".to_string(),
             mainnet_escrow.to_string(),
         );
-        assert!(validate_arc_typed_data(&typed_data, ArcNetwork::Mainnet, &context).is_ok());
+        assert!(
+            validate_arc_typed_data(&typed_data, ArcNetwork::Mainnet, &context, "USDC").is_ok()
+        );
         typed_data["domain"]["chainId"] = json!(ARC_TESTNET_CHAIN_ID);
-        assert!(validate_arc_typed_data(&typed_data, ArcNetwork::Mainnet, &context).is_err());
+        assert!(
+            validate_arc_typed_data(&typed_data, ArcNetwork::Mainnet, &context, "USDC").is_err()
+        );
         typed_data["domain"]["chainId"] = json!(ARC_MAINNET_CHAIN_ID);
         typed_data["message"]["spender"] = json!(TESTNET_ESCROW_ADDRESS);
-        assert!(validate_arc_typed_data(&typed_data, ArcNetwork::Mainnet, &context).is_err());
+        assert!(
+            validate_arc_typed_data(&typed_data, ArcNetwork::Mainnet, &context, "USDC").is_err()
+        );
+        typed_data["message"]["spender"] = json!(mainnet_escrow);
+        typed_data["message"]["permitted"]["token"] = json!(TESTNET_EURC_ADDRESS);
+        assert!(
+            validate_arc_typed_data(&typed_data, ArcNetwork::Mainnet, &context, "EURC").is_err()
+        );
+        typed_data["message"]["permitted"]["token"] = json!(MAINNET_EURC_ADDRESS);
+        assert!(
+            validate_arc_typed_data(&typed_data, ArcNetwork::Mainnet, &context, "EURC").is_ok()
+        );
     }
 }
