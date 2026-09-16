@@ -9,8 +9,67 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 const ARC_TESTNET_CHAIN_ID: u64 = 5_042_002;
+const ARC_MAINNET_CHAIN_ID: u64 = 5_042;
 const PERMIT2_ADDRESS: &str = "0x000000000022D473030F116dDEE9F6B43aC78BA3";
-const STABLEFX_ESCROW_ADDRESS: &str = "0x867650F5eAe8df91445971f14d89fd84F0C9a9f8";
+const TESTNET_ESCROW_ADDRESS: &str = "0x867650F5eAe8df91445971f14d89fd84F0C9a9f8";
+const ARC_USDC_ADDRESS: &str = "0x3600000000000000000000000000000000000000";
+const MAINNET_EURC_ADDRESS: &str = "0xbEf5f6d51CB62b58e6A8f77868681825C6fe21c1";
+const TESTNET_EURC_ADDRESS: &str = "0x89B50855Aa3bE2F677cD6303Cec089B5F319D72a";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ArcNetwork {
+    Mainnet,
+    Testnet,
+}
+
+impl ArcNetwork {
+    fn chain_id(self) -> u64 {
+        match self {
+            Self::Mainnet => ARC_MAINNET_CHAIN_ID,
+            Self::Testnet => ARC_TESTNET_CHAIN_ID,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Self::Mainnet => "Arc Mainnet",
+            Self::Testnet => "Arc Testnet",
+        }
+    }
+
+    fn token_address(self, currency: &str) -> Result<&'static str, String> {
+        match (self, currency) {
+            (_, "USDC") => Ok(ARC_USDC_ADDRESS),
+            (Self::Mainnet, "EURC") => Ok(MAINNET_EURC_ADDRESS),
+            (Self::Testnet, "EURC") => Ok(TESTNET_EURC_ADDRESS),
+            _ => Err(format!(
+                "[stablefx] cannot safely sign a {currency} permit on {}; supported signing currencies are USDC and EURC",
+                self.name()
+            )),
+        }
+    }
+
+    fn escrow_address(self, ctx: &DynToolCallCtx) -> Result<String, String> {
+        match self {
+            Self::Testnet => Ok(TESTNET_ESCROW_ADDRESS.to_string()),
+            Self::Mainnet => {
+                let address = resolve_secret_value(
+                    ctx,
+                    None,
+                    "STABLEFX_MAINNET_ESCROW_ADDRESS",
+                    "[stablefx] configure the Circle-confirmed Arc Mainnet FxEscrow address in package settings before signing",
+                )?;
+                validate_address(&address)?;
+                if address.eq_ignore_ascii_case(TESTNET_ESCROW_ADDRESS)
+                    || address.eq_ignore_ascii_case("0x0000000000000000000000000000000000000000")
+                {
+                    return Err("[stablefx] Arc Mainnet escrow address cannot be the Testnet or zero address".to_string());
+                }
+                Ok(address)
+            }
+        }
+    }
+}
 
 #[derive(Clone, Default)]
 pub(crate) struct StableFxApp;
@@ -31,27 +90,39 @@ fn ok<T: Serialize>(value: T) -> Result<Value, String> {
     })
 }
 
-fn require_arc(ctx: &DynToolCallCtx) -> Result<(), String> {
+fn require_arc(ctx: &DynToolCallCtx) -> Result<ArcNetwork, String> {
     let chain_id = ctx
         .attribute_u64(&["domain", "evm", "chain_id"])
         .ok_or_else(|| {
-            "[stablefx] Arc Testnet must be selected before using StableFX".to_string()
+            "[stablefx] Arc Mainnet or Arc Testnet must be selected before using StableFX"
+                .to_string()
         })?;
-    if chain_id != ARC_TESTNET_CHAIN_ID {
-        return Err(format!(
-            "[stablefx] StableFX is only available on Arc Testnet (chainId {ARC_TESTNET_CHAIN_ID}); selected chainId is {chain_id}"
-        ));
+    match chain_id {
+        ARC_MAINNET_CHAIN_ID => Ok(ArcNetwork::Mainnet),
+        ARC_TESTNET_CHAIN_ID => Ok(ArcNetwork::Testnet),
+        _ => Err(format!(
+            "[stablefx] StableFX supports Arc Mainnet ({ARC_MAINNET_CHAIN_ID}) and Arc Testnet ({ARC_TESTNET_CHAIN_ID}); selected chainId is {chain_id}"
+        )),
     }
-    Ok(())
 }
 
-fn client(ctx: &DynToolCallCtx) -> Result<StableFxClient, String> {
+fn client(ctx: &DynToolCallCtx, network: ArcNetwork) -> Result<StableFxClient, String> {
+    let (slot, prefix) = match network {
+        ArcNetwork::Mainnet => ("STABLEFX_LIVE_API_KEY", "LIVE_API_KEY:"),
+        ArcNetwork::Testnet => ("STABLEFX_API_KEY", "TEST_API_KEY:"),
+    };
     let api_key = resolve_secret_value(
         ctx,
         None,
-        "STABLEFX_API_KEY",
-        "[stablefx] add a Circle StableFX API key in package settings before using StableFX",
+        slot,
+        "[stablefx] add the Circle StableFX API key for the selected Arc network in package settings",
     )?;
+    if !api_key.starts_with(prefix) {
+        return Err(format!(
+            "[stablefx] {} requires a Circle {prefix} key in package settings",
+            network.name()
+        ));
+    }
     StableFxClient::new(&api_key)
 }
 
@@ -171,7 +242,12 @@ fn typed_message(typed_data: &Value) -> Result<Value, String> {
         .ok_or_else(|| "[stablefx] typedData is missing message".to_string())
 }
 
-fn validate_arc_typed_data(typed_data: &Value) -> Result<(), String> {
+fn validate_arc_typed_data(
+    typed_data: &Value,
+    network: ArcNetwork,
+    ctx: &DynToolCallCtx,
+    from_currency: &str,
+) -> Result<(), String> {
     let chain_id = typed_data
         .pointer("/domain/chainId")
         .and_then(|value| {
@@ -180,9 +256,10 @@ fn validate_arc_typed_data(typed_data: &Value) -> Result<(), String> {
                 .or_else(|| value.as_str().and_then(|text| text.parse().ok()))
         })
         .ok_or_else(|| "[stablefx] typedData domain is missing a numeric chainId".to_string())?;
-    if chain_id != ARC_TESTNET_CHAIN_ID {
+    if chain_id != network.chain_id() {
         return Err(format!(
-            "[stablefx] refusing non-Arc typedData: expected chainId {ARC_TESTNET_CHAIN_ID}, got {chain_id}"
+            "[stablefx] refusing typedData for a different network: expected chainId {}, got {chain_id}",
+            network.chain_id()
         ));
     }
     let domain_name = typed_data
@@ -194,17 +271,14 @@ fn validate_arc_typed_data(typed_data: &Value) -> Result<(), String> {
             "[stablefx] refusing unexpected EIP-712 domain {domain_name}; expected Permit2"
         ));
     }
+    let escrow = network.escrow_address(ctx)?;
     for (pointer, label, expected) in [
         (
             "/domain/verifyingContract",
             "EIP-712 verifying contract",
             PERMIT2_ADDRESS,
         ),
-        (
-            "/message/spender",
-            "Permit2 spender",
-            STABLEFX_ESCROW_ADDRESS,
-        ),
+        ("/message/spender", "Permit2 spender", escrow.as_str()),
     ] {
         let address = typed_data
             .pointer(pointer)
@@ -215,6 +289,16 @@ fn validate_arc_typed_data(typed_data: &Value) -> Result<(), String> {
                 "[stablefx] refusing unexpected {label} {address}; expected {expected}"
             ));
         }
+    }
+    let token = typed_data
+        .pointer("/message/permitted/token")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "[stablefx] typedData is missing permitted token".to_string())?;
+    let expected_token = network.token_address(from_currency)?;
+    if !token.eq_ignore_ascii_case(expected_token) {
+        return Err(format!(
+            "[stablefx] refusing unexpected permitted token {token}; expected {from_currency} at {expected_token}"
+        ));
     }
     let primary_type = typed_data
         .get("primaryType")
@@ -282,7 +366,7 @@ impl DynAomiTool for Quote {
     const DESCRIPTION: &'static str = "Get an indicative Circle StableFX rate without creating a trade or asking the wallet to sign. Amount is a human-unit decimal string. One side of the pair must be USDC.";
 
     fn run(_app: &StableFxApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
-        require_arc(&ctx)?;
+        let network = require_arc(&ctx)?;
         let request = quote_request(
             args.from_currency,
             args.to_currency,
@@ -292,7 +376,7 @@ impl DynAomiTool for Quote {
             None,
         )?;
         let runtime = rt()?;
-        let response = runtime.block_on(client(&ctx)?.quote(&request))?;
+        let response = runtime.block_on(client(&ctx, network)?.quote(&request))?;
         ok(response)
     }
 }
@@ -327,7 +411,7 @@ impl DynAomiTool for AcceptQuote {
         args: Self::Args,
         ctx: DynToolCallCtx,
     ) -> Result<ToolReturn, String> {
-        require_arc(&ctx)?;
+        let network = require_arc(&ctx)?;
         let wallet = connected_wallet(&ctx)?;
         let recipient = args.recipient.unwrap_or_else(|| wallet.clone());
         let request = quote_request(
@@ -339,15 +423,16 @@ impl DynAomiTool for AcceptQuote {
             Some(recipient),
         )?;
         let runtime = rt()?;
-        let quote = runtime.block_on(client(&ctx)?.quote(&request))?;
+        let quote = runtime.block_on(client(&ctx, network)?.quote(&request))?;
         let typed_data = typed_data(&quote)?;
-        validate_arc_typed_data(&typed_data)?;
+        validate_arc_typed_data(&typed_data, network, &ctx, &request.from.currency)?;
         let message = typed_message(&typed_data)?;
 
         let submit_template = json!({
             "idempotency_key": Uuid::new_v4().to_string(),
             "quote_id": quote.id,
             "wallet": wallet,
+            "chain_id": network.chain_id(),
             "message": message,
             "signature": null,
         });
@@ -362,8 +447,8 @@ impl DynAomiTool for AcceptQuote {
         let preview = ok(json!({
             "status": "awaiting_wallet_signature",
             "quote": quote,
-            "network": "Arc Testnet",
-            "chain_id": ARC_TESTNET_CHAIN_ID,
+            "network": network.name(),
+            "chain_id": network.chain_id(),
         }))?;
 
         Ok(ToolReturn::route(preview)
@@ -386,6 +471,7 @@ pub(crate) struct CreateTradeArgs {
     pub idempotency_key: String,
     pub quote_id: String,
     pub wallet: String,
+    pub chain_id: u64,
     /// Exact `typedData.message` returned with the quote.
     pub message: Value,
     /// Filled by the routed wallet-signing step.
@@ -400,7 +486,10 @@ impl DynAomiTool for CreateTrade {
     const DESCRIPTION: &'static str = "Routed continuation of stablefx_accept_quote. It submits the pinned quote message and wallet signature to Circle. Do not invoke directly.";
 
     fn run(_app: &StableFxApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
-        require_arc(&ctx)?;
+        let network = require_arc(&ctx)?;
+        if args.chain_id != network.chain_id() {
+            return Err("[stablefx] selected Arc network changed after quote signing".to_string());
+        }
         let connected_wallet = connected_wallet(&ctx)?;
         validate_address(&args.wallet)?;
         if !args.wallet.eq_ignore_ascii_case(&connected_wallet) {
@@ -419,7 +508,7 @@ impl DynAomiTool for CreateTrade {
             signature,
         };
         let runtime = rt()?;
-        let trade = runtime.block_on(client(&ctx)?.create_trade(&request))?;
+        let trade = runtime.block_on(client(&ctx, network)?.create_trade(&request))?;
         ok(json!({
             "trade": trade,
             "next": "Poll stablefx_trade_status until pending_settlement, then call stablefx_prepare_funding.",
@@ -450,9 +539,9 @@ impl DynAomiTool for PrepareFunding {
         args: Self::Args,
         ctx: DynToolCallCtx,
     ) -> Result<ToolReturn, String> {
-        require_arc(&ctx)?;
+        let network = require_arc(&ctx)?;
         validate_uuid("trade_id", &args.trade_id)?;
-        let client = client(&ctx)?;
+        let client = client(&ctx, network)?;
         let runtime = rt()?;
         let trade = runtime.block_on(client.trade(&args.trade_id))?;
         if trade.status != "pending_settlement" {
@@ -468,11 +557,17 @@ impl DynAomiTool for PrepareFunding {
             contract_trade_ids: vec![contract_trade_id],
             trader_type: "taker".to_string(),
         }))?;
-        validate_arc_typed_data(&presign.typed_data)?;
+        let from_currency = trade
+            .from
+            .get("currency")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "[stablefx] trade is missing source currency".to_string())?;
+        validate_arc_typed_data(&presign.typed_data, network, &ctx, from_currency)?;
         let permit2 = typed_message(&presign.typed_data)?;
 
         let submit_template = json!({
             "trade_id": trade.id,
+            "chain_id": network.chain_id(),
             "permit2": permit2,
             "signature": null,
         });
@@ -486,8 +581,8 @@ impl DynAomiTool for PrepareFunding {
             "contract_trade_id": trade.contract_trade_id,
             "deliverables": presign.deliverables,
             "receivables": presign.receivables,
-            "network": "Arc Testnet",
-            "chain_id": ARC_TESTNET_CHAIN_ID,
+            "network": network.name(),
+            "chain_id": network.chain_id(),
             "prerequisite": "The source token must already have sufficient ERC-20 allowance to Permit2.",
         }))?;
 
@@ -509,6 +604,7 @@ pub(crate) struct FundTrade;
 #[derive(Debug, Deserialize, Serialize, JsonSchema)]
 pub(crate) struct FundTradeArgs {
     pub trade_id: String,
+    pub chain_id: u64,
     /// Exact funding `typedData.message` returned by Circle.
     pub permit2: Value,
     /// Filled by the routed wallet-signing step.
@@ -523,10 +619,15 @@ impl DynAomiTool for FundTrade {
     const DESCRIPTION: &'static str = "Routed continuation of stablefx_prepare_funding. Relays the pinned Permit2 message and signature to Circle, then reads back the trade. Do not invoke directly.";
 
     fn run(_app: &StableFxApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
-        require_arc(&ctx)?;
+        let network = require_arc(&ctx)?;
+        if args.chain_id != network.chain_id() {
+            return Err(
+                "[stablefx] selected Arc network changed after funding signing".to_string(),
+            );
+        }
         validate_uuid("trade_id", &args.trade_id)?;
         let signature = validate_signature(args.signature)?;
-        let client = client(&ctx)?;
+        let client = client(&ctx, network)?;
         let runtime = rt()?;
         runtime.block_on(client.fund(&FundRequest {
             trader_type: "taker".to_string(),
@@ -560,10 +661,10 @@ impl DynAomiTool for TradeStatus {
     const DESCRIPTION: &'static str = "Get the current Circle StableFX trade state and settlement transaction hash. Poll at a moderate cadence; call stablefx_prepare_funding only when the state is pending_settlement.";
 
     fn run(_app: &StableFxApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
-        require_arc(&ctx)?;
+        let network = require_arc(&ctx)?;
         validate_uuid("trade_id", &args.trade_id)?;
         let runtime = rt()?;
-        let trade = runtime.block_on(client(&ctx)?.trade(&args.trade_id))?;
+        let trade = runtime.block_on(client(&ctx, network)?.trade(&args.trade_id))?;
         ok(trade)
     }
 }
@@ -591,7 +692,14 @@ mod tests {
 
     #[test]
     fn requires_arc_thread_context() {
-        assert!(require_arc(&ctx(Some(ARC_TESTNET_CHAIN_ID))).is_ok());
+        assert_eq!(
+            require_arc(&ctx(Some(ARC_TESTNET_CHAIN_ID))).unwrap(),
+            ArcNetwork::Testnet
+        );
+        assert_eq!(
+            require_arc(&ctx(Some(ARC_MAINNET_CHAIN_ID))).unwrap(),
+            ArcNetwork::Mainnet
+        );
         assert!(require_arc(&ctx(Some(1))).is_err());
         assert!(require_arc(&ctx(None)).is_err());
     }
@@ -599,10 +707,18 @@ mod tests {
     #[test]
     fn resolves_api_key_from_the_account_secret_context() {
         let mut context = ctx(Some(ARC_TESTNET_CHAIN_ID));
-        context
-            .secrets
-            .insert("STABLEFX_API_KEY".to_string(), "TEST_KEY".to_string());
-        assert!(client(&context).is_ok());
+        context.secrets.insert(
+            "STABLEFX_API_KEY".to_string(),
+            "TEST_API_KEY:id:secret".to_string(),
+        );
+        assert!(client(&context, ArcNetwork::Testnet).is_ok());
+        assert!(client(&context, ArcNetwork::Mainnet).is_err());
+        context.secrets.insert(
+            "STABLEFX_LIVE_API_KEY".to_string(),
+            "LIVE_API_KEY:id:secret".to_string(),
+        );
+        assert!(client(&context, ArcNetwork::Mainnet).is_ok());
+        assert!(client(&context, ArcNetwork::Testnet).is_ok());
     }
 
     #[test]
@@ -623,9 +739,17 @@ mod tests {
             },
             "types": {},
             "primaryType": "PermitWitnessTransferFrom",
-            "message": { "spender": STABLEFX_ESCROW_ADDRESS },
+            "message": { "spender": TESTNET_ESCROW_ADDRESS, "permitted": { "token": ARC_USDC_ADDRESS } },
         });
-        assert!(validate_arc_typed_data(&wrong_chain).is_err());
+        assert!(
+            validate_arc_typed_data(
+                &wrong_chain,
+                ArcNetwork::Testnet,
+                &ctx(Some(ARC_TESTNET_CHAIN_ID)),
+                "USDC",
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -638,15 +762,72 @@ mod tests {
             },
             "types": {},
             "primaryType": "PermitWitnessTransferFrom",
-            "message": { "spender": STABLEFX_ESCROW_ADDRESS },
+            "message": { "spender": TESTNET_ESCROW_ADDRESS, "permitted": { "token": ARC_USDC_ADDRESS } },
         });
-        assert!(validate_arc_typed_data(&arc).is_ok());
+        let context = ctx(Some(ARC_TESTNET_CHAIN_ID));
+        assert!(validate_arc_typed_data(&arc, ArcNetwork::Testnet, &context, "USDC").is_ok());
 
         arc["domain"]["verifyingContract"] = json!("0x0000000000000000000000000000000000000001");
-        assert!(validate_arc_typed_data(&arc).is_err());
+        assert!(validate_arc_typed_data(&arc, ArcNetwork::Testnet, &context, "USDC").is_err());
 
         arc["domain"]["verifyingContract"] = json!(PERMIT2_ADDRESS);
         arc["message"]["spender"] = json!("0x0000000000000000000000000000000000000001");
-        assert!(validate_arc_typed_data(&arc).is_err());
+        assert!(validate_arc_typed_data(&arc, ArcNetwork::Testnet, &context, "USDC").is_err());
+
+        arc["message"]["spender"] = json!(TESTNET_ESCROW_ADDRESS);
+        arc["message"]["permitted"]["token"] = json!(TESTNET_EURC_ADDRESS);
+        assert!(validate_arc_typed_data(&arc, ArcNetwork::Testnet, &context, "USDC").is_err());
+        assert!(validate_arc_typed_data(&arc, ArcNetwork::Testnet, &context, "EURC").is_ok());
+    }
+
+    #[test]
+    fn mainnet_signing_requires_a_separate_confirmed_escrow() {
+        let mut context = ctx(Some(ARC_MAINNET_CHAIN_ID));
+        let mainnet_escrow = "0x1111111111111111111111111111111111111111";
+        let mut typed_data = json!({
+            "domain": {
+                "name": "Permit2",
+                "chainId": ARC_MAINNET_CHAIN_ID,
+                "verifyingContract": PERMIT2_ADDRESS,
+            },
+            "types": {},
+            "primaryType": "PermitWitnessTransferFrom",
+            "message": { "spender": mainnet_escrow, "permitted": { "token": ARC_USDC_ADDRESS } },
+        });
+        assert!(
+            validate_arc_typed_data(&typed_data, ArcNetwork::Mainnet, &context, "USDC").is_err()
+        );
+        context.secrets.insert(
+            "STABLEFX_MAINNET_ESCROW_ADDRESS".to_string(),
+            TESTNET_ESCROW_ADDRESS.to_string(),
+        );
+        assert!(
+            validate_arc_typed_data(&typed_data, ArcNetwork::Mainnet, &context, "USDC").is_err()
+        );
+        context.secrets.insert(
+            "STABLEFX_MAINNET_ESCROW_ADDRESS".to_string(),
+            mainnet_escrow.to_string(),
+        );
+        assert!(
+            validate_arc_typed_data(&typed_data, ArcNetwork::Mainnet, &context, "USDC").is_ok()
+        );
+        typed_data["domain"]["chainId"] = json!(ARC_TESTNET_CHAIN_ID);
+        assert!(
+            validate_arc_typed_data(&typed_data, ArcNetwork::Mainnet, &context, "USDC").is_err()
+        );
+        typed_data["domain"]["chainId"] = json!(ARC_MAINNET_CHAIN_ID);
+        typed_data["message"]["spender"] = json!(TESTNET_ESCROW_ADDRESS);
+        assert!(
+            validate_arc_typed_data(&typed_data, ArcNetwork::Mainnet, &context, "USDC").is_err()
+        );
+        typed_data["message"]["spender"] = json!(mainnet_escrow);
+        typed_data["message"]["permitted"]["token"] = json!(TESTNET_EURC_ADDRESS);
+        assert!(
+            validate_arc_typed_data(&typed_data, ArcNetwork::Mainnet, &context, "EURC").is_err()
+        );
+        typed_data["message"]["permitted"]["token"] = json!(MAINNET_EURC_ADDRESS);
+        assert!(
+            validate_arc_typed_data(&typed_data, ArcNetwork::Mainnet, &context, "EURC").is_ok()
+        );
     }
 }
