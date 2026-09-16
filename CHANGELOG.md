@@ -1,5 +1,27 @@
 # Changelog
 
+## 5.1.0
+
+### Added
+
+- App skills can own typed dynamic tools with `tools: [Tool, ...]`. Owned
+  tools are included in the plugin manifest and dispatch router, while the
+  host withholds their schemas and rejects dispatch until the owning skill is
+  active.
+
+### Changed
+
+- Dynamic tool names now share one canonical SDK validator at build and host
+  load boundaries. Names must contain only lowercase ASCII letters, digits,
+  `_`, or `-`, and must be unique within the app manifest.
+- App skill `content_digest` now covers descriptions, tags, owned tools, and
+  hook bindings in addition to sections and guard tables.
+
+### Compatibility
+
+- The host and every plugin must be rebuilt against exactly SDK 5.1.0 before
+  using skill-owned tools. The exact-version compatibility gate is unchanged.
+
 ## 5.0.1
 
 ### Fixed

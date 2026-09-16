@@ -360,12 +360,13 @@ impl DynAomiTool for Tool {
     }
 }
 
-dyn_aomi_app!(app = App, name = "shape-skills", version = "0.1.0", preamble = "shape", tools = [Tool],
+dyn_aomi_app!(app = App, name = "shape-skills", version = "0.1.0", preamble = "shape", tools = [],
     namespaces = ["evm-reads", "evm-sim"],
     skills = [
         {
             id: "shape-skills/operating",
             description: "Operating rules",
+            tools: [Tool],
             sections: { instructions: "skill/instructions.md", safety: "skill/safety.md" },
             guard: "skill/guard.json",
             hooks: { tool: { pre: ["value_at_risk"] } },
