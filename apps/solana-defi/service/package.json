@@ -1,0 +1,18 @@
+{
+  "name": "@aomi/solana-defi-preparation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": { "start": "node src/server.mjs", "test": "node --test test/*.test.mjs" },
+  "dependencies": {
+    "@jup-ag/lend": "0.2.0",
+    "@kamino-finance/klend-sdk": "12.0.0",
+    "@pump-fun/pump-swap-sdk": "1.20.0",
+    "@solana/kit": "2.3.0",
+    "@solana/spl-token": "0.4.15",
+    "@solana/web3.js": "1.99.0",
+    "bn.js": "5.2.2",
+    "decimal.js": "10.6.0"
+  }
+}
