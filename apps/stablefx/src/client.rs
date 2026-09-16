@@ -110,8 +110,10 @@ pub(crate) struct FundRequest {
 impl StableFxClient {
     pub(crate) fn new(api_key: &str) -> Result<Self, String> {
         let mut headers = HeaderMap::new();
-        let mut authorization = HeaderValue::from_str(&format!("Bearer {api_key}"))
-            .map_err(|_| "[stablefx] Circle StableFX API key is not a valid header value".to_string())?;
+        let mut authorization =
+            HeaderValue::from_str(&format!("Bearer {api_key}")).map_err(|_| {
+                "[stablefx] Circle StableFX API key is not a valid header value".to_string()
+            })?;
         authorization.set_sensitive(true);
         headers.insert(AUTHORIZATION, authorization);
         headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
