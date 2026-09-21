@@ -51,28 +51,28 @@ pub unsafe fn free_c_string(ptr: *mut c_char) {
 
 // ── Tracing helpers for macro-generated code ────────────────────────────
 
-/// Log a tool-start error (null pointer, UTF-8, panic).
+/// Log a tool-start error without recording caller-controlled error text.
 #[doc(hidden)]
-pub fn log_tool_start_error(tool: &str, error: &str) {
-    tracing::error!(tool = tool, error = error, "tool start failed");
+pub fn log_tool_start_error(_tool: &str, _error: &str) {
+    tracing::error!("tool start failed");
 }
 
-/// Log a sync tool execution error.
+/// Log a sync tool execution error without recording its arbitrary payload.
 #[doc(hidden)]
-pub fn log_tool_exec_error(tool: &str, error: &str) {
-    tracing::error!(tool = tool, error = error, "tool execution failed");
+pub fn log_tool_exec_error(tool: &str, _error: &str) {
+    tracing::error!(tool = tool, "tool execution failed");
 }
 
-/// Log an async tool failure.
+/// Log an async tool failure without recording its arbitrary payload.
 #[doc(hidden)]
-pub fn log_async_tool_error(tool: &str, error: &str) {
-    tracing::error!(tool = tool, error = error, "async tool failed");
+pub fn log_async_tool_error(tool: &str, _error: &str) {
+    tracing::error!(tool = tool, "async tool failed");
 }
 
-/// Log a poll-level error.
+/// Log a poll-level error without recording its arbitrary payload.
 #[doc(hidden)]
-pub fn log_poll_error(execution_id: u64, error: &str) {
-    tracing::error!(execution_id = execution_id, error = error, "poll error");
+pub fn log_poll_error(execution_id: u64, _error: &str) {
+    tracing::error!(execution_id = execution_id, "poll error");
 }
 
 /// Generate the C ABI entry points for a dynamic plugin app.
@@ -557,7 +557,7 @@ macro_rules! __dispatch_tool {
             )* )*
             _ => {
                 let err = format!("unknown tool: {}", $name);
-                $crate::__private::log_tool_exec_error($name, &err);
+                $crate::__private::log_tool_exec_error("<unknown>", &err);
                 $crate::DynToolDispatch::Ready($crate::DynToolResult::err(err))
             }
         }
@@ -613,4 +613,61 @@ macro_rules! __run_dyn_tool {
             }
         }
     }};
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{self, Write};
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Default)]
+    struct CapturedLogs(Arc<Mutex<Vec<u8>>>);
+
+    struct CapturedWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedLogs {
+        type Writer = CapturedWriter;
+
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedWriter(self.0.clone())
+        }
+    }
+
+    impl Write for CapturedWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn failure_logs_exclude_arbitrary_error_text() {
+        let logs = CapturedLogs::default();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_target(false)
+            .with_writer(logs.clone())
+            .finish();
+        let secret = "failure-text-must-not-reach-tracing";
+        let sink =
+            crate::DynAsyncSink::__from_queue(Arc::new(crate::types::AsyncExecQueue::default()));
+
+        tracing::subscriber::with_default(subscriber, || {
+            super::log_tool_start_error("known_tool", secret);
+            super::log_tool_exec_error("known_tool", secret);
+            super::log_async_tool_error("known_tool", secret);
+            super::log_poll_error(42, secret);
+            sink.fail(secret);
+        });
+
+        let output = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+        assert!(!output.contains(secret));
+        assert!(output.contains("known_tool"));
+        assert!(output.contains("execution_id=42"));
+    }
 }

@@ -47,7 +47,7 @@ mod tests {
     #[test]
     fn a_manifest_with_secrets_serializes_the_slots() {
         // Guards the exact contract build_candidate.py depends on:
-        // `secrets` is an array of {name, description, required}.
+        // `secrets` is an array of {name, description, required, user_own}.
         use aomi_sdk::{DynManifest, SecretSlot};
         let manifest = DynManifest {
             sdk_version: "3.0.2".into(),
@@ -60,6 +60,7 @@ mod tests {
                 name: "BINANCE_API_KEY".into(),
                 description: "Binance dashboard API key.".into(),
                 required: true,
+                user_own: false,
             }]),
             broadcast: None,
             evm_execution: None,
@@ -69,5 +70,6 @@ mod tests {
             serde_json::from_str(&serde_json::to_string(&manifest).unwrap()).unwrap();
         assert_eq!(json["secrets"][0]["name"], "BINANCE_API_KEY");
         assert_eq!(json["secrets"][0]["required"], true);
+        assert_eq!(json["secrets"][0]["user_own"], false);
     }
 }
