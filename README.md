@@ -57,7 +57,7 @@ contributor** row.
 - `kalshi`
 - `khalani`
 - `molinar`
-- `para`
+- `para` (hidden from the release bundle via `metadata.aomi.skip = true`; code kept)
 - `para-consumer`
 - `pelagos`
 - `polymarket`
