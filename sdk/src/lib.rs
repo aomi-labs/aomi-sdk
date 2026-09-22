@@ -183,6 +183,9 @@ pub const __AOMI_SDK_VERSION_CSTR: &str = concat!(env!("CARGO_PKG_VERSION"), "\0
 ///    no vault is in scope.
 ///
 /// Returns `missing_message` when none of the three resolves.
+///
+/// The returned value is sensitive. Plugin code must never log it, put it in
+/// an error, persist it, or include it in a tool result.
 pub fn resolve_secret_value(
     ctx: &crate::DynToolCallCtx,
     arg_value: Option<&str>,
@@ -211,6 +214,27 @@ pub fn resolve_secret_value(
     }
 
     Err(missing_message.to_string())
+}
+
+/// Resolve a user-owned secret injected by the authenticated host context.
+///
+/// Unlike [`resolve_secret_value`], this function does not inspect tool
+/// arguments or process environment variables. That prevents a production
+/// plugin from silently substituting a builder or backend operator credential
+/// when the authenticated user has not supplied their own value.
+///
+/// The returned value is sensitive. Plugin code must never log it, put it in
+/// an error, persist it, or include it in a tool result.
+pub fn resolve_user_secret_value(
+    ctx: &crate::DynToolCallCtx,
+    name: &str,
+    missing_message: &str,
+) -> Result<String, String> {
+    ctx.secrets
+        .get(name)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| missing_message.to_string())
 }
 
 /// Internal helpers for macros. Do not use directly.

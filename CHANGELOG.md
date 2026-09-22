@@ -1,5 +1,30 @@
 # Changelog
 
+## 5.1.1
+
+### Added
+
+- Secret declarations can opt into per-user credentials with
+  `Secret::new(...).user_owned()`. The manifest serializes this as
+  `"user_own": true`.
+- `resolve_user_secret_value` reads user-owned values only from the
+  authenticated tool context, without argument or process-environment
+  fallback.
+
+### Fixed
+
+- FFI failure traces no longer record arbitrary tool error text before the
+  host can redact it. Async sink failures follow the same rule.
+- `DynToolCallCtx` debug output redacts its injected secret values.
+
+### Compatibility
+
+- Existing `Secret::new(name, description, required)` declarations remain
+  operator-owned and serialize `"user_own": false`. Manifests without the new
+  field also deserialize as operator-owned.
+- The host and every plugin must be rebuilt against exactly SDK 5.1.1 because
+  the runtime keeps an exact SDK-version compatibility gate.
+
 ## 5.1.0
 
 ### Added
