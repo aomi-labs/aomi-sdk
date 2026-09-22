@@ -4,6 +4,7 @@ members = [
     "sdk/examples/hello-app",
     "sdk/examples/app-template-http",
     "sdk/examples/skill-owned-app",
+    "sdk/examples/credential-demo",
     "ext",
 ]
 exclude = [
