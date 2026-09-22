@@ -5,6 +5,7 @@
 
 use crate::route::{TOOL_RETURN_MARKER, ToolReturn};
 use std::collections::VecDeque;
+use std::fmt;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
@@ -39,7 +40,7 @@ use serde_json::{Map, Value};
 ///     Ok(serde_json::json!({ "org_id": org_id, "name": name }))
 /// }
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct DynToolCallCtx {
     /// Session identifier (unique per chat session)
     pub session_id: String,
@@ -50,12 +51,24 @@ pub struct DynToolCallCtx {
     /// Business/domain-specific runtime attributes copied from host context.
     #[serde(default)]
     pub state_attributes: Map<String, Value>,
-    /// Raw values for this app's declared secrets, resolved from the host
-    /// secret vault for the calling session's client_id. Tools read these
-    /// via [`resolve_secret_value`](crate::resolve_secret_value); they are
-    /// never logged, persisted, or echoed to the model.
+    /// Raw values for this app's declared secrets, resolved for the
+    /// authenticated user and application. User-owned values are read with
+    /// [`resolve_user_secret_value`](crate::resolve_user_secret_value); debug
+    /// output redacts them and tools must not log, persist, or echo them.
     #[serde(default)]
     pub secrets: std::collections::HashMap<String, String>,
+}
+
+impl fmt::Debug for DynToolCallCtx {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("DynToolCallCtx")
+            .field("session_id", &self.session_id)
+            .field("tool_name", &self.tool_name)
+            .field("call_id", &self.call_id)
+            .field("state_attributes", &self.state_attributes)
+            .field("secrets", &"<redacted>")
+            .finish()
+    }
 }
 
 impl DynToolCallCtx {
@@ -385,7 +398,7 @@ impl DynAsyncSink {
     /// Emit a terminal error.
     pub fn fail(&self, msg: impl Into<String>) {
         let message = msg.into();
-        tracing::error!(error = %message, "async tool execution failed");
+        tracing::error!("async tool execution failed");
         self.queue.push(AsyncExecPool::Error { message });
     }
 

@@ -1,9 +1,11 @@
 //! Resolve declared secret slots from process environment.
 //!
-//! The backend has a per-app vault; the dev runtime keeps it dead simple:
-//! each declared slot maps to an env var of the same name. A required
-//! slot that's missing aborts startup; an optional slot that's missing
-//! just gets a warning.
+//! The backend has a per-user, per-app vault. This local developer runtime
+//! deliberately treats its process as the current user: each declared slot,
+//! including a user-owned slot, maps to an env var of the same name and is
+//! injected into `DynToolCallCtx`. Production hosts must resolve user-owned
+//! slots from authenticated user storage instead. A required slot that's
+//! missing aborts startup; an optional slot that's missing emits a warning.
 //!
 //! The resulting `HashMap<String,String>` is injected into every
 //! `DynToolCallCtx.secrets`, which means the plugin's
