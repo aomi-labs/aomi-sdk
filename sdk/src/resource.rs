@@ -42,6 +42,91 @@ pub struct ResourceOutputDeclaration {
     pub outputs: Vec<ResourceExportDeclaration>,
 }
 
+/// A fixed argument position the host may resolve before SDK deserialization.
+/// This declaration grants neither resource access nor signature authority.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ResourceInputDeclaration {
+    pub pointer: String,
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema: Option<String>,
+    /// A signature must be bound by the host to this declared plan position.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub paired_with: Option<String>,
+}
+
+pub fn validate_resource_inputs(inputs: &[ResourceInputDeclaration]) -> Result<(), String> {
+    if inputs.len() > 16 {
+        return Err("resource inputs exceed the registration limit of 16".into());
+    }
+    let mut pointers = BTreeSet::new();
+    for input in inputs {
+        validate_pointer(&input.pointer)?;
+        if input.pointer.is_empty() {
+            return Err("resource inputs must select a non-root argument".into());
+        }
+        validate_kind(&input.kind)?;
+        validate_schema(input.schema.as_deref())?;
+        if !pointers.insert(input.pointer.as_str()) {
+            return Err("duplicate resource input pointer".into());
+        }
+    }
+    for input in inputs {
+        if pointers
+            .iter()
+            .any(|other| *other != input.pointer && input.pointer.starts_with(&format!("{other}/")))
+        {
+            return Err("resource input pointers overlap".into());
+        }
+        if let Some(peer) = &input.paired_with {
+            let Some(plan) = inputs.iter().find(|candidate| candidate.pointer == *peer) else {
+                return Err("resource signature pair must name a declared input".into());
+            };
+            if input.kind != "evm.signature@1"
+                || plan.pointer == input.pointer
+                || plan.kind == "evm.signature@1"
+                || plan.paired_with.is_some()
+            {
+                return Err(
+                    "resource pairing is only supported from a signature to its plan".into(),
+                );
+            }
+        } else if input.kind == "evm.signature@1" {
+            return Err("resource signature requires its paired plan".into());
+        }
+    }
+    Ok(())
+}
+
+/// Extend only declared existing argument positions with an exact whole URI.
+/// Literal SDK arguments remain valid; the SDK itself never resolves a handle.
+pub fn resource_input_schema(
+    mut schema: serde_json::Value,
+    inputs: &[ResourceInputDeclaration],
+) -> Result<serde_json::Value, String> {
+    validate_resource_inputs(inputs)?;
+    for input in inputs {
+        let mut selected = &mut schema;
+        for component in input.pointer.split('/').skip(1) {
+            let key = component.replace("~1", "/").replace("~0", "~");
+            selected = selected
+                .get_mut("properties")
+                .and_then(|properties| properties.get_mut(&key))
+                .ok_or_else(|| {
+                    "resource input must name an existing object schema property".to_string()
+                })?;
+        }
+        let literal = selected.take();
+        *selected = serde_json::json!({"anyOf": [literal, {
+            "type":"object", "required":["uri"], "additionalProperties":false,
+            "properties":{"uri":{"type":"string","minLength":1,"maxLength":1024,
+                "pattern":"^aomi://[a-zA-Z0-9_-]+/[a-z-]+/[0-9a-f]{32}$"}}
+        }]});
+    }
+    Ok(schema)
+}
+
 impl ResourceOutputDeclaration {
     /// Validate registration shape only. This grants no publication authority.
     pub fn validate(&self) -> Result<(), String> {

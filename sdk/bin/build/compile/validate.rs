@@ -309,6 +309,12 @@ fn validate_manifest(manifest: &DynManifest) -> Vec<String> {
 
     // Check each plugin tool against inherited names.
     for tool in &manifest.tools {
+        if let Err(error) = aomi_sdk::validate_resource_inputs(&tool.resource_inputs) {
+            errors.push(format!(
+                "{}: invalid resource inputs for '{}': {error}",
+                manifest.name, tool.name
+            ));
+        }
         if let Some(output) = &tool.resource_output {
             if let Err(error) = output.validate() {
                 errors.push(format!(
@@ -378,6 +384,7 @@ mod tests {
                 supports_async: false,
                 namespace: None,
                 resource_output: None,
+                resource_inputs: Vec::new(),
             }],
             namespaces: Some(vec!["database".to_string()]),
             secrets: None,
@@ -439,6 +446,7 @@ mod tests {
                 supports_async: false,
                 namespace: None,
                 resource_output: None,
+                resource_inputs: Vec::new(),
             }],
             namespaces: None,
             secrets: None,

@@ -690,6 +690,23 @@ impl DynAomiTool for BuildOrder {
     const NAME: &'static str = "limitless_build_order";
     const DESCRIPTION: &'static str = "Build a Limitless CTF Exchange order and route the EIP-712 signing step to the user's wallet. After the wallet signs, the runtime automatically continues to `limitless_submit_order` with the bound signature, which POSTs to /orders. Args: slug, outcome (YES/NO), side (BUY/SELL), price (0.01..0.99), size (shares), wallet_address, owner_id. Optional: order_type (GTC|FOK), nonce, expiration, fee_rate_bps.";
 
+    fn resource_output() -> Option<aomi_sdk::ResourceOutputDeclaration> {
+        Some(aomi_sdk::ResourceOutputDeclaration {
+            kind: "data.result@1".into(),
+            name: "order".into(),
+            summary_pointer: Some("/preview".into()),
+            schema: None,
+            sensitivity: aomi_sdk::ResourceSensitivity::Private,
+            outputs: vec![aomi_sdk::ResourceExportDeclaration {
+                name: "order_plan".into(),
+                pointer: "/order_plan".into(),
+                kind: "data.value@1".into(),
+                schema: Some("limitless.order-plan@1".into()),
+                sensitivity: aomi_sdk::ResourceSensitivity::Private,
+            }],
+        })
+    }
+
     fn run_with_routes(
         _app: &LimitlessApp,
         args: Self::Args,
@@ -845,6 +862,23 @@ impl DynAomiTool for SubmitOrder {
     const NAME: &'static str = "limitless_submit_order";
     const DESCRIPTION: &'static str = "POST a wallet-signed Limitless order to /orders. Continuation of `limitless_build_order` — usually invoked automatically by the runtime after the wallet sig callback binds `order_signature`. Treat `order_plan` as opaque continuation state.";
 
+    fn resource_inputs() -> Vec<aomi_sdk::ResourceInputDeclaration> {
+        vec![
+            aomi_sdk::ResourceInputDeclaration {
+                pointer: "/order_plan".into(),
+                kind: "data.value@1".into(),
+                schema: Some("limitless.order-plan@1".into()),
+                paired_with: None,
+            },
+            aomi_sdk::ResourceInputDeclaration {
+                pointer: "/order_signature".into(),
+                kind: "evm.signature@1".into(),
+                schema: None,
+                paired_with: Some("/order_plan".into()),
+            },
+        ]
+    }
+
     fn run(_app: &LimitlessApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
         let signature = args
             .order_signature
@@ -889,5 +923,42 @@ impl DynAomiTool for SubmitOrder {
             let resp = signed_post(&key, &sec, "/orders", &envelope).await?;
             ok(resp)
         })
+    }
+}
+
+#[cfg(test)]
+mod resource_input_tests {
+    use super::*;
+
+    #[test]
+    fn order_plan_and_signature_have_bound_whole_handle_positions() {
+        let metadata = SubmitOrder::descriptor(&LimitlessApp);
+        validate_resource_inputs(&metadata.resource_inputs).unwrap();
+        assert_eq!(metadata.resource_inputs[0].pointer, "/order_plan");
+        assert_eq!(
+            metadata.resource_inputs[1].paired_with.as_deref(),
+            Some("/order_plan")
+        );
+        for position in ["order_plan", "order_signature"] {
+            let schema = &metadata.parameters_schema["properties"][position];
+            assert_eq!(schema["anyOf"][1]["required"], json!(["uri"]));
+            assert_eq!(schema["anyOf"][1]["additionalProperties"], false);
+        }
+        let output = BuildOrder::resource_output().unwrap();
+        output.validate().unwrap();
+        assert_eq!(output.summary_pointer.as_deref(), Some("/preview"));
+        assert_eq!(output.outputs[0].pointer, "/order_plan");
+        assert_eq!(
+            output.outputs[0].schema.as_deref(),
+            Some("limitless.order-plan@1")
+        );
+        // Resolution belongs to the host; SDK serde cannot execute opaque handles.
+        assert!(
+            serde_json::from_value::<SubmitOrderArgs>(json!({
+                "order_plan":{"uri":"aomi://store/values/0123456789abcdef0123456789abcdef"},
+                "order_signature":null
+            }))
+            .is_err()
+        );
     }
 }

@@ -126,6 +126,9 @@ pub struct DynToolMetadata {
     /// Missing declarations use the host's generic data policy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resource_output: Option<crate::ResourceOutputDeclaration>,
+    /// Opt-in whole arguments resolved and authenticated by the host.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub resource_inputs: Vec<crate::ResourceInputDeclaration>,
 }
 
 // ============================================================================
@@ -603,6 +606,11 @@ pub trait DynAomiTool: Send + Sync + 'static {
         None
     }
 
+    /// Declare fixed argument positions that accept host-issued whole handles.
+    fn resource_inputs() -> Vec<crate::ResourceInputDeclaration> {
+        Vec::new()
+    }
+
     /// Synchronous tool execution. Override this for non-streaming tools.
     fn run(_app: &Self::App, _args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         Err(format!(
@@ -643,14 +651,21 @@ pub trait DynAomiTool: Send + Sync + 'static {
     /// Called at manifest time; normally you don't need to override this.
     fn descriptor(app: &Self::App) -> DynToolMetadata {
         let schema = schema_for!(Self::Args);
+        let resource_inputs = Self::resource_inputs();
+        let parameters_schema = crate::resource_input_schema(
+            serde_json::to_value(schema).expect("typed argument schema must serialize"),
+            &resource_inputs,
+        )
+        .expect("resource input declarations must name valid argument positions");
         DynToolMetadata {
             name: Self::NAME.to_string(),
             app: app.name().to_string(),
             description: Self::DESCRIPTION.to_string(),
-            parameters_schema: serde_json::to_value(schema).unwrap_or(Value::Null),
+            parameters_schema,
             supports_async: Self::IS_ASYNC,
             namespace: None,
             resource_output: Self::resource_output(),
+            resource_inputs,
         }
     }
 }

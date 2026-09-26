@@ -1045,6 +1045,7 @@ mod tests {
             supports_async: false,
             namespace: None,
             resource_output: None,
+            resource_inputs: Vec::new(),
         }];
         validate_app_skills_with_tools("app", std::slice::from_ref(&owned), &tools)
             .expect("owned tool resolves");
