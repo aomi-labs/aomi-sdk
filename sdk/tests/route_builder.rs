@@ -80,11 +80,11 @@ fn svm_host_route_target_names_match_host_tools() {
     );
     assert_eq!(
         <host::SvmCommitIx as RouteTarget>::tool_name(),
-        "svm_commit_ix"
+        "svm_commit_txs"
     );
     assert_eq!(
         <host::SvmCommitTx as RouteTarget>::tool_name(),
-        "svm_commit_tx"
+        "svm_commit_txs"
     );
     assert_eq!(
         <host::SvmSignData as RouteTarget>::tool_name(),
@@ -119,7 +119,7 @@ fn svm_lane_1_stage_commit_route_plan_serializes() {
         .iter()
         .filter_map(|route| route.get("tool").and_then(Value::as_str))
         .collect();
-    assert_eq!(tools, vec!["svm_stage_ix", "svm_commit_ix"]);
+    assert_eq!(tools, vec!["svm_stage_ix", "svm_commit_txs"]);
 }
 
 #[test]
@@ -146,7 +146,7 @@ fn svm_lane_2_stage_commit_route_plan_serializes() {
         .iter()
         .filter_map(|route| route.get("tool").and_then(Value::as_str))
         .collect();
-    assert_eq!(tools, vec!["svm_stage_tx", "svm_commit_tx"]);
+    assert_eq!(tools, vec!["svm_stage_tx", "svm_commit_txs"]);
 
     // Lane 2 commit takes only `tx_id` + `mode` — assert no
     // accidental Lane 1 args leaked into the after step's payload.
@@ -309,7 +309,7 @@ fn route_builder_serializes_solana_venue_commit_plan() {
                     "trigger": {"type": "on_sync_return"},
                 },
                 {
-                    "tool": "svm_commit_tx",
+                    "tool": "svm_commit_txs",
                     "args": {},
                     "trigger": {"type": "on_sync_return"},
                     "bind_as": "signed_tx",
@@ -684,7 +684,7 @@ fn lane_2_stage_sim_commit_chain_binds_sequentially() {
     // ── Step 3: commit_tx ────────────────────────────────────────────
     let s = &routes[2];
     assert_eq!(s["tool"], json!(host::SvmCommitTx::tool_name()));
-    assert_eq!(s["tool"], json!("svm_commit_tx"));
+    assert_eq!(s["tool"], json!("svm_commit_txs"));
     assert_eq!(
         s["trigger"],
         json!({ "type": "on_bound_event", "alias": "sim_result" }),
@@ -761,7 +761,7 @@ fn lane_1_stage_sim_commit_chain_binds_sequentially() {
         json!({ "type": "on_bound_event", "alias": "ix_ids" })
     );
     assert_eq!(routes[1]["bind_as"], json!("sim_result"));
-    assert_eq!(routes[2]["tool"], json!("svm_commit_ix"));
+    assert_eq!(routes[2]["tool"], json!("svm_commit_txs"));
     assert_eq!(
         routes[2]["trigger"],
         json!({ "type": "on_bound_event", "alias": "sim_result" })
@@ -773,10 +773,10 @@ fn lane_1_stage_sim_commit_chain_binds_sequentially() {
     // where it breaks.
     assert_eq!(host::SvmStageIx::tool_name(), "svm_stage_ix");
     assert_eq!(host::SvmSimulateIx::tool_name(), "svm_simulate_ix");
-    assert_eq!(host::SvmCommitIx::tool_name(), "svm_commit_ix");
+    assert_eq!(host::SvmCommitIx::tool_name(), "svm_commit_txs");
     assert_eq!(host::SvmStageTx::tool_name(), "svm_stage_tx");
     assert_eq!(host::SvmSimulateTx::tool_name(), "svm_simulate_tx");
-    assert_eq!(host::SvmCommitTx::tool_name(), "svm_commit_tx");
+    assert_eq!(host::SvmCommitTx::tool_name(), "svm_commit_txs");
 }
 
 /// Negative test — if a 3-node chain accidentally awaits the *stage*

@@ -41,7 +41,7 @@ You never construct the typed data or call `evm_commit_message` directly. Just c
 
 ## Placing an order — what happens under the hood
 
-1. **Pre-req (one-time per exchange)**: ERC-20 `approve(EXCHANGE, max)` on USDC so the exchange can pull collateral when an order fills. Use the standard `stage_tx` → `simulate_batch` → `commit_txs` from `evm-core`. The exchange address is **per-market** — read it from `limitless_get_market` response.
+1. **Pre-req (one-time per exchange)**: ERC-20 `approve(EXCHANGE, max)` on USDC so the exchange can pull collateral when an order fills. Use the standard `evm_stage_tx` → `simulate_batch` → `evm_commit_txs` from `evm-core`. The exchange address is **per-market** — read it from `limitless_get_market` response.
 2. **Build the order** + **sign via wallet** + **POST to /orders**: all handled by `limitless_build_order` → routed `evm_commit_message` → `limitless_submit_order` automatically. You just call `limitless_build_order` and follow the routed continuation.
 3. **Settlement**: when matched, the exchange pulls USDC from the maker and mints/transfers conditional tokens. PnL appears in `limitless_get_my_positions`.
 
@@ -53,10 +53,9 @@ You never construct the typed data or call `evm_commit_message` directly. Just c
 2. limitless_get_orderbook(slug="eth-above-4k-eoy")
    → confirm asks at ≤ 0.55 so the limit is realistic
 3. (if first time) USDC approval to the exchange:
-   stage_tx(to=USDC, sig="approve(address,uint256)",
-            args=[<exchange>, 2^256-1])  → pending_tx_id=1
-   simulate_batch(transactions=[{id:1}])
-   commit_txs(tx_ids=[1])  → user signs once
+   evm_stage_tx(to=USDC, sig="approve(address,uint256)",
+            args=[<exchange>, 2^256-1])  → issued staged resource
+   Simulate that staged resource and commit the same ordered cohort with its matching evidence.
 4. limitless_build_order(
      slug="eth-above-4k-eoy",
      outcome="YES", side="BUY",
@@ -84,7 +83,7 @@ Cancel still needs a `limitless_cancel_order` tool (`POST /orders/cancel` + HMAC
 
 ## Safety
 - Outcome prices are **0–1 probability**, not USD. A "buy YES at 0.42" means paying $0.42 per share; a fill of 100 shares costs $42 plus fees.
-- Never call `commit_txs` for an approval without first running `simulate_batch` on the staged id.
+- Never call `evm_commit_txs` for an approval without first obtaining a passing simulation for the same exact ordered staged-resource cohort.
 - Never claim an order is **placed** unless `limitless_submit_order` returned a Limitless order id. Wallet signing alone is not placement — the POST has to succeed.
 - Always summarize the order parameters (price, size, total USDC cost) to the user before calling `limitless_build_order`. The build_order call triggers a wallet popup; the user should not be surprised by what they're about to sign.
 - If volume on the market is thin (< $100), warn the user that limit orders may not fill at the requested price; offer to use a FOK order at the top of book instead.
@@ -98,7 +97,7 @@ Cancel still needs a `limitless_cancel_order` tool (`POST /orders/cancel` + HMAC
 - Present market lists as compact tables: slug, title, current YES/NO prices, expiration.
 - Format probabilities as percentages (e.g., 0.34 → "34%").
 - Mention USD-denominated PnL with sign ("+$12.30").
-- For staged approvals, after `commit_txs` returns `pending_approval`, say "waiting for wallet approval" — never "submitted" or "broadcast" until you see a tx hash."##;
+- For staged approvals, after `evm_commit_txs` returns `pending_approval`, say "waiting for wallet approval" — never "submitted" or "broadcast" until you see a tx hash."##;
 
 const SECRET_API_KEY: Secret = Secret::new(
     "LIMITLESS_API_KEY",

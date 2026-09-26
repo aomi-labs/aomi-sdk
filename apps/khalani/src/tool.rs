@@ -4,7 +4,7 @@
 //!
 //!   * `khalani_quote`            — POST /v1/quotes
 //!   * `khalani_build_deposit`    — POST /v1/deposit/build, emits the routed
-//!     `stage_tx → enforce(simulate_batch + commit_txs) →
+//!     `evm_stage_tx → enforce(simulate_batch + evm_commit_txs) →
 //!     submit_khalani_order` chain.
 //!   * `submit_khalani_order`     — PUT /v1/deposit/submit, fired by the
 //!     `OnBoundEvent` continuation.
@@ -207,7 +207,7 @@ impl DynAomiTool for BuildDeposit {
     type App = KhalaniApp;
     type Args = BuildDepositArgs;
     const NAME: &'static str = "khalani_build_deposit";
-    const DESCRIPTION: &'static str = "Use after `khalani_quote` once the user has confirmed a route. Builds the on-chain deposit transaction for the chosen quote and emits a routed plan: stage_tx is fired with the deposit calldata; enforcement automatically runs simulate_batch then commit_txs; once the wallet broadcasts, submit_khalani_order is fired as a continuation. Do not call stage_tx / simulate_batch / commit_txs / submit_khalani_order yourself — the route handles them.";
+    const DESCRIPTION: &'static str = "Use after `khalani_quote` once the user has confirmed a route. Builds the on-chain deposit transaction for the chosen quote and emits a routed plan: evm_stage_tx is fired with the deposit calldata; enforcement automatically runs simulate_batch then evm_commit_txs; once the wallet broadcasts, submit_khalani_order is fired as a continuation. Do not call evm_stage_tx / simulate_batch / evm_commit_txs / submit_khalani_order yourself — the route handles them.";
 
     fn run_with_routes(
         _app: &KhalaniApp,
@@ -269,11 +269,7 @@ impl DynAomiTool for BuildDeposit {
                     let step = next.add::<host::StageTx>(args.clone());
                     if i == last_index {
                         step.note(
-                            "Stage the Khalani deposit. CRITICAL: copy the `data.raw` and `to` \
-                             fields BYTE-FOR-BYTE from the args below — do not abbreviate, \
-                             reformat, or truncate the calldata. After this step returns, the \
-                             host automatically simulates and commits the staged txs and waits \
-                             for the wallet.",
+                            "Follow the host-owned route continuation using compatible resources actually issued for this operation. Preserve source restrictions and prerequisite ordering; do not copy opaque bytes into model arguments. Simulate and commit the same complete ordered staged-resource cohort. Full raw payloads and callback fields remain unchanged in host routes.",
                         )
                         .enforce(EnforcementPolicy::Continue, |enforce| {
                             enforce.add::<host::SimulateBatch>(json!({}));
@@ -283,8 +279,7 @@ impl DynAomiTool for BuildDeposit {
                         });
                     } else {
                         step.note(
-                            "Stage the ERC-20 approval. CRITICAL: copy `data.raw` and `to` \
-                             byte-for-byte; do not abbreviate or modify the calldata.",
+                            "Follow the host-owned route continuation using compatible resources actually issued for this operation. Preserve source restrictions and prerequisite ordering; do not copy opaque bytes into model arguments. Simulate and commit the same complete ordered staged-resource cohort. Full raw payloads and callback fields remain unchanged in host routes.",
                         );
                     }
                 }

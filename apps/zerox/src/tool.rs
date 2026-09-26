@@ -68,7 +68,7 @@ fn ok<T: Serialize>(value: T) -> Result<Value, String> {
 /// Retry a 0x call a couple of times on transport-level failures (connection
 /// resets and hung requests show up as `Communication Error` a few percent of
 /// the time against api.0x.org). HTTP-level errors are returned immediately.
-async fn with_transport_retry<T, Fut, F>(mut op: F) -> Result<T, aomi_ext::zerox::Error<()>>
+async fn with_transport_retry<T, Fut, F>(mut op: F) -> Result<T, Box<aomi_ext::zerox::Error<()>>>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<T, aomi_ext::zerox::Error<()>>>,
@@ -80,7 +80,7 @@ where
                 attempt += 1;
                 tokio::time::sleep(Duration::from_millis(500 * attempt as u64)).await;
             }
-            other => return other,
+            other => return other.map_err(Box::new),
         }
     }
 }
@@ -304,7 +304,7 @@ impl DynAomiTool for ZeroxBuildSwap {
     type App = ZeroxApp;
     type Args = ZeroxBuildSwapArgs;
     const NAME: &'static str = "zerox_build_swap";
-    const DESCRIPTION: &'static str = "Use when the user wants to execute a 0x swap on-chain. Composite tool: fetches an AllowanceHolder firm quote, checks ERC-20 allowance for the 0x AllowanceHolder, then routes the (optional) approval + swap transactions through the host wallet and binds the resulting tx hash. The LLM does not call stage_tx, simulate, or commit — the route handles it. For gasless (relayer-paid) execution, use zerox_get_gasless_quote instead.";
+    const DESCRIPTION: &'static str = "Use when the user wants to execute a 0x swap on-chain. Composite tool: fetches an AllowanceHolder firm quote, checks ERC-20 allowance for the 0x AllowanceHolder, then routes the (optional) approval + swap transactions through the host wallet and binds the resulting tx hash. The LLM does not call evm_stage_tx, simulate, or commit — the route handles it. For gasless (relayer-paid) execution, use zerox_get_gasless_quote instead.";
 
     fn run_with_routes(
         _app: &ZeroxApp,
@@ -428,10 +428,7 @@ impl DynAomiTool for ZeroxBuildSwap {
                     let step = next.add::<host::StageTx>(args.clone());
                     if i == last_index {
                         step.note(
-                            "Stage the 0x swap. CRITICAL: copy `data.raw` and `to` BYTE-FOR-BYTE \
-                             from the args below — do not abbreviate, reformat, or truncate the \
-                             calldata. After this step the host automatically simulates and \
-                             commits the staged txs and waits for the wallet.",
+                            "Follow the host-owned route continuation using compatible resources actually issued for this operation. Preserve source restrictions and prerequisite ordering; do not copy opaque bytes into model arguments. Simulate and commit the same complete ordered staged-resource cohort. Full raw payloads and callback fields remain unchanged in host routes.",
                         )
                         .enforce(EnforcementPolicy::Continue, |enforce| {
                             enforce.add::<host::SimulateBatch>(json!({}));
@@ -441,13 +438,12 @@ impl DynAomiTool for ZeroxBuildSwap {
                         });
                     } else {
                         step.note(
-                            "Stage the ERC-20 approval for the 0x AllowanceHolder. CRITICAL: \
-                             copy `data` and `to` byte-for-byte; do not abbreviate or modify.",
+                            "Follow the host-owned route continuation using compatible resources actually issued for this operation. Preserve source restrictions and prerequisite ordering; do not copy opaque bytes into model arguments. Simulate and commit the same complete ordered staged-resource cohort. Full raw payloads and callback fields remain unchanged in host routes.",
                         );
                     }
                 }
             })
-            // No `.after::<>` — 0x swap is atomic per chain, so once commit_txs
+            // No `.after::<>` — 0x swap is atomic per chain, so once evm_commit_txs
             // lands the swap is done. The bound `transaction_hash` ends the route.
             .try_build()
             .map_err(|e| format!("[0x] route build: {e}"))

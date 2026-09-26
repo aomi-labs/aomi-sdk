@@ -1044,6 +1044,7 @@ mod tests {
             parameters_schema: serde_json::json!({}),
             supports_async: false,
             namespace: None,
+            resource_output: None,
         }];
         validate_app_skills_with_tools("app", std::slice::from_ref(&owned), &tools)
             .expect("owned tool resolves");

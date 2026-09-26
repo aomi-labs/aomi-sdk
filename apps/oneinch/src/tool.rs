@@ -179,7 +179,7 @@ fn is_native(addr: &str) -> bool {
     addr.eq_ignore_ascii_case(NATIVE_SENTINEL)
 }
 
-/// Build the `host::stage_tx` args object from a 1inch `Transaction`.
+/// Build the `host::evm_stage_tx` args object from a 1inch `Transaction`.
 /// 1inch returns fully-encoded calldata, so we use `data: { raw }` (the host
 /// will not re-encode). Optional fields default conservatively.
 fn stage_tx_args(
@@ -210,7 +210,7 @@ impl DynAomiTool for BuildSwapTx {
     type App = OneinchApp;
     type Args = BuildSwapTxArgs;
     const NAME: &'static str = "oneinch_build_swap_tx";
-    const DESCRIPTION: &'static str = "Use when the user is ready to execute a 1inch swap. Composite tool: fetches a quote, checks ERC-20 allowance for the 1inch router (skipped for native sells), routes the (optional) approval and swap transactions through the host wallet, and binds the resulting tx hash. The LLM does not need to call stage_tx, simulate, or commit — the route handles it.";
+    const DESCRIPTION: &'static str = "Use when the user is ready to execute a 1inch swap. Composite tool: fetches a quote, checks ERC-20 allowance for the 1inch router (skipped for native sells), routes the (optional) approval and swap transactions through the host wallet, and binds the resulting tx hash. The LLM does not need to call evm_stage_tx, simulate, or commit — the route handles it.";
 
     fn run_with_routes(
         _app: &OneinchApp,
@@ -316,10 +316,7 @@ impl DynAomiTool for BuildSwapTx {
                     let step = next.add::<host::StageTx>(args.clone());
                     if i == last_index {
                         step.note(
-                            "Stage the 1inch swap. CRITICAL: copy `data.raw` and `to` BYTE-FOR-BYTE \
-                             from the args below — do not abbreviate, reformat, or truncate the \
-                             calldata. After this step the host automatically simulates and commits \
-                             the staged txs and waits for the wallet.",
+                            "Follow the host-owned route continuation using compatible resources actually issued for this operation. Preserve source restrictions and prerequisite ordering; do not copy opaque bytes into model arguments. Simulate and commit the same complete ordered staged-resource cohort. Full raw payloads and callback fields remain unchanged in host routes.",
                         )
                         .enforce(EnforcementPolicy::Continue, |enforce| {
                             enforce.add::<host::SimulateBatch>(json!({}));
@@ -329,14 +326,13 @@ impl DynAomiTool for BuildSwapTx {
                         });
                     } else {
                         step.note(
-                            "Stage the ERC-20 approval. CRITICAL: copy `data.raw` and `to` \
-                             byte-for-byte; do not abbreviate or modify the calldata.",
+                            "Follow the host-owned route continuation using compatible resources actually issued for this operation. Preserve source restrictions and prerequisite ordering; do not copy opaque bytes into model arguments. Simulate and commit the same complete ordered staged-resource cohort. Full raw payloads and callback fields remain unchanged in host routes.",
                         );
                     }
                 }
             })
             // No `.after::<>` / `.awaits` — 1inch is atomic per chain, so once
-            // commit_txs lands the swap is done. The bound `transaction_hash`
+            // evm_commit_txs lands the swap is done. The bound `transaction_hash`
             // ends the route.
             .try_build()
             .map_err(|e| format!("[1inch] route build: {e}"))
@@ -416,7 +412,7 @@ impl DynAomiTool for GetApproveTx {
     type App = OneinchApp;
     type Args = GetApproveTxArgs;
     const NAME: &'static str = "oneinch_get_approve_tx";
-    const DESCRIPTION: &'static str = "Use when `oneinch_check_allowance` shows insufficient allowance. Returns a raw ERC-20 approval tx (to=token, data=approve calldata, value=0) targeting the 1inch router. Stage via `stage_tx` with `data: { raw }`; do not re-encode. Omit `amount` for unlimited approval.";
+    const DESCRIPTION: &'static str = "Use when `oneinch_check_allowance` shows insufficient allowance. Returns a raw ERC-20 approval tx (to=token, data=approve calldata, value=0) targeting the 1inch router. Use a compatible approval resource or host route actually issued for this result; do not copy or re-encode calldata. Omit `amount` for unlimited approval.";
 
     fn run(_app: &OneinchApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
         let api_key = resolve_key(&ctx, args.api_key.as_deref())?;

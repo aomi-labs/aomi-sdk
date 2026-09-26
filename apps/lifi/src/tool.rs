@@ -204,6 +204,81 @@ fn extract_approval_tx(quote: &Value, sell_token_addr: &str, amount_wei: &str) -
     })
 }
 
+/// Exact executable fields from a provider request, with invocation identity.
+/// The host still validates wallet/network and executable semantics before issuance.
+fn resource_transaction(
+    raw: &Value,
+    chain_id: u64,
+    sender: &str,
+    kind: &str,
+) -> Result<Value, String> {
+    if raw.is_null() {
+        return Ok(Value::Null);
+    }
+    if !is_hex_address(sender) {
+        return Err("[lifi] invalid resource sender".into());
+    }
+    let to = raw
+        .get("to")
+        .and_then(Value::as_str)
+        .filter(|value| is_hex_address(value))
+        .ok_or("[lifi] executable request missing valid destination")?;
+    let data = raw
+        .get("data")
+        .and_then(Value::as_str)
+        .ok_or("[lifi] executable request missing calldata")?;
+    if let Some(from) = raw.get("from").and_then(Value::as_str)
+        && !from.eq_ignore_ascii_case(sender)
+    {
+        return Err("[lifi] provider sender mismatch".into());
+    }
+    if let Some(network) = raw.get("chainId") {
+        let parsed = network.as_u64().or_else(|| {
+            network.as_str().and_then(|text| {
+                if let Some(hex) = text.strip_prefix("0x") {
+                    u64::from_str_radix(hex, 16).ok()
+                } else {
+                    text.parse().ok()
+                }
+            })
+        });
+        if parsed != Some(chain_id) {
+            return Err("[lifi] provider network mismatch".into());
+        }
+    }
+    let mut tx = json!({"chain_id":chain_id,"from":sender,"to":to,"data":data,
+        "value":raw.get("value").cloned().unwrap_or(json!("0x0")),
+        "label":format!("LI.FI {kind}"),"kind":kind,"protocol":"lifi",
+        "last_batch_status":"","fee_outcome":{"kind":"flat"}});
+    if let Some(gas) = raw.get("gasLimit").or_else(|| raw.get("gas")) {
+        tx["gas"] = gas.clone();
+    }
+    Ok(tx)
+}
+
+fn executable_output() -> Option<ResourceOutputDeclaration> {
+    Some(ResourceOutputDeclaration {
+        kind: "data.result@1".into(),
+        name: "lifi_result".into(),
+        summary_pointer: None,
+        schema: None,
+        sensitivity: ResourceSensitivity::Private,
+        outputs: [
+            ("approval", "/resource_transactions/approval"),
+            ("transaction", "/resource_transactions/transaction"),
+        ]
+        .into_iter()
+        .map(|(name, pointer)| ResourceExportDeclaration {
+            name: name.into(),
+            pointer: pointer.into(),
+            kind: "evm.transaction@1".into(),
+            schema: None,
+            sensitivity: ResourceSensitivity::Private,
+        })
+        .collect(),
+    })
+}
+
 // ============================================================================
 // LifiGetSwapQuote
 // ============================================================================
@@ -308,10 +383,14 @@ impl DynAomiTool for LifiBuildSwapTx {
     type App = LifiApp;
     type Args = LifiBuildSwapTxArgs;
     const NAME: &'static str = "lifi_build_swap_tx";
-    const DESCRIPTION: &'static str = "Use when the user is ready to execute a same-chain or cross-chain swap via LI.FI. Returns `{ approval_tx?, main_tx, payload }`. If `approval_tx` is present (ERC-20 sell needing allowance), stage it first via `stage_tx` with `data: { raw }`, then stage `main_tx` the same way; `simulate_batch` on the staged ids; then `commit_tx` once per staged tx. Never re-encode LI.FI calldata.";
+    const DESCRIPTION: &'static str = "Build a same-chain or cross-chain LI.FI swap for the requested wallet and network. Full approval/main/provider values are host data. Use compatible executable resources or a routed continuation actually issued by the host, preserving approvals before the main transaction and one exact ordered simulation/commit cohort. If neither is supplied, report the unsupported execution boundary; never copy or re-encode provider calldata.";
+
+    fn resource_output() -> Option<ResourceOutputDeclaration> {
+        executable_output()
+    }
 
     fn run(_app: &LifiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let (chain_name, _) = get_chain_info(&args.chain)?;
+        let (chain_name, resource_chain_id) = get_chain_info(&args.chain)?;
         let from_decimals = get_token_decimals(chain_name, &args.sell_token);
         let amount_wei = amount_to_base_units(args.amount, from_decimals)?;
         let from_addr = get_token_address(chain_name, &args.sell_token)?;
@@ -353,11 +432,16 @@ impl DynAomiTool for LifiBuildSwapTx {
         let main_tx = extract_main_tx(&payload);
         let approval_tx = extract_approval_tx(&payload, &from_addr, &amount_wei);
 
+        let resource_transactions = json!({
+            "approval":resource_transaction(&approval_tx,resource_chain_id,&args.sender_address,"erc20_approve")?,
+            "transaction":resource_transaction(&main_tx,resource_chain_id,&args.sender_address,"swap")?
+        });
         ok(json!({
+            "resource_transactions":resource_transactions,
             "payload": payload,
             "approval_tx": approval_tx,
             "main_tx": main_tx,
-            "note": "If approval_tx is non-null, stage it first with stage_tx { raw }, then stage main_tx the same way, then simulate_batch the staged pending_tx_id list, then commit_tx once per staged tx.",
+            "note": "Preserve approval-before-main order using actually issued compatible resources or host routes; simulate and commit the same whole ordered staged cohort. Without an issued executable output, report the unsupported boundary instead of copying calldata.",
         }))
     }
 }
@@ -397,8 +481,12 @@ impl DynAomiTool for LifiBuildBridgeTx {
     const NAME: &'static str = "lifi_build_bridge_tx";
     const DESCRIPTION: &'static str = "Use when the user wants to bridge a token from one chain to another via LI.FI. Returns an executable bridge payload (with `executable_tx`) when both `from_address` and `to_address` are provided; otherwise returns a planning-only estimate. Stage and execute the same way as `lifi_build_swap_tx`. After executing, track on-chain finality with `lifi_get_transfer_status`.";
 
+    fn resource_output() -> Option<ResourceOutputDeclaration> {
+        executable_output()
+    }
+
     fn run(_app: &LifiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
-        let (from_chain_name, _) = get_chain_info(&args.from_chain)?;
+        let (from_chain_name, resource_chain_id) = get_chain_info(&args.from_chain)?;
         let (to_chain_name, _) = get_chain_info(&args.to_chain)?;
         let from_addr = get_token_address(from_chain_name, &args.from_token)?;
         let to_addr = get_token_address(to_chain_name, &args.to_token)?;
@@ -438,6 +526,7 @@ impl DynAomiTool for LifiBuildBridgeTx {
         let runtime = rt()?;
         let from_addr_for_async = from_addr.clone();
         let amount_wei_for_async = amount_wei.clone();
+        let resource_sender = from_address.clone();
         let quote_res = runtime.block_on(async move {
             client
                 .get_quote(
@@ -464,7 +553,12 @@ impl DynAomiTool for LifiBuildBridgeTx {
                 // approval calldata is computed in Rust (not returned by LI.FI).
                 let executable_tx = extract_main_tx(&payload);
                 let approval_tx = extract_approval_tx(&payload, &from_addr, &amount_wei);
+                let resource_transactions = json!({
+                    "approval":resource_transaction(&approval_tx,resource_chain_id,&resource_sender,"erc20_approve")?,
+                    "transaction":resource_transaction(&executable_tx,resource_chain_id,&resource_sender,"bridge")?
+                });
                 ok(json!({
+                    "resource_transactions":resource_transactions,
                     "from": from_label,
                     "to": to_label,
                     "approval_tx": approval_tx,
@@ -607,5 +701,39 @@ impl DynAomiTool for LifiListTokens {
                 .into_inner();
             ok(resp)
         })
+    }
+}
+
+#[cfg(test)]
+mod resource_tests {
+    use super::*;
+    #[test]
+    fn executable_exports_preserve_bytes_and_identity() {
+        let sender = "0x1000000000000000000000000000000000000001";
+        let raw = json!({"to":"0x2000000000000000000000000000000000000002","data":format!("0x{}","ab".repeat(8192)),"value":"0x123","gasLimit":"0x456","chainId":8453,"from":sender});
+        let before = raw.clone();
+        let tx = resource_transaction(&raw, 8453, sender, "swap").unwrap();
+        assert_eq!(tx["data"], raw["data"]);
+        assert_eq!(tx["value"], raw["value"]);
+        assert_eq!(tx["gas"], raw["gasLimit"]);
+        assert_eq!(tx["chain_id"], 8453);
+        assert_eq!(tx["from"], sender);
+        assert_eq!(raw, before);
+        assert!(resource_transaction(&raw, 1, sender, "swap").is_err());
+        assert!(
+            resource_transaction(
+                &raw,
+                8453,
+                "0x3000000000000000000000000000000000000003",
+                "swap"
+            )
+            .is_err()
+        );
+        assert!(
+            resource_transaction(&Value::Null, 8453, sender, "swap")
+                .unwrap()
+                .is_null()
+        );
+        executable_output().unwrap().validate().unwrap();
     }
 }

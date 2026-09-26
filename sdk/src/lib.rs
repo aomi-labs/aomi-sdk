@@ -147,6 +147,7 @@ mod abi;
 mod builder;
 mod ffi;
 mod handle;
+pub mod resource;
 pub mod route;
 mod secrets;
 mod skill;
@@ -155,6 +156,7 @@ mod types;
 
 pub use abi::*;
 pub use handle::*;
+pub use resource::*;
 pub use route::*;
 pub use secrets::*;
 pub use skill::*;

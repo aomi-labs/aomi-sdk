@@ -52,10 +52,12 @@ pub mod host {
     }
 
     host_target!(BraveSearch, "brave_search");
-    host_target!(CommitTx, "commit_tx");
-    host_target!(CommitTxs, "commit_txs");
+    host_target!(EvmCommitTxs, "evm_commit_txs");
+    host_target!(CommitTx, "evm_commit_txs");
+    host_target!(CommitTxs, "evm_commit_txs");
     host_target!(EvmCommitMessage, "evm_commit_message");
-    host_target!(StageTx, "stage_tx");
+    host_target!(EvmStageTx, "evm_stage_tx");
+    host_target!(StageTx, "evm_stage_tx");
     host_target!(SimulateBatch, "simulate_batch");
     host_target!(ViewState, "view_state");
     host_target!(RunTx, "run_tx");
@@ -101,123 +103,22 @@ pub mod host {
     //     return to the app's own `submit_*` tool — the pattern that
     //     used to be the separate `svm_sign_tx` verb.
     //
-    // Lane-symmetric note: stage / simulate / commit split per tool
-    // name, NOT per XOR arg. The lane lives in the tool the LLM picks.
-    //
-    // Args contracts and bound-artifact shapes are documented at each
-    // verb's host-side implementation in product-mono
-    // `aomi/crates/tools/src/svm/`. Apps that need to inspect them
-    // should follow the host-tool docstring as the source of truth.
-    //
-    // Naming convention: every SVM marker is `Svm*` (PascalCase) →
-    // `svm_*` (snake_case). The host is the single source of truth for
-    // the snake_case verb name.
-
-    // Lane 1 producer — stage a `Vec<Instruction>`. Returns one
-    // `pending_ix_id` per instruction; downstream simulate / commit
-    // verbs consume the id list. ADR 0003 § Decision A.
+    // Solana has distinct instruction-bundle and serialized-transaction stage
+    // and simulation tools. Full raw app routes stay host-owned; model-facing
+    // consumers use the issued typed resource references. The host normalizes
+    // authorized bound artifacts without altering callback or venue bytes.
+    // See product-mono aomi/crates/tools/src/solana for current argument schemas.
     host_target!(SvmStageIx, "svm_stage_ix");
-
-    // Lane 2 producer — stage a base64 `VersionedTransaction` blob
-    // received from a venue (e.g. byreal `/dex/v2/build-swap-tx`,
-    // Jupiter `/swap`, Raydium tx-API). The host decodes, validates
-    // payer = connected wallet, then stages the blob under a fresh
-    // `pending_tx_id`. Downstream verbs (`SvmSimulateTx`,
-    // `SvmCommitTx`) consume that id.
-    //
-    // Args contract:
-    //   { "tx": "<base64 VersionedTransaction>",
-    //     "description": "...",           // optional, surfaces in UI
-    //     "kind": "...",                   // optional, free-form tag
-    //     "preserve_blockhash": <bool>,   // optional, default true
-    //     "broadcaster": "wallet" | "venue" | "aomi" }  // optional
-    //
-    // `broadcaster` stamps WHO SUBMITS on the staged artifact. Omitted →
-    // the app manifest's `broadcast.default` (falling back to the host
-    // default). Pin `"venue"` explicitly for flows with a hard venue
-    // constraint (RFQ fills); the host validates against the manifest's
-    // `broadcast.allowed`.
-    //
-    // `preserve_blockhash: bool` defaults true for byte-stable
-    // venue-validated flows like byreal preData/data byte-compare;
-    // venue-broadcast blobs must keep it true.
     host_target!(SvmStageTx, "svm_stage_tx");
-
-    // Lane 1 simulate consumer — assembles the staged ix list into a
-    // VersionedTransaction and simulates. Args contract:
-    //   { "ix_ids": [<u32>, ...],
-    //     "version": "legacy" | "v0",                 // optional
-    //     "address_lookup_tables": ["<pubkey>", ...], // optional (v0 only)
-    //     "compute_units": <u32>,                     // optional
-    //     "priority_microlamports": <u64>,            // optional
-    //     "mode": "litesvm" | "rpc",                  // optional, see ADR 0002
-    //     "replace_recent_blockhash": <bool>,         // optional, default true
-    //     "sig_verify": <bool>,                       // optional, default false
-    //     "accounts": ["<pubkey>", ...] }             // optional address filter
-    //
-    // Rejects ids that resolve to `svm_stage_tx`-staged blobs with a
-    // "use svm_simulate_tx" hint. Mirrors the host's lane symmetry
-    // (split landed alongside this SDK bump).
     host_target!(SvmSimulateIx, "svm_simulate_ix");
-
-    // Lane 2 simulate consumer — simulates a `svm_stage_tx`-staged
-    // tx blob as-is. The blob's version / ALTs / blockhash / compute
-    // budget are preserved; there are no assembly args, because the
-    // blob's metadata is authoritative. Args contract:
-    //   { "tx_id": <u32>,
-    //     "mode": "litesvm" | "rpc",          // optional
-    //     "replace_recent_blockhash": <bool>, // optional, default false
-    //     "sig_verify": <bool>,               // optional, default false
-    //     "accounts": ["<pubkey>", ...] }     // optional address filter
-    //
-    // Rejects ids that resolve to `svm_stage_ix`-staged instructions
-    // with a "use svm_simulate_ix" hint.
     host_target!(SvmSimulateTx, "svm_simulate_tx");
 
-    // Lane 1 commit consumer — assemble the staged ix list into one
-    // VersionedTransaction and execute it under kernel policy. Args
-    // contract:
-    //   { "ix_ids": [<u32>, ...],
-    //     "version": "legacy" | "v0",                 // optional
-    //     "address_lookup_tables": ["<pubkey>", ...], // optional (v0 only)
-    //     "compute_units": <u32>,                     // optional
-    //     "priority_microlamports": <u64>,            // optional
-    //     "broadcaster": "wallet" | "venue" | "aomi" } // optional
-    //
-    // No mode arg. Lane 1 assembles at commit time, so `broadcaster`
-    // rides the call instead of a staged blob — forward what the app's
-    // build tool returned; it is not a model choice. Rejects ids that
-    // resolve to `svm_stage_tx`-staged blobs with a "use svm_commit_tx"
-    // hint.
-    host_target!(SvmCommitIx, "svm_commit_ix");
-
-    // Lane 2 commit consumer — execute a `svm_stage_tx`-staged
-    // transaction blob under kernel policy. The blob's version / ALTs /
-    // blockhash / compute budget / broadcaster are preserved; there are
-    // no assembly or mode args, because the staged metadata is
-    // authoritative. Args contract:
-    //   { "tx_id": <u32> }
-    //
-    // Routing (host-side, see product-mono `svm/tx/commit.rs`):
-    //   - staged `broadcaster: "wallet"` → FE wallet signs AND submits
-    //     (`signAndSendTransaction`) — the classic attended flow.
-    //   - staged `broadcaster: "venue"` → sign-only request; the signed
-    //     bytes bind to the route alias and return to the app's
-    //     `submit_*` continuation; the venue broadcasts. On an
-    //     autonomous-armed wallet the kernel signs server-side and the
-    //     bytes bind without any FE round-trip — same route plan,
-    //     unattended-capable.
-    //   - staged `broadcaster: "aomi"` → runtime broadcast loop
-    //     (BroadcastEngine, host #38-pipeline-c).
-    //
-    // Bound artifact for the venue cell (string): base64 signed tx
-    // bytes — bind it with `.bind_as("signed_tx")` and await it in the
-    // app's submit continuation. Note: Solana wallets sign one tx per
-    // user prompt; apps needing multiple signed txs should issue
-    // separate stage + commit step pairs, each binding a distinct
-    // alias. Rejects ids that resolve to `svm_stage_ix`-staged
-    // instructions with a "use svm_commit_ix" hint.
-    host_target!(SvmCommitTx, "svm_commit_tx");
+    // Commit is unified, but the staged resource preserves its original lane,
+    // assembly policy, broadcaster, and venue-required blockhash. Historical
+    // Rust marker types remain aliases; they do not introduce alternate tools.
+    host_target!(SvmCommitTxs, "svm_commit_txs");
+    host_target!(SvmCommitIx, "svm_commit_txs");
+    host_target!(SvmCommitTx, "svm_commit_txs");
 
     // Lane 3 producer + consumer — off-chain message signing for
     // commit-reveal flows, Squads proposal payloads, wallet-attested

@@ -905,7 +905,7 @@ pub(crate) fn extract_steps(
     Ok(steps)
 }
 
-/// Turn extracted steps into a routed `ToolReturn`: one `stage_tx` per step
+/// Turn extracted steps into a routed `ToolReturn`: one `evm_stage_tx` per step
 /// (calldata verbatim), with the host's simulate + commit enforcement bound
 /// to the final step so the wallet is prompted exactly once.
 pub(crate) fn stage_route(
@@ -928,10 +928,7 @@ pub(crate) fn stage_route(
                 if i == last {
                     builder
                         .note(
-                            "Stage this vaults.fyi transaction. CRITICAL: copy `to` and `data.raw` \
-                             BYTE-FOR-BYTE from the args — never abbreviate, reformat, or re-encode the \
-                             calldata. After this step the host simulates and commits every staged tx \
-                             and waits for the wallet.",
+                            "Follow the host-owned route continuation using compatible resources actually issued for this operation. Preserve source restrictions and prerequisite ordering; do not copy opaque bytes into model arguments. Simulate and commit the same complete ordered staged-resource cohort. Full raw payloads and callback fields remain unchanged in host routes.",
                         )
                         .enforce(EnforcementPolicy::Continue, |enforce| {
                             enforce.add::<host::SimulateBatch>(json!({}));
@@ -941,8 +938,7 @@ pub(crate) fn stage_route(
                         });
                 } else {
                     builder.note(
-                        "Stage this prerequisite transaction (typically an ERC-20 approval) first. \
-                         CRITICAL: copy `to` and `data.raw` byte-for-byte; do not modify.",
+                        "Follow the host-owned route continuation using compatible resources actually issued for this operation. Preserve source restrictions and prerequisite ordering; do not copy opaque bytes into model arguments. Simulate and commit the same complete ordered staged-resource cohort. Full raw payloads and callback fields remain unchanged in host routes.",
                     );
                 }
             }

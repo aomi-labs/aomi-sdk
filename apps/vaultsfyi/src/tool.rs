@@ -702,7 +702,7 @@ impl DynAomiTool for BuildVaultTx {
     type App = VaultsFyiApp;
     type Args = BuildVaultTxArgs;
     const NAME: &'static str = "vaultsfyi_build_vault_tx";
-    const DESCRIPTION: &'static str = "Build and stage the ready-to-sign transaction(s) for a vault action — deposit, redeem (partial or `all`), request/claim steps for multi-step vaults, or claim rewards — for the connected wallet. Amounts are human units (`\"100\"` = 100 USDC). Fetches the action context first to validate the action and asset decimals, then returns vaults.fyi calldata verbatim as a staging plan: the host injects [[SYSTEM:...]] next-step prompts that drive `stage_tx` (one per returned tx, approvals first) → `simulate_batch` → `commit_txs`. Call ONLY after the user has confirmed vault, network, action, and amount. Nothing is executed until the wallet signs; report success only when a transaction_hash comes back.";
+    const DESCRIPTION: &'static str = "Build and stage the ready-to-sign transaction(s) for a vault action — deposit, redeem (partial or `all`), request/claim steps for multi-step vaults, or claim rewards — for the connected wallet. Amounts are human units (`\"100\"` = 100 USDC). Fetches the action context first to validate the action and asset decimals, then returns vaults.fyi calldata verbatim as a staging plan: the host injects [[SYSTEM:...]] next-step prompts that drive `evm_stage_tx` (one per returned tx, approvals first) → `simulate_batch` → `evm_commit_txs`. Call ONLY after the user has confirmed vault, network, action, and amount. Nothing is executed until the wallet signs; report success only when a transaction_hash comes back.";
 
     fn run_with_routes(
         _app: &VaultsFyiApp,
@@ -1114,7 +1114,7 @@ mod tests {
         .unwrap();
         assert_eq!(ret.routes.len(), 2);
         for (route, step) in ret.routes.iter().zip(steps.iter()) {
-            assert_eq!(route.tool, "stage_tx");
+            assert_eq!(route.tool, "evm_stage_tx");
             assert_eq!(route.args["data"]["raw"], step.data);
             assert_eq!(route.args["to"], step.to);
             assert_eq!(route.args["kind"], step.kind);
@@ -1125,7 +1125,7 @@ mod tests {
             .as_ref()
             .expect("last step enforced");
         let tools: Vec<&str> = enforcement.steps.iter().map(|s| s.tool.as_str()).collect();
-        assert_eq!(tools, vec!["simulate_batch", "commit_txs"]);
+        assert_eq!(tools, vec!["simulate_batch", "evm_commit_txs"]);
         assert_eq!(
             enforcement.steps[1].bind_as.as_deref(),
             Some("transaction_hash")
@@ -1322,11 +1322,11 @@ mod tests {
         assert_eq!(built.value["amount_base_units"], "1000000");
         assert!(!built.routes.is_empty());
         for r in &built.routes {
-            assert_eq!(r.tool, "stage_tx");
+            assert_eq!(r.tool, "evm_stage_tx");
             let data = r.args["data"]["raw"].as_str().unwrap();
             assert!(data.starts_with("0x") && data.len() > 10);
             println!(
-                "  route stage_tx kind={} to={} calldata_len={}",
+                "  route evm_stage_tx kind={} to={} calldata_len={}",
                 r.args["kind"],
                 r.args["to"],
                 data.len()

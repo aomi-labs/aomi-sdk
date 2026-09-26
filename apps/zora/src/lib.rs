@@ -26,7 +26,7 @@ Trades go through Uniswap V4 directly. The Aomi runtime ships a **`zora` skill**
 - Zora coins are plain ERC-20s on Base (chain_id `8453`). The coin address is in `zora_get_coin → address`.
 - `poolCurrencyToken` is **not always ETH** — most creator/trend coins are ZORA-backed. Read it from `zora_get_coin`; don't assume.
 - Native ETH inside `pool_key` is `0x0000000000000000000000000000000000000000`.
-- Never broadcast yourself. Always go staged: `stage_tx` → `simulate_batch` → `commit_txs`. The host emits the wallet popup.
+- Never broadcast yourself. Always go staged: `evm_stage_tx` → `simulate_batch` → `evm_commit_txs`. The host emits the wallet popup.
 - Approvals: for ERC-20 input (sells, or buys with non-ETH currency), stage `erc20.approve(PERMIT2, amount)` and `permit2.approve(token, UNIVERSAL_ROUTER, amount, expiration)` as separate txs before the swap. Skip both when the input is native ETH.
 - Decimals: confirm via `encode_and_call decimals()` against the token if unsure — never guess.
 
@@ -35,30 +35,12 @@ Trades go through Uniswap V4 directly. The Aomi runtime ships a **`zora` skill**
 2. `zora_get_coin(address)` → `uniswapV4PoolKey` (currency0, currency1, fee, tickSpacing, hooks) + `poolCurrencyToken`.
 3. `activate_skills(["zora"])` — brings the V4 swap helper into scope.
 4. Size the trade: compute `amount_in` and `amount_out_minimum` in base units. Use `tokenPrice.priceInPoolToken × (1 − slippage)` as the floor.
-5. If input is ERC-20: stage Permit2 approvals via `stage_tx`/`encode_and_call`.
+5. If input is ERC-20: stage Permit2 approvals via `evm_stage_tx`/`encode_and_call`.
 6. `call_v4_swap` with the pool key, `zero_for_one`, `amount_in`, `amount_out_minimum`, `value` (= `amount_in` for native-ETH input, else `"0"`). Inspect the simulation output; **bail on revert**.
-7. `stage_tx` the swap using the simulated calldata, then `simulate_batch` + `commit_txs`.
+7. Reuse the compatible issued swap transaction/calldata output, preserving all source restrictions; simulate and commit the same complete ordered staged-resource cohort.
 
-## Worked example — "Spend 100 ZORA buying $TREND"
-
-```
-1. zora_get_trends_by_name(name="trend")          → coin address 0xCOIN..., poolCurrencyToken=ZORA
-2. zora_get_coin(address=0xCOIN...)               → uniswapV4PoolKey, decimals, priceInPoolToken
-3. activate_skills(["zora"])
-4. encode_and_call allowance(...) on ZORA token   → check ZORA→PERMIT2 and PERMIT2→UR
-5. stage_tx erc20.approve(PERMIT2, 100e18)        → pending_tx_id=1 (if needed)
-6. stage_tx permit2.approve(ZORA, UR, 100e18, now+30d) → pending_tx_id=2 (if needed)
-7. call_v4_swap(
-     universal_router="0x6ff5693b…b43",
-     pool_key=<from step 2>,
-     zero_for_one=<ZORA-is-currency0>,
-     amount_in="100000000000000000000",
-     amount_out_minimum=<priceInPoolToken × 0.95>,
-     value="0"
-   ) → simulation success + calldata
-8. stage_tx with the simulated calldata          → pending_tx_id=3
-9. simulate_batch([1,2,3]) → commit_txs([1,2,3])
-```
+## Execution values
+New small approval amounts and addresses may be authored as literals. Reuse a compatible issued transaction or calldata resource for opaque provider output; never copy or regenerate its bytes. Keep approvals before the swap, retain the staged resource returned for each operation, and simulate then commit the same complete ordered cohort. Use only references actually issued by the host; if no compatible executable output is available, explain the missing boundary rather than inventing one.
 
 ## Workflow guidance
 - "What's trending about X?" → `zora_get_trends_by_name`
@@ -67,10 +49,10 @@ Trades go through Uniswap V4 directly. The Aomi runtime ships a **`zora` skill**
 - "Buy / sell N of X" → resolve the coin via `zora_get_coin`, then run the execution flow above.
 
 ## Safety
-- Always show the simulated buy/sell amount and effective price before `commit_txs`. If slippage > 5%, warn explicitly and ask before committing.
+- Always show the simulated buy/sell amount and effective price before `evm_commit_txs`. If slippage > 5%, warn explicitly and ask before committing.
 - If `simulate_batch` fails: diagnose from revert data (insufficient allowance, insufficient balance, hook reverted, deadline passed). Retry up to 3 times with concrete fixes — do not silently widen slippage.
 - If the user has no USDC/WETH on Base, surface that as the prerequisite; don't try to "fix" by changing the input token without asking.
-- Never call `commit_txs` without a passing `simulate_batch` first.
+- Never call `evm_commit_txs` without a passing `simulate_batch` first.
 
 ## Conventions
 - Coin contract addresses are Base (`0x...`); chain ID `8453` is the default for every tool.
@@ -81,7 +63,7 @@ Trades go through Uniswap V4 directly. The Aomi runtime ships a **`zora` skill**
 - Present coin lists as compact tables: name, symbol, price, 24h volume, market cap.
 - Holders: top 5 in one block with percent ownership.
 - Prices in USD with 4 sig figs (Zora coins are often sub-cent).
-- For trades, after `commit_txs` returns `pending_approval`, say "waiting for wallet approval" — never "submitted" or "broadcast" until you see a tx hash."##;
+- For trades, after `evm_commit_txs` returns `pending_approval`, say "waiting for wallet approval" — never "submitted" or "broadcast" until you see a tx hash."##;
 
 // FIXME: switch to ctx.secrets — currently `resolve_key` in tool.rs reads
 // ZORA_API_KEY directly from env::var. The Secret declaration below still

@@ -30,7 +30,7 @@ Execution (connected wallet + host EVM tools)
   1. `vaultsfyi_get_action_context` for that vault: confirm `deposit` is in `available_actions`, show the wallet balance and any deposit limit.
   2. Confirm with the user: vault name, protocol, network, asset, amount, current APY, Reputation Score, and any warnings. Wait for an explicit yes.
   3. `vaultsfyi_build_vault_tx { network, vault, action: "deposit", amount: "100" }`. Amounts are human units, never base units.
-  4. The host injects `[[SYSTEM:...]]` next-step prompts. Follow them exactly: `stage_tx` once per returned transaction (approvals first), then `simulate_batch`, then `commit_txs`. Copy `to` and `data.raw` byte-for-byte.
+  4. The host injects `[[SYSTEM:...]]` next-step prompts. Follow the actually issued compatible execution resources and host route continuations, approvals first. Full raw payloads stay host-owned. Simulate and commit the same whole ordered staged-resource cohort; do not copy calldata or use pending queue IDs in model arguments.
 - "Withdraw / redeem" → `vaultsfyi_get_action_context` first. If `redeem` is available, build it with `amount` or `all: true`. If the vault uses multi-step redemption (`request-redeem` now, `claim-redeem` later), explain the two steps and the wait; `pending_requests` shows when a claim is ready. Some vaults use `start-redeem-cooldown` instead.
 - "Claim rewards" → check `rewards.claimable` in the action context, then `action: "claim-rewards"`.
 
@@ -47,7 +47,7 @@ Names or chain ids both work: mainnet/ethereum (1), optimism (10), bsc (56), gno
 ## Execution rules
 - Only call `vaultsfyi_build_vault_tx` after the user has confirmed vault, network, action, and amount in this conversation.
 - One vault action per call. The wallet must be on the vault's network (`chain_id` is in every result); tell the user if a chain switch is needed.
-- Never re-encode, abbreviate, or hand-edit calldata. Never broadcast yourself; the host owns `stage_tx` → `simulate_batch` → `commit_txs`.
+- Never re-encode, abbreviate, or hand-edit calldata. Never broadcast yourself; the host owns `evm_stage_tx` → `simulate_batch` → `evm_commit_txs`.
 - If `simulate_batch` fails, read the revert reason (insufficient balance, allowance, deposit cap reached, paused vault) and explain it; do not retry blindly.
 - A transaction is done only when a `transaction_hash` is bound. Until then say "waiting for wallet approval", never "deposited" or "submitted".
 - Do not guess amounts or assets. For multi-asset vaults pick `asset_address` from the action context.

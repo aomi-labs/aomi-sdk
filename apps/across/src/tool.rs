@@ -299,7 +299,7 @@ impl DynAomiTool for AcrossBridge {
     type App = AcrossApp;
     type Args = AcrossBridgeArgs;
     const NAME: &'static str = "across_bridge";
-    const DESCRIPTION: &'static str = "USE THIS to execute any Across bridge. Single-call composite: fetches a fresh suggested-fees quote (carries the relayer params + origin-chain SpokePool address), then routes — through the host wallet — an optional ERC-20 approval for the SpokePool, followed by the SpokePool `depositV3` call (host ABI-encodes via `data.encode`). DO NOT call `stage_tx`, `simulate_batch`, `commit_txs`, or `across_get_bridge_quote` first; this tool re-quotes internally and the route handles simulate + commit. DO NOT web-search SpokePool addresses or depositV3 ABIs — the tool already has them. After commit, the host returns the deposit tx hash; poll the destination-chain fill with `across_get_deposit_status`.";
+    const DESCRIPTION: &'static str = "USE THIS to execute any Across bridge. Single-call composite: fetches a fresh suggested-fees quote (carries the relayer params + origin-chain SpokePool address), then routes — through the host wallet — an optional ERC-20 approval for the SpokePool, followed by the SpokePool `depositV3` call (host ABI-encodes via `data.encode`). DO NOT call `evm_stage_tx`, `simulate_batch`, `evm_commit_txs`, or `across_get_bridge_quote` first; this tool re-quotes internally and the route handles simulate + commit. DO NOT web-search SpokePool addresses or depositV3 ABIs — the tool already has them. After commit, the host returns the deposit tx hash; poll the destination-chain fill with `across_get_deposit_status`.";
 
     fn run_with_routes(
         _app: &AcrossApp,
@@ -420,13 +420,7 @@ impl DynAomiTool for AcrossBridge {
                     let step = next.add::<host::StageTx>(a.clone());
                     if i == last_index {
                         step.note(
-                            "Stage the Across depositV3 call. CRITICAL: copy `to` and every entry \
-                             of `data.encode.args` BYTE-FOR-BYTE from the args below — do not \
-                             abbreviate, reformat, or substitute the relayer parameters \
-                             (quote_timestamp, fill_deadline, exclusivity_deadline, \
-                             exclusive_relayer, output_amount). After this step the host \
-                             automatically simulates and commits the staged txs and waits for \
-                             the wallet.",
+                            "Follow the host-owned route continuation using compatible resources actually issued for this operation. Preserve source restrictions and prerequisite ordering; do not copy opaque bytes into model arguments. Simulate and commit the same complete ordered staged-resource cohort. Full raw payloads and callback fields remain unchanged in host routes.",
                         )
                         .enforce(EnforcementPolicy::Continue, |enforce| {
                             enforce.add::<host::SimulateBatch>(json!({}));
@@ -436,9 +430,7 @@ impl DynAomiTool for AcrossBridge {
                         });
                     } else {
                         step.note(
-                            "Stage the ERC-20 approval for the Across SpokePool. CRITICAL: copy \
-                             `to` and `data.encode.args` byte-for-byte; do not modify the spender \
-                             or amount.",
+                            "Follow the host-owned route continuation using compatible resources actually issued for this operation. Preserve source restrictions and prerequisite ordering; do not copy opaque bytes into model arguments. Simulate and commit the same complete ordered staged-resource cohort. Full raw payloads and callback fields remain unchanged in host routes.",
                         );
                     }
                 }

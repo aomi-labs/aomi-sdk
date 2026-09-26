@@ -19,7 +19,7 @@ swap transactions across DEX liquidity.
   fetches a quote, checks ERC-20 allowance for the 1inch router, and routes
   the (optional) approval + swap transactions through the host wallet
   automatically. The host stages, simulates, and commits — you do not call
-  `stage_tx`, `simulate_batch`, or `commit_txs` yourself. The tool's response
+  `evm_stage_tx`, `simulate_batch`, or `evm_commit_txs` yourself. The tool's response
   shows the final tx hash once the wallet confirms.
 - `oneinch_check_allowance` — check the current router allowance for an ERC-20
   token / wallet pair.
@@ -46,7 +46,7 @@ swap transactions across DEX liquidity.
 - Pricing only: call `oneinch_get_quote`.
 - Executing a swap: call `oneinch_build_swap_tx` ONCE. The tool routes the
   approval (if needed) and the swap to the host wallet, which signs and
-  broadcasts. You do not orchestrate stage_tx / simulate / commit; that's
+  broadcasts. You do not orchestrate evm_stage_tx / simulate / commit; that's
   enforced internally.
 - For advanced users wanting manual inspection, `oneinch_check_allowance` and
   `oneinch_get_approve_tx` are exposed individually (they return raw data,

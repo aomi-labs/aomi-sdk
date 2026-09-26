@@ -122,6 +122,10 @@ pub struct DynToolMetadata {
     /// Optional namespace override. Defaults to the manifest name if absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub namespace: Option<String>,
+    /// Fixed result export declaration. Full host values and routes remain intact.
+    /// Missing declarations use the host's generic data policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resource_output: Option<crate::ResourceOutputDeclaration>,
 }
 
 // ============================================================================
@@ -593,6 +597,12 @@ pub trait DynAomiTool: Send + Sync + 'static {
     /// Set to `true` for streaming/async tools that use [`DynAsyncSink`].
     const IS_ASYNC: bool = false;
 
+    /// Declare whole result exports at registration time. The host alone
+    /// authorizes retention and validates executable/evidence domain payloads.
+    fn resource_output() -> Option<crate::ResourceOutputDeclaration> {
+        None
+    }
+
     /// Synchronous tool execution. Override this for non-streaming tools.
     fn run(_app: &Self::App, _args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         Err(format!(
@@ -640,6 +650,7 @@ pub trait DynAomiTool: Send + Sync + 'static {
             parameters_schema: serde_json::to_value(schema).unwrap_or(Value::Null),
             supports_async: Self::IS_ASYNC,
             namespace: None,
+            resource_output: Self::resource_output(),
         }
     }
 }

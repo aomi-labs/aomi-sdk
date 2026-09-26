@@ -3,8 +3,8 @@
 //! Read tools normalize the Morpho REST + GraphQL surfaces into stable JSON.
 //! `morpho_deposit` / `morpho_withdraw` emit routed plans that stage plain
 //! ERC-4626 calls (`deposit` / `withdraw` / `redeem`) plus the ERC-20
-//! approval through the host wallet (`stage_tx` with `data.encode`), with
-//! host-enforced `simulate_batch` → `commit_txs`.
+//! approval through the host wallet (`evm_stage_tx` with `data.encode`), with
+//! host-enforced `simulate_batch` → `evm_commit_txs`.
 
 use crate::client::*;
 use aomi_sdk::schemars::JsonSchema;
@@ -1346,15 +1346,11 @@ fn build_deposit_plan(input: DepositPlanInput<'_>) -> Result<ToolReturn, String>
     ToolReturn::route(Value::Object(preview))
         .next(|next| {
             next.add::<host::StageTx>(approve_args).note(
-                "Stage the ERC-20 approval for the Morpho vault. CRITICAL: copy `to` and \
-                 `data.encode.args` byte-for-byte; the spender is the vault address and the \
-                 amount is exact base units.",
+                "Follow the host-owned route continuation using compatible resources actually issued for this operation. Preserve source restrictions and prerequisite ordering; do not copy opaque bytes into model arguments. Simulate and commit the same complete ordered staged-resource cohort. Full raw payloads and callback fields remain unchanged in host routes.",
             );
             next.add::<host::StageTx>(deposit_args)
                 .note(
-                    "Stage the ERC-4626 `deposit(assets, receiver)` call. CRITICAL: copy `to` \
-                     and `data.encode.args` byte-for-byte. After this step the host simulates \
-                     and commits both staged txs and waits for the wallet.",
+                    "Follow the host-owned route continuation using compatible resources actually issued for this operation. Preserve source restrictions and prerequisite ordering; do not copy opaque bytes into model arguments. Simulate and commit the same complete ordered staged-resource cohort. Full raw payloads and callback fields remain unchanged in host routes.",
                 )
                 .enforce(EnforcementPolicy::Continue, |enforce| {
                     enforce.add::<host::SimulateBatch>(json!({}));
@@ -1371,7 +1367,7 @@ impl DynAomiTool for Deposit {
     type App = MorphoVaultsApp;
     type Args = DepositArgs;
     const NAME: &'static str = "morpho_deposit";
-    const DESCRIPTION: &'static str = "USE THIS to deposit into a Morpho vault after the user has confirmed vault, chain, asset and amount. Composite: resolves the vault (V1/V2) and its underlying asset, converts the human amount to base units, previews expected shares and warnings (incl. V2 gates), then routes through the host wallet an ERC-20 approval followed by the ERC-4626 `deposit(assets, receiver)` call (host ABI-encodes via `data.encode`). DO NOT call `stage_tx`, `simulate_batch` or `commit_txs` yourself; the route enforces simulate + commit and binds the transaction hash. The wallet must be connected to the vault's chain.";
+    const DESCRIPTION: &'static str = "USE THIS to deposit into a Morpho vault after the user has confirmed vault, chain, asset and amount. Composite: resolves the vault (V1/V2) and its underlying asset, converts the human amount to base units, previews expected shares and warnings (incl. V2 gates), then routes through the host wallet an ERC-20 approval followed by the ERC-4626 `deposit(assets, receiver)` call (host ABI-encodes via `data.encode`). DO NOT call `evm_stage_tx`, `simulate_batch` or `evm_commit_txs` yourself; the route enforces simulate + commit and binds the transaction hash. The wallet must be connected to the vault's chain.";
 
     fn run_with_routes(
         _app: &MorphoVaultsApp,
@@ -1599,10 +1595,7 @@ fn build_withdraw_plan(input: WithdrawPlanInput<'_>) -> Result<ToolReturn, Strin
         .next(|next| {
             next.add::<host::StageTx>(tx_args)
                 .note(
-                    "Stage the ERC-4626 withdraw/redeem call. CRITICAL: copy `to` and \
-                     `data.encode.args` byte-for-byte (amount or shares, receiver, owner). \
-                     After this step the host simulates and commits the staged tx and waits \
-                     for the wallet.",
+                    "Follow the host-owned route continuation using compatible resources actually issued for this operation. Preserve source restrictions and prerequisite ordering; do not copy opaque bytes into model arguments. Simulate and commit the same complete ordered staged-resource cohort. Full raw payloads and callback fields remain unchanged in host routes.",
                 )
                 .enforce(EnforcementPolicy::Continue, |enforce| {
                     enforce.add::<host::SimulateBatch>(json!({}));
@@ -1619,7 +1612,7 @@ impl DynAomiTool for Withdraw {
     type App = MorphoVaultsApp;
     type Args = WithdrawArgs;
     const NAME: &'static str = "morpho_withdraw";
-    const DESCRIPTION: &'static str = "USE THIS to withdraw from a Morpho vault after the user has confirmed vault, chain and amount (or `all`). Composite: resolves the vault (V1/V2), reads the wallet's position and the vault's instant exit capacity (V1 withdrawable assets; V2 liquidity adapter + idle), then routes through the host wallet a single ERC-4626 `withdraw(assets, receiver, owner)` or, with `all: true`, `redeem(shares, receiver, owner)`. If the request exceeds the position or the instant liquidity it returns `insufficient_balance` / `insufficient_liquidity` with the V2 force-deallocate options instead of staging anything. DO NOT call `stage_tx`, `simulate_batch` or `commit_txs` yourself.";
+    const DESCRIPTION: &'static str = "USE THIS to withdraw from a Morpho vault after the user has confirmed vault, chain and amount (or `all`). Composite: resolves the vault (V1/V2), reads the wallet's position and the vault's instant exit capacity (V1 withdrawable assets; V2 liquidity adapter + idle), then routes through the host wallet a single ERC-4626 `withdraw(assets, receiver, owner)` or, with `all: true`, `redeem(shares, receiver, owner)`. If the request exceeds the position or the instant liquidity it returns `insufficient_balance` / `insufficient_liquidity` with the V2 force-deallocate options instead of staging anything. DO NOT call `evm_stage_tx`, `simulate_batch` or `evm_commit_txs` yourself.";
 
     fn run_with_routes(
         _app: &MorphoVaultsApp,
@@ -1738,7 +1731,10 @@ mod tests {
     }
 
     fn stage_steps(ret: &ToolReturn) -> Vec<&RouteStep> {
-        ret.routes.iter().filter(|r| r.tool == "stage_tx").collect()
+        ret.routes
+            .iter()
+            .filter(|r| r.tool == "evm_stage_tx")
+            .collect()
     }
 
     #[test]
@@ -1808,7 +1804,7 @@ mod tests {
             .as_ref()
             .expect("deposit step enforced");
         let tools: Vec<&str> = enforcement.steps.iter().map(|s| s.tool.as_str()).collect();
-        assert_eq!(tools, vec!["simulate_batch", "commit_txs"]);
+        assert_eq!(tools, vec!["simulate_batch", "evm_commit_txs"]);
         assert!(enforcement.binds_alias("transaction_hash"));
     }
 

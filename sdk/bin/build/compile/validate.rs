@@ -135,41 +135,52 @@ fn render_skill_permissions(skill: &aomi_sdk::AppSkillManifest) -> Option<String
 
 fn namespace_tools() -> HashMap<&'static str, Vec<&'static str>> {
     let mut m = HashMap::new();
-
     m.insert(
-        "evm-core",
+        "aomi-core",
         vec![
             "brave_search",
-            "commit_tx",
-            "commit_message",
-            "stage_tx",
-            "simulate_batch",
-            "view_state",
-            "run_tx",
-            "get_time_and_onchain_context",
-            "get_contract",
+            "cancel_scheduled",
+            "list_scheduled",
+            "list_skills",
+            "schedule_cron",
+            "spawn_thread",
+            "thread_return",
+            "wake_on_condition",
+        ],
+    );
+
+    m.insert(
+        "evm-reads",
+        vec![
+            "encode_and_call",
             "get_account_info",
+            "get_contract",
+            "get_erc20_balance",
+            "get_erc20_holdings",
+            "get_time_and_onchain_context",
             "sync_chain",
         ],
     );
-
     m.insert(
-        "svm-core",
+        "evm-sim",
         vec![
-            "svm_commit_ix",
-            "svm_commit_tx",
-            "svm_get_account_info",
-            "svm_get_context",
-            "svm_get_program",
-            "svm_get_token_holdings",
-            "svm_sign_data",
-            "svm_sign_tx",
-            "svm_simulate_ix",
-            "svm_simulate_tx",
-            "svm_stage_ix",
-            "svm_stage_tx",
+            "evm_stage_tx",
+            "sim_apply",
+            "sim_call",
+            "sim_close",
+            "sim_open",
+            "sim_revert",
+            "sim_snapshot",
         ],
     );
+    let mut evm = m["evm-reads"].clone();
+    evm.extend([
+        "simulate_batch",
+        "evm_stage_tx",
+        "evm_commit_message",
+        "evm_commit_txs",
+    ]);
+    m.insert("evm-core", evm);
     m.insert(
         "svm-reads",
         vec![
@@ -180,20 +191,29 @@ fn namespace_tools() -> HashMap<&'static str, Vec<&'static str>> {
         ],
     );
     m.insert(
-        "svm-ix-broadcast",
-        vec!["svm_commit_ix", "svm_simulate_ix", "svm_stage_ix"],
+        "svm-write-ix",
+        vec![
+            "svm_commit_txs",
+            "svm_sign_data",
+            "svm_simulate_ix",
+            "svm_stage_ix",
+        ],
     );
-    m.insert("svm-ix-sign", vec!["svm_simulate_ix", "svm_stage_ix"]);
     m.insert(
-        "svm-tx-broadcast",
-        vec!["svm_commit_tx", "svm_simulate_tx", "svm_stage_tx"],
+        "svm-write-tx",
+        vec![
+            "svm_commit_txs",
+            "svm_sign_data",
+            "svm_simulate_tx",
+            "svm_stage_tx",
+        ],
     );
-    m.insert(
-        "svm-tx-sign",
-        vec!["svm_sign_tx", "svm_simulate_tx", "svm_stage_tx"],
-    );
-    m.insert("svm-sign-data", vec!["svm_sign_data"]);
-    m.insert("svm-bundle", vec![]);
+    let mut svm = m["svm-reads"].clone();
+    svm.extend(m["svm-write-ix"].iter().copied());
+    svm.extend(m["svm-write-tx"].iter().copied());
+    svm.sort_unstable();
+    svm.dedup();
+    m.insert("svm-core", svm);
 
     m.insert(
         "database",
@@ -289,6 +309,14 @@ fn validate_manifest(manifest: &DynManifest) -> Vec<String> {
 
     // Check each plugin tool against inherited names.
     for tool in &manifest.tools {
+        if let Some(output) = &tool.resource_output {
+            if let Err(error) = output.validate() {
+                errors.push(format!(
+                    "{}: invalid resource output for '{}': {error}",
+                    manifest.name, tool.name
+                ));
+            }
+        }
         if inherited.contains(tool.name.as_str()) {
             errors.push(format!(
                 "{}: tool '{}' collides with a host namespace tool",
@@ -320,6 +348,22 @@ mod tests {
     use aomi_sdk::{AOMI_SDK_VERSION, DynManifest, DynToolMetadata};
 
     #[test]
+    fn validate_rejects_shadowing_current_control_namespace() {
+        for tool in super::namespace_tools()["aomi-core"].iter() {
+            let manifest: DynManifest = aomi_sdk::serde_json::from_value(aomi_sdk::serde_json::json!({
+                "sdk_version":AOMI_SDK_VERSION,"name":"collision-app","version":"0.1.0","preamble":"Control fixture",
+                "tools":[{"name":tool,"app":"collision-app","description":"Shadowed control","parameters_schema":{},"supports_async":false}],
+                "namespaces":["aomi-core"]
+            })).unwrap();
+            assert!(
+                super::validate_manifest(&manifest)
+                    .iter()
+                    .any(|error| error.contains("collides with a host namespace tool"))
+            );
+        }
+    }
+
+    #[test]
     fn validate_rejects_private_host_namespaces() {
         let manifest = DynManifest {
             sdk_version: AOMI_SDK_VERSION.to_string(),
@@ -333,6 +377,7 @@ mod tests {
                 parameters_schema: aomi_sdk::serde_json::json!({}),
                 supports_async: false,
                 namespace: None,
+                resource_output: None,
             }],
             namespaces: Some(vec!["database".to_string()]),
             secrets: None,
@@ -393,6 +438,7 @@ mod tests {
                 parameters_schema: aomi_sdk::serde_json::json!({}),
                 supports_async: false,
                 namespace: None,
+                resource_output: None,
             }],
             namespaces: None,
             secrets: None,
