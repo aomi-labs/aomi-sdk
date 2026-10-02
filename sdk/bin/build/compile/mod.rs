@@ -99,7 +99,7 @@ pub fn run(args: CompileArgs) -> Result<()> {
             failed.push(manifest.package_name);
             continue;
         }
-        let manifest_name = plugin_manifest_name(&built_lib);
+        let manifest_name = plugin_manifest_name(&built_lib)?;
         let dest = plugins_dir.join(library_file_name(&manifest_name, target_triple));
         fs::copy(&built_lib, &dest).unwrap_or_else(|err| {
             panic!(
@@ -323,16 +323,15 @@ fn cargo_output_file_name(package_name: &str, target_triple: Option<&str>) -> St
     }
 }
 
-fn plugin_manifest_name(lib_path: &Path) -> String {
-    let handle = unsafe {
-        DynFnHandle::load(lib_path).unwrap_or_else(|err| {
-            panic!("failed to load built plugin {}: {err}", lib_path.display())
-        })
-    };
+fn plugin_manifest_name(lib_path: &Path) -> Result<String> {
+    let handle = unsafe { DynFnHandle::load(lib_path) }.map_err(|err| eyre::eyre!(
+        "failed to load built plugin {}: {err}. This CLI uses aomi-sdk {}. Check the app pin with `aomi-build sdk check`; install its matching CLI with `aomi-build upgrade --version <app-sdk-version>`, then rebuild the plugin.",
+        lib_path.display(), aomi_sdk::AOMI_SDK_VERSION
+    ))?;
     let manifest = handle
         .call_manifest()
-        .unwrap_or_else(|err| panic!("failed to read manifest from {}: {err}", lib_path.display()));
-    manifest.name
+        .map_err(|err| eyre::eyre!("failed to read manifest from {}: {err}", lib_path.display()))?;
+    Ok(manifest.name)
 }
 
 fn shared_library_ext(target_triple: Option<&str>) -> &'static str {
@@ -369,6 +368,15 @@ fn should_codesign(target_triple: Option<&str>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plugin_load_failure_is_actionable_and_does_not_panic() {
+        let error = plugin_manifest_name(Path::new("/missing/aomi-plugin.so")).unwrap_err();
+        let message = error.to_string();
+        assert!(message.contains(aomi_sdk::AOMI_SDK_VERSION));
+        assert!(message.contains("aomi-build upgrade --version"));
+        assert!(message.contains("aomi-build sdk check"));
+    }
 
     #[test]
     fn app_manifest_uses_explicit_lib_name_when_present() {

@@ -51,17 +51,22 @@ impl DeployArgs {
 }
 
 pub(crate) async fn run_activate_step(args: ActivateArgs) -> Result<()> {
-    if args.dry_run {
+    if args.dry_run || !super::shared::clean_list(&args.release_tags).is_empty() {
         return args.run().await;
     }
-    let (git_root, _) = git_context(&args.path)?;
-    let state = LocalDeployment::read(&git_root)?.ok_or_else(|| {
-        anyhow!(
-            "no .aomi/deployment.json at {} — run `{} deploy run` first",
-            git_root.display(),
-            bin_name()
-        )
-    })?;
+    let cached = git_context(&args.path).ok().and_then(|(root, _)| {
+        LocalDeployment::read(&root)
+            .ok()
+            .flatten()
+            .map(|state| (root, state))
+    });
+    let (git_root, mut state) = if !args.selector.explicit() && cached.is_some() {
+        cached.unwrap()
+    } else {
+        args.selector
+            .resolve(&args.path, &args.backend, &args.build_url)
+            .await?
+    };
     let platform = args
         .platform
         .clone()
@@ -99,11 +104,27 @@ pub(crate) async fn run_activate_step(args: ActivateArgs) -> Result<()> {
         )
         .await?;
     }
-    args.run().await
+    // Activate exactly the deployment whose readiness we waited for, even if
+    // another deploy becomes the project's latest candidate during the wait.
+    let response = args.activate_with_state(&git_root, &mut state).await?;
+    state.write(&git_root)?;
+    ActivateArgs::print_activation(&response, args.json)
 }
 
 #[derive(Debug, Args, Clone, Default)]
 pub struct DeployStepArgs {
+    /// Explicitly request the default full deploy-and-activate lifecycle.
+    #[arg(long, conflicts_with = "build_only")]
+    pub activate: bool,
+    /// Publish a candidate without activating it.
+    #[arg(long, conflicts_with = "smoke")]
+    pub build_only: bool,
+    /// After activation, run a read-only smoke chat against each application ID.
+    #[arg(long, alias = "smoke-chat")]
+    pub smoke: bool,
+    /// Portal origin for smoke chat; inferred for known Build staging/production URLs.
+    #[arg(long)]
+    pub smoke_url: Option<String>,
     /// Source repository used to resolve its existing Project.
     #[arg(long, value_name = "OWNER/REPO")]
     pub repo: Option<String>,
@@ -264,6 +285,18 @@ impl DeployStepArgs {
     pub async fn run_full_lifecycle(self) -> Result<()> {
         let mut prepared = self.prepare(!self.json).await?;
         let quiet = self.json;
+        let smoke_origin = if self.smoke {
+            Some(self.smoke_url.clone().or_else(|| match prepared.session.build_url() {
+                "https://build-staging.aomi.dev" => Some("https://chat-staging.aomi.dev".into()),
+                "https://build.aomi.dev" => Some("https://chat.aomi.dev".into()),
+                _ => None,
+            }).ok_or_else(|| anyhow!("smoke chat needs --smoke-url <portal-origin> for this Build environment"))?)
+        } else {
+            None
+        };
+        if let Some(origin) = &smoke_origin {
+            crate::smoke::validate_origin(origin)?;
+        }
 
         let preflight = prepared.deploy(true).await?;
         let platform = Platform::new(&preflight.deployment.platform.platform);
@@ -313,6 +346,18 @@ impl DeployStepArgs {
         )
         .await?;
 
+        if self.build_only {
+            if quiet {
+                println!("{}", serde_json::to_string_pretty(&state)?);
+            } else {
+                println!(
+                    "Release ready to promote. Activate with `aomi-build activate --project-id {} --deployment-id {}`",
+                    state.project_id, state.deployment.id
+                );
+            }
+            return Ok(());
+        }
+
         if !quiet {
             println!("[4/4] Activate        …");
         }
@@ -332,6 +377,9 @@ impl DeployStepArgs {
             .await?;
         state.write(&prepared.git_root)?;
         ActivateArgs::print_activation(&response, self.json)?;
+        if let Some(origin) = &smoke_origin {
+            crate::smoke::run(origin, &response.activation.apps).await?;
+        }
         if !quiet {
             let apps = state.app_names().join(", ");
             let live = if state.app_names().len() == 1 {

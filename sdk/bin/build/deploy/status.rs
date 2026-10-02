@@ -9,6 +9,8 @@ use serde::Serialize;
 
 #[derive(Debug, Serialize)]
 pub struct StatusResult {
+    pub project_id: i64,
+    pub source_commit: String,
     pub platform: String,
     pub deployment_id: String,
     pub pr_url: String,
@@ -23,6 +25,7 @@ pub struct StatusResult {
 
 #[derive(Debug, Serialize)]
 pub struct AppStatus {
+    pub application_id: Option<i64>,
     pub name: String,
     pub release_tag: String,
     /// What the local `.aomi/deployment.json` last recorded.
@@ -39,7 +42,7 @@ pub enum BackendAppStatus {
     NotRegistered,
     Found {
         is_active: bool,
-        artifact_ready: bool,
+        artifact_ready: Option<bool>,
         loaded: bool,
     },
     Unknown {
@@ -91,6 +94,7 @@ impl StatusResult {
                 Some(client) => fetch_app(client, &platform_tag, &app.name, &app.release_tag).await,
             };
             apps.push(AppStatus {
+                application_id: None,
                 name: app.name.clone(),
                 release_tag: app.release_tag.clone(),
                 activated_locally: app.activated.unwrap_or(false),
@@ -99,6 +103,8 @@ impl StatusResult {
         }
 
         Self {
+            project_id: state.project_id,
+            source_commit: state.deployment.source.commit_hash.clone(),
             platform,
             deployment_id: state.deployment.id.clone(),
             pr_url: state.deployment.platform.pr_url.clone().unwrap_or_default(),
@@ -116,6 +122,8 @@ impl StatusResult {
         use std::fmt::Write as _;
         let mut out = String::new();
         let _ = writeln!(out, "Deployment status");
+        let _ = writeln!(out, "  project_id    : {}", self.project_id);
+        let _ = writeln!(out, "  source commit : {}", self.source_commit);
         let _ = writeln!(out, "  platform      : {}", self.platform);
         let _ = writeln!(out, "  deployment_id : {}", self.deployment_id);
         let _ = writeln!(out, "  pr            : {}", self.pr_url);
@@ -156,6 +164,9 @@ impl StatusResult {
         }
         for app in &self.apps {
             let _ = writeln!(out, "  - {} ({})", app.name, app.release_tag);
+            if let Some(id) = app.application_id {
+                let _ = writeln!(out, "      app id    : {id}");
+            }
             let _ = writeln!(out, "      local     : activated={}", app.activated_locally);
             match &app.backend {
                 BackendAppStatus::NotChecked => {}
@@ -173,7 +184,10 @@ impl StatusResult {
                     let health = if *loaded { "loaded" } else { "not loaded" };
                     let _ = writeln!(
                         out,
-                        "      backend   : active={is_active} artifact_ready={artifact_ready} {health}"
+                        "      backend   : active={is_active} artifact_ready={} {health}",
+                        artifact_ready
+                            .map(|ready| ready.to_string())
+                            .unwrap_or_else(|| "unknown".into())
                     );
                 }
             }
@@ -208,7 +222,7 @@ async fn fetch_app(
     match client.get_app(platform, name, release_tag).await {
         Ok(live) => BackendAppStatus::Found {
             is_active: live.app.is_active,
-            artifact_ready: live.app.artifact_ready,
+            artifact_ready: Some(live.app.artifact_ready),
             loaded: live.app.loaded,
         },
         Err(err) if err.to_string().contains("returned 404") => BackendAppStatus::NotRegistered,
@@ -225,6 +239,8 @@ mod tests {
     #[test]
     fn report_prints_build_logs_url() {
         let report = StatusResult {
+            project_id: 1,
+            source_commit: "source-sha".into(),
             platform: "community".into(),
             deployment_id: "dep_1".into(),
             pr_url: String::new(),
