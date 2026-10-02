@@ -19,6 +19,8 @@ use crate::deploy::types::{ActivateInput, BuildActivateInput, ReleaseTags};
 
 #[derive(Debug, Args, Clone, Default)]
 pub struct ActivateArgs {
+    #[command(flatten)]
+    pub selector: super::selector::DeploymentSelector,
     /// Apps to activate. Defaults to every app from `.aomi/deployment.json`.
     #[arg(value_name = "APP")]
     pub apps: Vec<String>,
@@ -69,14 +71,29 @@ pub struct ActivateArgs {
 
 impl ActivateArgs {
     pub async fn run(self) -> Result<()> {
-        let (git_root, _) = git_context(&self.path)?;
-        let mut state = LocalDeployment::read(&git_root)?.ok_or_else(|| {
-            anyhow!(
-                "no .aomi/deployment.json at {} — run `{} deploy` first",
-                git_root.display(),
-                bin_name()
-            )
-        })?;
+        if !clean_list(&self.release_tags).is_empty() {
+            return self.run_explicit_tags().await;
+        }
+        let (git_root, mut state) = if self.selector.explicit()
+            || git_context(&self.path)
+                .ok()
+                .and_then(|(root, _)| LocalDeployment::read(&root).ok().flatten())
+                .is_none()
+        {
+            self.selector
+                .resolve(&self.path, &self.backend, &self.build_url)
+                .await?
+        } else {
+            let (git_root, _) = git_context(&self.path)?;
+            let state = LocalDeployment::read(&git_root)?.ok_or_else(|| {
+                anyhow!(
+                    "no .aomi/deployment.json at {} — run `{} deploy` first",
+                    git_root.display(),
+                    bin_name()
+                )
+            })?;
+            (git_root, state)
+        };
         if self.dry_run {
             let platform = self
                 .platform
@@ -96,6 +113,56 @@ impl ActivateArgs {
         Ok(())
     }
 
+    async fn run_explicit_tags(&self) -> Result<()> {
+        let tags = clean_list(&self.release_tags);
+        let apps = clean_list(&self.apps);
+        if !apps.is_empty() && apps.len() != tags.len() {
+            bail!("--release-tag activation requires the same number of apps and release tags");
+        }
+        let platform = self
+            .platform
+            .clone()
+            .unwrap_or_else(|| Platform::new("community"));
+        let request = ActivateInput {
+            target: ReleaseTags::new(tags),
+            apps,
+            target_tags: clean_list(&self.target_tags),
+        };
+        if self.dry_run {
+            println!("{}", serde_json::to_string_pretty(&request)?);
+            return Ok(());
+        }
+        let response = if let Some(token) = self
+            .activation_token
+            .clone()
+            .or_else(|| env_value(ACTIVATION_TOKEN_ENV))
+        {
+            let backend = resolve_backend(&self.backend)
+                .ok_or_else(|| anyhow!("activate needs --backend"))?;
+            let client = BackendClient::new(backend, token)?;
+            let mut response = client.activate(&platform, &request).await?;
+            verify_activation(&client, &platform, &mut response).await?;
+            response
+        } else {
+            let session = Session::open(&self.backend, &self.build_url).await?;
+            let project_id = self.selector.project_id.ok_or_else(|| {
+                anyhow!("explicit release tags with Builder authentication need --project-id <id>")
+            })?;
+            activate_until_loaded(
+                &session.client,
+                &BuildActivateInput {
+                    platform: platform.to_string(),
+                    project_id,
+                    release_tags: request.target.value,
+                    apps: request.apps,
+                    target_tags: request.target_tags,
+                },
+            )
+            .await?
+        };
+        Self::print_activation(&response, self.json)
+    }
+
     pub(crate) async fn activate_with_state(
         &self,
         git_root: &std::path::Path,
@@ -109,8 +176,11 @@ impl ActivateArgs {
         let request = self.activation_request(state)?;
 
         let backend_url = resolve_backend(&self.backend);
-        crate::sdk_guard::ensure_project_sdk(git_root, backend_url.as_deref(), self.fix_sdk)
-            .await?;
+        // The deployed artifact's manifest is the ABI authority. A fresh
+        // worktree's Cargo pin need not describe the release being activated.
+        if self.fix_sdk {
+            crate::sdk_guard::ensure_project_sdk(git_root, backend_url.as_deref(), true).await?;
+        }
         let explicit_activation_token = self
             .activation_token
             .clone()
@@ -162,8 +232,15 @@ impl ActivateArgs {
                 match &app.error {
                     Some(err) => println!("  - {} : FAILED ({err})", app.name),
                     None => println!(
-                        "  - {} : active={} artifact_ready={} loaded={}",
-                        app.name, app.is_active, app.artifact_ready, app.loaded
+                        "  - {} : application_id={} release={} active={} artifact_ready={} loaded={}",
+                        app.name,
+                        app.application_id
+                            .map(|id| id.to_string())
+                            .unwrap_or_else(|| "unknown".into()),
+                        app.release_tag.as_deref().unwrap_or("unknown"),
+                        app.is_active,
+                        app.artifact_ready,
+                        app.loaded
                     ),
                 }
             }
@@ -267,7 +344,7 @@ async fn activate_until_loaded(
             return Ok(response);
         }
         if !announced {
-            println!("  waiting for the backend to load the activated release…");
+            eprintln!("  waiting for the backend to load the activated release…");
             announced = true;
         }
         tokio::time::sleep(Duration::from_secs(6)).await;

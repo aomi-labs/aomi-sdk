@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 use eyre::Result;
+use std::io::IsTerminal;
 
 use deploy::cli;
 
@@ -9,12 +10,15 @@ mod deploy;
 mod init;
 mod manifest;
 mod new_app;
+mod operate;
 mod sdk_guard;
+mod smoke;
 mod spec_load;
 mod specs;
 mod test_schema;
 mod tighten;
 mod tool;
+mod upgrade;
 
 #[derive(Parser)]
 #[command(
@@ -72,6 +76,13 @@ enum Cmd {
     Apps(cli::AppsArgs),
     /// Check or fix the app repo's aomi-sdk pin against the backend.
     Sdk(sdk_guard::SdkArgs),
+    /// Install the CLI version required by a backend, or an explicit version.
+    #[command(alias = "self-update")]
+    Upgrade(upgrade::UpgradeArgs),
+    /// Read ownership-checked runtime logs.
+    Logs(operate::LogsArgs),
+    /// List environment key names, set a secret from stdin/file, or unset a key.
+    Env(operate::EnvArgs),
     /// Ask platform ops for legacy onboarding details.
     Request(cli::RequestArgs),
 }
@@ -80,6 +91,11 @@ enum Cmd {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let Some(cmd) = cli.cmd else {
+        if !std::io::stdin().is_terminal() {
+            eyre::bail!(
+                "the interactive wizard requires a terminal; run `aomi-build --help` for headless commands and set AOMI_BUILD_TOKEN"
+            );
+        }
         return deploy::wizard::run().await.map_err(git_error);
     };
     match cmd {
@@ -103,6 +119,9 @@ async fn main() -> Result<()> {
         Cmd::Project(args) => args.run().await.map_err(git_error),
         Cmd::Apps(args) => args.run().await.map_err(git_error),
         Cmd::Sdk(args) => sdk_guard::run(args).await,
+        Cmd::Upgrade(args) => upgrade::run(args).await.map_err(git_error),
+        Cmd::Logs(args) => args.run().await.map_err(git_error),
+        Cmd::Env(args) => args.run().await.map_err(git_error),
         Cmd::Request(args) => args.run().await.map_err(git_error),
     }
 }

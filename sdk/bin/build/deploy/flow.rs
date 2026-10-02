@@ -422,6 +422,7 @@ mod tests {
     #[test]
     fn failure_detail_surfaces_build_logs() {
         let status = DeploymentStatusResult {
+            deployment: None,
             state: "failed".into(),
             message: None,
             ci: Some(crate::deploy::types::DeploymentCiStatus {

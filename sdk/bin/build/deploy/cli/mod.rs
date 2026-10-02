@@ -51,6 +51,7 @@ pub mod login;
 pub mod project;
 pub mod release;
 pub mod request;
+pub mod selector;
 pub mod status;
 pub mod token;
 

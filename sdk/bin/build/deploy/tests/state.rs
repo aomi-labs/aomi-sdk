@@ -63,6 +63,7 @@ async fn status_reads_deployment_from_repo_root_when_path_is_app_dir() {
     sample_state().write(repo.root()).unwrap();
 
     StatusArgs {
+        selector: Default::default(),
         backend: Some(String::new()),
         build_url: None,
         path: repo.path("apps/bot"),

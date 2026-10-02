@@ -322,6 +322,8 @@ pub struct OAuthStart {
 /// `ready` | `failed`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct DeploymentStatusResult {
+    #[serde(default)]
+    pub deployment: Option<DeployPayload>,
     pub state: String,
     #[serde(default)]
     pub message: Option<String>,
