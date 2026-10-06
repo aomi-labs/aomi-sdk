@@ -156,8 +156,7 @@ fn namespace_tools() -> HashMap<&'static str, Vec<&'static str>> {
     m.insert(
         "svm-core",
         vec![
-            "svm_commit_ix",
-            "svm_commit_tx",
+            "svm_commit_txs",
             "svm_get_account_info",
             "svm_get_context",
             "svm_get_program",

@@ -2,9 +2,9 @@
 
 > **2026-07-04:** the `svm_sign_tx` verb this doc used to describe is
 > retired. Sign-only is no longer a tool — it is the **venue cell** of
-> `svm_commit_tx`, selected by the staged artifact's `broadcaster`
+> `svm_commit_txs`, selected by the staged artifact's `broadcaster`
 > config. The SDK markers live in [sdk/src/builder.rs](../sdk/src/builder.rs)
-> (`host_target!(SvmStageTx, ...)` / `host_target!(SvmCommitTx, ...)`);
+> (`host_target!(SvmStageTx, ...)` / `host_target!(SvmCommitTxs, ...)`);
 > the old `SvmSignTx` marker is deleted.
 
 ## The model
@@ -42,8 +42,8 @@ ToolReturn::route(preview)
             "description": description,
             "broadcaster": "venue",          // the artifact pin
         }));
-        next.add::<host::SvmCommitTx>(json!({}))
-            .note("Call with { \"tx_id\": <pending_tx_id> } from the stage step.")
+        next.add::<host::SvmCommitTxs>(json!({}))
+            .note("Call with { \"tx_ids\": [<pending_tx_id>] } from the stage step.")
             .bind_as("signed_tx");
     })
     .after::<SubmitSwap>(submit_template)
@@ -54,7 +54,7 @@ ToolReturn::route(preview)
    equal the connected wallet), stamps `broadcaster` +
    `preserve_blockhash` (default `true`; venue blobs must stay
    byte-stable), and mints a `pending_tx_id`.
-2. **`svm_commit_tx { tx_id }`** executes under kernel policy. On a
+2. **`svm_commit_txs { tx_ids }`** executes under kernel policy. On a
    human-sync wallet the FE gets a sign-only request
    (`request_kind: "sign_transaction"`); on an autonomous-armed wallet
    the kernel signs server-side with **no FE round-trip** — either way

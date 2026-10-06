@@ -79,12 +79,8 @@ fn svm_host_route_target_names_match_host_tools() {
         "svm_simulate_tx"
     );
     assert_eq!(
-        <host::SvmCommitIx as RouteTarget>::tool_name(),
-        "svm_commit_ix"
-    );
-    assert_eq!(
-        <host::SvmCommitTx as RouteTarget>::tool_name(),
-        "svm_commit_tx"
+        <host::SvmCommitTxs as RouteTarget>::tool_name(),
+        "svm_commit_txs"
     );
     assert_eq!(
         <host::SvmSignData as RouteTarget>::tool_name(),
@@ -104,7 +100,7 @@ fn svm_lane_1_stage_commit_route_plan_serializes() {
             }))
             .bind_as("ix_ids");
         })
-        .after::<host::SvmCommitIx>(json!({
+        .after::<host::SvmCommitTxs>(json!({
             "mode": "wallet",
             "version": "v0",
         }))
@@ -119,7 +115,7 @@ fn svm_lane_1_stage_commit_route_plan_serializes() {
         .iter()
         .filter_map(|route| route.get("tool").and_then(Value::as_str))
         .collect();
-    assert_eq!(tools, vec!["svm_stage_ix", "svm_commit_ix"]);
+    assert_eq!(tools, vec!["svm_stage_ix", "svm_commit_txs"]);
 }
 
 #[test]
@@ -134,7 +130,7 @@ fn svm_lane_2_stage_commit_route_plan_serializes() {
             }))
             .bind_as("tx_id");
         })
-        .after::<host::SvmCommitTx>(json!({"mode": "wallet"}))
+        .after::<host::SvmCommitTxs>(json!({"mode": "wallet"}))
         .awaits("tx_id")
         .build();
 
@@ -146,7 +142,7 @@ fn svm_lane_2_stage_commit_route_plan_serializes() {
         .iter()
         .filter_map(|route| route.get("tool").and_then(Value::as_str))
         .collect();
-    assert_eq!(tools, vec!["svm_stage_tx", "svm_commit_tx"]);
+    assert_eq!(tools, vec!["svm_stage_tx", "svm_commit_txs"]);
 
     // Lane 2 commit takes only `tx_id` + `mode` — assert no
     // accidental Lane 1 args leaked into the after step's payload.
@@ -284,7 +280,7 @@ fn route_builder_serializes_solana_venue_commit_plan() {
                 "description": "Swap 1 USDC for 0.005 SOL via byreal RFQ",
                 "broadcaster": "venue",
             }));
-            next.add::<host::SvmCommitTx>(json!({}))
+            next.add::<host::SvmCommitTxs>(json!({}))
                 .bind_as("signed_tx")
                 .note("commit with { tx_id } from the stage step");
         })
@@ -309,7 +305,7 @@ fn route_builder_serializes_solana_venue_commit_plan() {
                     "trigger": {"type": "on_sync_return"},
                 },
                 {
-                    "tool": "svm_commit_tx",
+                    "tool": "svm_commit_txs",
                     "args": {},
                     "trigger": {"type": "on_sync_return"},
                     "bind_as": "signed_tx",
@@ -571,7 +567,7 @@ fn assert_all_bound(tool_return: &ToolReturn, expected: &[&str]) {
 //   - Future helper that wraps this pattern (e.g.
 //     `build_svm_stage_sim_commit_routes`) has a reference test to mirror.
 //   - The exact host verb names (`svm_stage_tx`, `svm_simulate_tx`,
-//     `svm_commit_tx`) are pinned against the markers; a rename in the host
+//     `svm_commit_txs`) are pinned against the markers; a rename in the host
 //     contract breaks here before it breaks a live wallet dispatch.
 // ===========================================================================
 
@@ -581,13 +577,13 @@ fn assert_all_bound(tool_return: &ToolReturn, expected: &[&str]) {
 ///                            │
 ///                            └─bound event(tx_id)─▶ svm_simulate_tx   binds sim_result
 ///                                                    │
-///                                                    └─bound event(sim_result)─▶ svm_commit_tx
+///                                                    └─bound event(sim_result)─▶ svm_commit_txs
 ///
 /// Each step's trigger references the *previous* step's binding alias,
 /// not the stage's `tx_id`. That's what makes the chain sequential vs
 /// a fan-out (both sim and commit awaiting the same `tx_id`). The runtime
 /// injects the bound value into the awaiting step's args under the
-/// alias's name, so `svm_simulate_tx` and `svm_commit_tx` see
+/// alias's name, so `svm_simulate_tx` and `svm_commit_txs` see
 /// `tx_id` / `sim_result` materialised at dispatch time without the app
 /// having to thread them through the static args template.
 #[test]
@@ -620,7 +616,7 @@ fn lane_2_stage_sim_commit_chain_binds_sequentially() {
     // still has `tx_id` in the artifact store for commit to use; it's
     // already bound from step 1.
     let commit = RouteStep::on_bound_event(
-        host::SvmCommitTx::tool_name(),
+        host::SvmCommitTxs::tool_name(),
         json!({ "mode": "wallet" }),
         "sim_result",
     );
@@ -683,8 +679,8 @@ fn lane_2_stage_sim_commit_chain_binds_sequentially() {
 
     // ── Step 3: commit_tx ────────────────────────────────────────────
     let s = &routes[2];
-    assert_eq!(s["tool"], json!(host::SvmCommitTx::tool_name()));
-    assert_eq!(s["tool"], json!("svm_commit_tx"));
+    assert_eq!(s["tool"], json!(host::SvmCommitTxs::tool_name()));
+    assert_eq!(s["tool"], json!("svm_commit_txs"));
     assert_eq!(
         s["trigger"],
         json!({ "type": "on_bound_event", "alias": "sim_result" }),
@@ -714,7 +710,7 @@ fn lane_2_stage_sim_commit_chain_binds_sequentially() {
 
 /// Lane 1 (composed-from-instructions) 3-node chain — symmetric to the
 /// Lane 2 case above. The host markers differ (`SvmStageIx` /
-/// `SvmSimulateIx` / `SvmCommitIx` instead of the `*Tx` triple) and the
+/// `SvmSimulateIx` instead of the `*Tx` pair, sharing `SvmCommitTxs`) and the
 /// stage args shape is `instructions: [...]` rather than `tx: "<b64>"`,
 /// but the binding/awaits chain is identical. Pinning both lanes here
 /// makes future host renames (or SDK marker drift) surface in one place.
@@ -743,7 +739,7 @@ fn lane_1_stage_sim_commit_chain_binds_sequentially() {
     sim.bind_as = Some("sim_result".to_string());
 
     let commit = RouteStep::on_bound_event(
-        host::SvmCommitIx::tool_name(),
+        host::SvmCommitTxs::tool_name(),
         json!({ "mode": "wallet", "version": "legacy" }),
         "sim_result",
     );
@@ -761,7 +757,7 @@ fn lane_1_stage_sim_commit_chain_binds_sequentially() {
         json!({ "type": "on_bound_event", "alias": "ix_ids" })
     );
     assert_eq!(routes[1]["bind_as"], json!("sim_result"));
-    assert_eq!(routes[2]["tool"], json!("svm_commit_ix"));
+    assert_eq!(routes[2]["tool"], json!("svm_commit_txs"));
     assert_eq!(
         routes[2]["trigger"],
         json!({ "type": "on_bound_event", "alias": "sim_result" })
@@ -773,10 +769,9 @@ fn lane_1_stage_sim_commit_chain_binds_sequentially() {
     // where it breaks.
     assert_eq!(host::SvmStageIx::tool_name(), "svm_stage_ix");
     assert_eq!(host::SvmSimulateIx::tool_name(), "svm_simulate_ix");
-    assert_eq!(host::SvmCommitIx::tool_name(), "svm_commit_ix");
     assert_eq!(host::SvmStageTx::tool_name(), "svm_stage_tx");
     assert_eq!(host::SvmSimulateTx::tool_name(), "svm_simulate_tx");
-    assert_eq!(host::SvmCommitTx::tool_name(), "svm_commit_tx");
+    assert_eq!(host::SvmCommitTxs::tool_name(), "svm_commit_txs");
 }
 
 /// Negative test — if a 3-node chain accidentally awaits the *stage*
@@ -796,7 +791,7 @@ fn fan_out_chain_is_NOT_sequential() {
     // BOTH sim and commit awaiting the stage alias = fan-out, not chain.
     let sim = RouteStep::on_bound_event(host::SvmSimulateTx::tool_name(), json!({}), "tx_id");
     let commit = RouteStep::on_bound_event(
-        host::SvmCommitTx::tool_name(),
+        host::SvmCommitTxs::tool_name(),
         json!({ "mode": "wallet" }),
         "tx_id",
     );
