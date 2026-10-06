@@ -479,9 +479,10 @@ pub trait DynAomiApp: Clone + Default + Send + Sync + 'static {
     /// - SVM meta: `"svm-core"` (expands to the full SVM catalogue)
     /// - SVM lanes (2026-07 recut): `"svm-reads"`, `"svm-write-ix"`
     ///   (compose from instructions: `svm_stage_ix` / `svm_simulate_ix` /
-    ///   `svm_commit_ix` + `svm_sign_data`), `"svm-write-tx"`
+    ///   `svm_commit_txs` + `svm_sign_data`), `"svm-write-tx"`
     ///   (venue-built transactions: `svm_stage_tx` / `svm_simulate_tx` /
-    ///   `svm_commit_tx` + `svm_sign_data`)
+    ///   `svm_commit_txs` + `svm_sign_data`). Both lanes share the single
+    ///   model-facing commit tool `svm_commit_txs`.
     /// - Other: `"database"` (host-private)
     ///
     /// The old endgame-split namespaces (`"svm-ix-broadcast"`,

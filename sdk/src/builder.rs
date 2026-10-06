@@ -123,7 +123,7 @@ pub mod host {
     // Jupiter `/swap`, Raydium tx-API). The host decodes, validates
     // payer = connected wallet, then stages the blob under a fresh
     // `pending_tx_id`. Downstream verbs (`SvmSimulateTx`,
-    // `SvmCommitTx`) consume that id.
+    // `SvmCommitTxs`) consume that id.
     //
     // Args contract:
     //   { "tx": "<base64 VersionedTransaction>",
@@ -174,50 +174,30 @@ pub mod host {
     // with a "use svm_simulate_ix" hint.
     host_target!(SvmSimulateTx, "svm_simulate_tx");
 
-    // Lane 1 commit consumer — assemble the staged ix list into one
-    // VersionedTransaction and execute it under kernel policy. Args
-    // contract:
-    //   { "ix_ids": [<u32>, ...],
-    //     "version": "legacy" | "v0",                 // optional
-    //     "address_lookup_tables": ["<pubkey>", ...], // optional (v0 only)
-    //     "compute_units": <u32>,                     // optional
-    //     "priority_microlamports": <u64>,            // optional
-    //     "broadcaster": "wallet" | "venue" | "aomi" } // optional
+    // Commit consumer for both write lanes — the host registers one
+    // model-facing SVM commit route, `svm_commit_txs`, in `svm-write-ix`,
+    // `svm-write-tx` and `svm-core` (product-mono
+    // `aomi/crates/tools/src/namespace.rs`). It accepts pending ids from
+    // either `svm_stage_ix` or `svm_stage_tx`; one call must not mix
+    // lanes, a staged tx blob commits alone, and every id must have a
+    // successful simulation first. Args contract:
+    //   { "tx_ids": [<u32>, ...] }
     //
-    // No mode arg. Lane 1 assembles at commit time, so `broadcaster`
-    // rides the call instead of a staged blob — forward what the app's
-    // build tool returned; it is not a model choice. Rejects ids that
-    // resolve to `svm_stage_tx`-staged blobs with a "use svm_commit_tx"
-    // hint.
-    host_target!(SvmCommitIx, "svm_commit_ix");
-
-    // Lane 2 commit consumer — execute a `svm_stage_tx`-staged
-    // transaction blob under kernel policy. The blob's version / ALTs /
-    // blockhash / compute budget / broadcaster are preserved; there are
-    // no assembly or mode args, because the staged metadata is
-    // authoritative. Args contract:
-    //   { "tx_id": <u32> }
-    //
-    // Routing (host-side, see product-mono `svm/tx/commit.rs`):
-    //   - staged `broadcaster: "wallet"` → FE wallet signs AND submits
-    //     (`signAndSendTransaction`) — the classic attended flow.
-    //   - staged `broadcaster: "venue"` → sign-only request; the signed
-    //     bytes bind to the route alias and return to the app's
-    //     `submit_*` continuation; the venue broadcasts. On an
-    //     autonomous-armed wallet the kernel signs server-side and the
-    //     bytes bind without any FE round-trip — same route plan,
-    //     unattended-capable.
-    //   - staged `broadcaster: "aomi"` → runtime broadcast loop
-    //     (BroadcastEngine, host #38-pipeline-c).
+    // Assembly (version / ALTs / compute budget / broadcaster) is read
+    // from the staged artifacts, not from this call. Routing is
+    // host-side (product-mono `svm/tx/commit_tx.rs`): a staged
+    // `broadcaster: "wallet"` goes to the FE wallet to sign and submit;
+    // `"venue"` is sign-only, the signed bytes bind to the route alias
+    // and return to the app's `submit_*` continuation; `"aomi"` runs the
+    // runtime broadcast loop. On an autonomous-armed wallet the kernel
+    // signs server-side with no FE round-trip.
     //
     // Bound artifact for the venue cell (string): base64 signed tx
     // bytes — bind it with `.bind_as("signed_tx")` and await it in the
-    // app's submit continuation. Note: Solana wallets sign one tx per
-    // user prompt; apps needing multiple signed txs should issue
-    // separate stage + commit step pairs, each binding a distinct
-    // alias. Rejects ids that resolve to `svm_stage_ix`-staged
-    // instructions with a "use svm_commit_ix" hint.
-    host_target!(SvmCommitTx, "svm_commit_tx");
+    // app's submit continuation. Solana wallets sign one tx per user
+    // prompt; apps needing multiple signed txs should issue separate
+    // stage + commit step pairs, each binding a distinct alias.
+    host_target!(SvmCommitTxs, "svm_commit_txs");
 
     // Lane 3 producer + consumer — off-chain message signing for
     // commit-reveal flows, Squads proposal payloads, wallet-attested
@@ -463,7 +443,7 @@ impl<'a> NextStepBuilder<'a> {
     ///
     /// Aliases must be unique within a route plan, but the *tool name* does not
     /// have to be — a single plan may have multiple `evm_commit_message` / `stage_tx`
-    /// / `svm_commit_tx` steps each binding to a distinct alias. The runtime
+    /// / `svm_commit_txs` steps each binding to a distinct alias. The runtime
     /// consumes aliases in FIFO order per tool name, so list the steps in the
     /// order you expect the LLM/user to drive them (use `.note(...)` to
     /// reinforce the order in the suggested-action prompt).
