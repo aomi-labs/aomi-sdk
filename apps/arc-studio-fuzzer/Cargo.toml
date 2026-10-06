@@ -1,0 +1,19 @@
+[package]
+name = "arc-studio-fuzzer"
+version = "0.2.0"
+edition = "2024"
+
+[package.metadata.aomi]
+chain_ids = [5042, 5042002]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+aomi-sdk = { path = "../../sdk" }
+alloy-dyn-abi = "1.5.7"
+alloy-json-abi = "1.5.7"
+alloy-primitives = "1.5.7"
+schemars = "1.0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

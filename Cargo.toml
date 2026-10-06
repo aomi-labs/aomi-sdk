@@ -49,6 +49,7 @@ exclude = [
     "apps/cambrian",
     "apps/morpho-vaults",
     "apps/stablefx",
+    "apps/arc-studio-fuzzer",
 ]
 resolver = "2"
 
