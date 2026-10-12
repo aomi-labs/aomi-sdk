@@ -55,6 +55,7 @@ pub(super) fn activate_args() -> ActivateArgs {
 
 mod activate;
 mod args;
+mod attempt;
 mod inputs;
 mod regressions;
 mod state;

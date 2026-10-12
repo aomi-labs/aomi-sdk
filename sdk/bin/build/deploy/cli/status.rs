@@ -10,7 +10,7 @@ use super::shared::{
 };
 use crate::deploy::session::Session;
 use crate::deploy::state::LocalDeployment;
-use crate::deploy::status::{DeploymentBackendStatus, StatusResult};
+use crate::deploy::status::{AttemptStatus, DeploymentBackendStatus, StatusResult};
 
 #[derive(Debug, Args, Clone)]
 pub struct StatusArgs {
@@ -66,8 +66,12 @@ impl StatusArgs {
         };
         let mut report = StatusResult::collect(&state, backend_url, token).await;
         if let Some(build_url) = build_url {
-            let status = Session::at(&build_url, None)
-                .await?
+            let session = Session::at(&build_url, None).await?;
+            if let Some(recorded) = &state.attempt {
+                report.attempt =
+                    Some(AttemptStatus::fetch(&session.client, state.project_id, recorded).await);
+            }
+            let status = session
                 .client
                 .status(&state.deployment.platform.platform, &state.deployment.id)
                 .await?;

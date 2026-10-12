@@ -27,6 +27,19 @@ pub struct LocalDeployment {
     pub last_activation: Option<Activation>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_url: Option<String>,
+    /// The deployment attempt that builds, activates and verifies this
+    /// deployment. Activation belongs to it, so a later `activate` follows it
+    /// instead of activating a second time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<AttemptRef>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
+pub struct AttemptRef {
+    pub id: u64,
+    pub commit: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Default, Serialize, Deserialize)]
@@ -55,6 +68,7 @@ impl LocalDeployment {
             },
             last_activation: None,
             project_url: None,
+            attempt: None,
         }
     }
 
@@ -102,6 +116,16 @@ impl LocalDeployment {
         fs::rename(&tmp, &path)
             .with_context(|| format!("failed to rename {} -> {}", tmp.display(), path.display()))?;
         Ok(path)
+    }
+
+    /// The attempt verified the runtime loaded every app, so record them as
+    /// activated the way a successful activation response would.
+    pub fn apply_live_attempt(&mut self) {
+        for app in &mut self.deployment.platform.apps {
+            app.activated = Some(true);
+        }
+        self.state.ci_passed = true;
+        self.state.activated = !self.deployment.platform.apps.is_empty();
     }
 
     /// Every app name recorded by the last deploy.

@@ -10,8 +10,9 @@ use serde::de::DeserializeOwned;
 
 use super::backend::http_client;
 use super::types::{
-    ActivateResult, BuildActivateInput, BuildDeployInput, BuildDeployResult, CliExchangeInput,
-    CliExchangeResult, CliStatusResult, DeploymentStatusResult,
+    ActivateResult, AttemptResult, BuildActivateInput, BuildAttemptAction, BuildDeployInput,
+    BuildDeployResult, CliExchangeInput, CliExchangeResult, CliStatusResult,
+    DeploymentStatusResult,
 };
 
 /// Result of checking a stored credential against Aomi Build.
@@ -77,6 +78,54 @@ impl BuildClient {
             .append_pair("platform", platform);
         self.send(self.http.get(url).bearer_auth(&self.bearer), "status")
             .await
+    }
+
+    /// Start the Project's deployment attempt for the tip of `branch` — the
+    /// same Manager dispatch the Build portal's Deploy button makes. When an
+    /// attempt is already running for the Project, that one is returned with
+    /// `existing = true` instead of a second being queued.
+    pub async fn start_attempt(&self, project_id: i64, branch: &str) -> Result<AttemptResult> {
+        self.post(
+            "/api/bff/launch/attempts",
+            &BuildAttemptAction {
+                action: "start",
+                project_id,
+                branch: Some(branch.to_string()),
+                run_id: None,
+            },
+            "deployment attempt",
+        )
+        .await
+    }
+
+    /// Read one attempt with its jobs, steps and bounded failure diagnostics.
+    pub async fn attempt(&self, project_id: i64, run_id: u64) -> Result<AttemptResult> {
+        let mut url = self.url("/api/bff/launch/attempts")?;
+        url.query_pairs_mut()
+            .append_pair("projectId", &project_id.to_string())
+            .append_pair("runId", &run_id.to_string());
+        self.send(
+            self.http.get(url).bearer_auth(&self.bearer),
+            "deployment attempt status",
+        )
+        .await
+    }
+
+    /// Cancel an attempt that has not started activating.
+    pub async fn cancel_attempt(&self, project_id: i64, run_id: u64) -> Result<()> {
+        let _: serde_json::Value = self
+            .post(
+                "/api/bff/launch/attempts",
+                &BuildAttemptAction {
+                    action: "cancel",
+                    project_id,
+                    branch: None,
+                    run_id: Some(run_id),
+                },
+                "deployment attempt cancel",
+            )
+            .await?;
+        Ok(())
     }
 
     pub async fn activate(&self, request: &BuildActivateInput) -> Result<ActivateResult> {
