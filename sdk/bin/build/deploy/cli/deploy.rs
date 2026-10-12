@@ -8,13 +8,17 @@ use clap::{Args, Subcommand};
 use super::release;
 use super::shared::{
     ACTIVATION_TOKEN_ENV, BUILD_TOKEN_ENV, bin_name, commit_on_remote, env_value, git_context,
-    head_branch, resolve_backend, worktree_dirty,
+    head_branch, remote_branch_tip, resolve_backend, worktree_dirty,
 };
 use super::{ActivateArgs, StatusArgs};
+use crate::deploy::attempt;
 use crate::deploy::platform::Platform;
 use crate::deploy::session::Session;
-use crate::deploy::state::LocalDeployment;
+use crate::deploy::state::{AttemptRef, LocalDeployment};
 use crate::deploy::types::BuildDeployInput;
+
+/// How long to follow a deployment attempt before telling the user to resume.
+const ATTEMPT_TIMEOUT_NOTE: &str = "the deployment attempt did not finish within 30 minutes";
 
 #[derive(Debug, Args, Clone)]
 pub struct DeployArgs {
@@ -66,6 +70,38 @@ pub(crate) async fn run_activate_step(args: ActivateArgs) -> Result<()> {
         .platform
         .clone()
         .unwrap_or_else(|| Platform::new(&state.deployment.platform.platform));
+    if let Some(attempt) = state
+        .attempt
+        .clone()
+        .filter(|_| attempt_owns_activation(&args))
+    {
+        // The attempt activates and verifies the release itself; follow it
+        // rather than activating the same release a second time.
+        let session = Session::open(&args.backend, &args.build_url).await?;
+        let mut state = state;
+        release::wait_via_attempt(
+            &session.client,
+            state.project_id,
+            &attempt,
+            "Deployment attempt",
+            format!(
+                "{ATTEMPT_TIMEOUT_NOTE}; rerun `{} deploy activate --path {}` later",
+                bin_name(),
+                args.path.display()
+            ),
+        )
+        .await?;
+        state.apply_live_attempt();
+        state.write(&git_root)?;
+        if !args.json {
+            println!(
+                "✓ {} is live on {platform}; activated by deployment attempt {}",
+                state.app_names().join(", "),
+                attempt.id
+            );
+        }
+        return Ok(());
+    }
     let timeout_message = format!(
         "deployment did not become ready within 30 minutes; rerun `{} deploy activate --path {}` later",
         bin_name(),
@@ -100,6 +136,15 @@ pub(crate) async fn run_activate_step(args: ActivateArgs) -> Result<()> {
         .await?;
     }
     args.run().await
+}
+
+/// An explicit token, explicit release tags or backend target tags ask for the
+/// admin/headless release-tag activation, not the attempt's own.
+fn attempt_owns_activation(args: &ActivateArgs) -> bool {
+    args.activation_token.is_none()
+        && env_value(ACTIVATION_TOKEN_ENV).is_none()
+        && args.release_tags.is_empty()
+        && args.target_tags.is_empty()
 }
 
 #[derive(Debug, Args, Clone, Default)]
@@ -167,6 +212,65 @@ impl Prepared {
             .deploy(&self.request, preflight)
             .await
             .map_err(|error| self.explain(error))
+    }
+
+    /// Whether the deployment attempt owns build and activation. An explicit
+    /// activation token or backend target tags select the admin/headless
+    /// activation path instead, which this command keeps unchanged.
+    fn uses_attempt(args: &DeployStepArgs) -> bool {
+        args.activation_token.is_none()
+            && env_value(ACTIVATION_TOKEN_ENV).is_none()
+            && args.target_tags.is_empty()
+    }
+
+    /// The branch whose tip is the commit being deployed. The attempt builds a
+    /// branch's tip, so a commit that is not the tip of the current branch on
+    /// the remote cannot be deployed through it — and finding that out here,
+    /// before anything is written, leaves no stray candidate behind.
+    fn attempt_branch(&self) -> Result<String> {
+        let commit = &self.request.source_ref;
+        let short = &commit[..commit.len().min(7)];
+        let branch = head_branch(&self.git_root).ok_or_else(|| {
+            anyhow!(
+                "cannot deploy commit {short} from a detached HEAD — the deployment attempt \
+                 builds the tip of a branch. Check out a branch whose tip is that commit."
+            )
+        })?;
+        match remote_branch_tip(&self.git_root, &branch) {
+            Some(tip) if tip == *commit => Ok(branch),
+            Some(tip) => bail!(
+                "commit {short} is not the tip of `{branch}` on origin ({}) — the deployment \
+                 attempt builds the branch tip. Push {short}, or deploy the branch as it is.",
+                &tip[..tip.len().min(7)]
+            ),
+            // The remote could not be asked; the attempt's own commit check
+            // still refuses a mismatch.
+            None => Ok(branch),
+        }
+    }
+
+    /// Start (or join) the Project's deployment attempt for this commit — the
+    /// same Manager dispatch the Build portal's Deploy button makes.
+    async fn start_attempt(&self, project_id: i64, branch: &str) -> Result<AttemptRef> {
+        let client = &self.session.client;
+        let started = client
+            .start_attempt(project_id, branch)
+            .await
+            .map_err(|error| self.explain(error))?;
+        if let Err(error) =
+            attempt::adopt(&started.attempt, started.existing, &self.request.source_ref)
+        {
+            // Never leave an attempt running for a commit nobody asked for.
+            if !started.existing {
+                let _ = client.cancel_attempt(project_id, started.attempt.id).await;
+            }
+            return Err(error);
+        }
+        Ok(AttemptRef {
+            id: started.attempt.id,
+            commit: self.request.source_ref.clone(),
+            url: started.attempt.url,
+        })
     }
 
     fn explain(&self, err: anyhow::Error) -> anyhow::Error {
@@ -264,6 +368,8 @@ impl DeployStepArgs {
     pub async fn run_full_lifecycle(self) -> Result<()> {
         let mut prepared = self.prepare(!self.json).await?;
         let quiet = self.json;
+        let via_attempt = Prepared::uses_attempt(&self);
+        let branch = via_attempt.then(|| prepared.attempt_branch()).transpose()?;
 
         let preflight = prepared.deploy(true).await?;
         let platform = Platform::new(&preflight.deployment.platform.platform);
@@ -300,38 +406,66 @@ impl DeployStepArgs {
             );
         }
 
-        release::wait_via_build(
-            &prepared.session.client,
-            &platform,
-            &state,
-            "[3/4] Release build",
-            format!(
-                "deployment did not become ready within 30 minutes; resume with `{} deploy activate --path {}`",
-                bin_name(),
-                self.path.display()
-            ),
-        )
-        .await?;
-
-        if !quiet {
-            println!("[4/4] Activate        …");
-        }
-        let activate_args = ActivateArgs {
-            platform: Some(platform.clone()),
-            backend: prepared.session.backend_url().map(str::to_string),
-            build_url: Some(prepared.session.build_url().to_string()),
-            activation_token: self.activation_token.clone(),
-            target_tags: self.target_tags.clone(),
-            path: self.path.clone(),
-            json: self.json,
-            fix_sdk: self.fix_sdk,
-            ..Default::default()
-        };
-        let response = activate_args
-            .activate_with_state(&prepared.git_root, &mut state)
+        if let Some(branch) = branch {
+            // Build, publish, activate and runtime verification all belong to
+            // the attempt; activating again afterwards would be a second
+            // activation of the same release.
+            let attempt = prepared
+                .start_attempt(preflight.project_id, &branch)
+                .await?;
+            state.attempt = Some(attempt.clone());
+            state.write(&prepared.git_root)?;
+            release::wait_via_attempt(
+                &prepared.session.client,
+                preflight.project_id,
+                &attempt,
+                "[3/4] Build · activate",
+                format!(
+                    "{ATTEMPT_TIMEOUT_NOTE}; resume with `{} deploy activate --path {}`",
+                    bin_name(),
+                    self.path.display()
+                ),
+            )
             .await?;
-        state.write(&prepared.git_root)?;
-        ActivateArgs::print_activation(&response, self.json)?;
+            state.apply_live_attempt();
+            state.write(&prepared.git_root)?;
+            if !quiet {
+                println!("[4/4] Verify runtime  ✓ release loaded");
+            }
+        } else {
+            release::wait_via_build(
+                &prepared.session.client,
+                &platform,
+                &state,
+                "[3/4] Release build",
+                format!(
+                    "deployment did not become ready within 30 minutes; resume with `{} deploy activate --path {}`",
+                    bin_name(),
+                    self.path.display()
+                ),
+            )
+            .await?;
+
+            if !quiet {
+                println!("[4/4] Activate        …");
+            }
+            let activate_args = ActivateArgs {
+                platform: Some(platform.clone()),
+                backend: prepared.session.backend_url().map(str::to_string),
+                build_url: Some(prepared.session.build_url().to_string()),
+                activation_token: self.activation_token.clone(),
+                target_tags: self.target_tags.clone(),
+                path: self.path.clone(),
+                json: self.json,
+                fix_sdk: self.fix_sdk,
+                ..Default::default()
+            };
+            let response = activate_args
+                .activate_with_state(&prepared.git_root, &mut state)
+                .await?;
+            state.write(&prepared.git_root)?;
+            ActivateArgs::print_activation(&response, self.json)?;
+        }
         if !quiet {
             let apps = state.app_names().join(", ");
             let live = if state.app_names().len() == 1 {
@@ -371,6 +505,9 @@ impl DeployStepArgs {
     async fn run_step(self, preflight: bool) -> Result<()> {
         // Preflight's stdout is the JSON plan; keep the human card off it.
         let mut prepared = self.prepare(!self.json && !preflight).await?;
+        let branch = (!preflight && Prepared::uses_attempt(&self))
+            .then(|| prepared.attempt_branch())
+            .transpose()?;
         // A first deploy has no project id yet; preflight resolves it.
         let response = if preflight || prepared.request.project_id.is_none() {
             let resolved = prepared.deploy(true).await?;
@@ -384,10 +521,15 @@ impl DeployStepArgs {
             prepared.deploy(false).await?
         };
 
-        let git_root = prepared.git_root;
+        let git_root = prepared.git_root.clone();
         let platform = Platform::new(&response.deployment.platform.platform);
-        let state = LocalDeployment::from_build_deploy(response);
+        let mut state = LocalDeployment::from_build_deploy(response);
         let path = state.write(&git_root)?;
+        if let Some(branch) = branch {
+            let attempt = prepared.start_attempt(state.project_id, &branch).await?;
+            state.attempt = Some(attempt);
+            state.write(&git_root)?;
+        }
 
         if self.json {
             println!("{}", serde_json::to_string_pretty(&state)?);
@@ -416,11 +558,25 @@ impl DeployStepArgs {
             if let Some(project_url) = &state.project_url {
                 println!("  project       : {project_url}");
             }
-            println!();
-            println!("Next: track CI, then activate once it is green:");
             let bin = bin_name();
-            println!("  {bin} status --path {}", self.path.display());
-            println!("  {bin} activate --path {}", self.path.display());
+            println!();
+            if let Some(attempt) = &state.attempt {
+                println!(
+                    "  attempt       : run {} {}",
+                    attempt.id,
+                    attempt.url.as_deref().unwrap_or_default()
+                );
+                println!("Next: the attempt builds, activates and verifies the release:");
+                println!("  {bin} status --path {}", self.path.display());
+                println!(
+                    "  {bin} activate --path {}   (waits for the attempt; no second activation)",
+                    self.path.display()
+                );
+            } else {
+                println!("Next: track CI, then activate once it is green:");
+                println!("  {bin} status --path {}", self.path.display());
+                println!("  {bin} activate --path {}", self.path.display());
+            }
         }
         Ok(())
     }

@@ -398,3 +398,73 @@ pub struct PlatformAppStatus {
 fn is_false(b: &bool) -> bool {
     !*b
 }
+
+// ── Deployment attempts ────────────────────────────────────────────────────
+//
+// The Build portal builds, publishes, activates and verifies a deployment
+// through one GitHub-owned attempt (`deploy-project.yml`) that Manager
+// dispatches for the Project. These mirror `/api/bff/launch/attempts`.
+
+/// Body of `POST /api/bff/launch/attempts`.
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildAttemptAction {
+    pub action: &'static str,
+    pub project_id: i64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<u64>,
+}
+
+/// `{ attempt, existing }` from starting an attempt, or `{ attempt }` from
+/// reading one.
+#[derive(Debug, Clone, Deserialize)]
+pub struct AttemptResult {
+    pub attempt: Attempt,
+    #[serde(default)]
+    pub existing: bool,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Attempt {
+    pub id: u64,
+    /// Source commit the attempt builds, from the run title.
+    #[serde(default)]
+    pub commit: Option<String>,
+    #[serde(default)]
+    pub branch: Option<String>,
+    /// GitHub run status: `queued` | `in_progress` | `completed` | …
+    pub status: String,
+    /// GitHub run conclusion once completed: `success` | `failure` | …
+    #[serde(default)]
+    pub conclusion: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Present on a single-attempt read only.
+    #[serde(default)]
+    pub jobs: Vec<AttemptJob>,
+    #[serde(default)]
+    pub diagnostics: Vec<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
+pub struct AttemptJob {
+    pub name: String,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub conclusion: Option<String>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub steps: Vec<AttemptStep>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize)]
+pub struct AttemptStep {
+    pub name: String,
+    #[serde(default)]
+    pub conclusion: Option<String>,
+}

@@ -18,7 +18,53 @@ pub struct StatusResult {
     pub project_url: Option<String>,
     pub backend: Option<String>,
     pub deployment: DeploymentBackendStatus,
+    /// The deployment attempt that owns build and activation, when this
+    /// deployment was started through one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub attempt: Option<AttemptStatus>,
     pub apps: Vec<AppStatus>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AttemptStatus {
+    pub id: u64,
+    /// Running stage, `completed`, or `completed (<conclusion>)`.
+    pub stage: String,
+    pub url: Option<String>,
+    /// Failed stage, step and diagnostics, when the attempt did not go live.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure: Option<String>,
+}
+
+impl AttemptStatus {
+    /// Read the attempt from Aomi Build; a read failure is reported as the
+    /// stage rather than failing the whole status report.
+    pub async fn fetch(
+        client: &crate::deploy::build_client::BuildClient,
+        project_id: i64,
+        recorded: &crate::deploy::state::AttemptRef,
+    ) -> Self {
+        match client.attempt(project_id, recorded.id).await {
+            Ok(result) => {
+                let attempt = result.attempt;
+                let failure = (attempt.status == "completed")
+                    .then(|| crate::deploy::attempt::verdict(&attempt).err())
+                    .flatten();
+                Self {
+                    id: recorded.id,
+                    stage: crate::deploy::attempt::stage(&attempt),
+                    url: attempt.url.or_else(|| recorded.url.clone()),
+                    failure,
+                }
+            }
+            Err(error) => Self {
+                id: recorded.id,
+                stage: format!("unknown ({error})"),
+                url: recorded.url.clone(),
+                failure: None,
+            },
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -108,6 +154,7 @@ impl StatusResult {
             project_url: state.project_url.clone(),
             backend: backend_url,
             deployment,
+            attempt: None,
             apps,
         }
     }
@@ -152,6 +199,19 @@ impl StatusResult {
             }
             DeploymentBackendStatus::Unknown { detail } => {
                 let _ = writeln!(out, "  deploy state  : unknown ({detail})");
+            }
+        }
+        if let Some(attempt) = &self.attempt {
+            let _ = writeln!(
+                out,
+                "  attempt       : run {} · {}",
+                attempt.id, attempt.stage
+            );
+            if let Some(url) = &attempt.url {
+                let _ = writeln!(out, "  attempt logs  : {url}");
+            }
+            if let Some(failure) = &attempt.failure {
+                let _ = writeln!(out, "  attempt failed: {failure}");
             }
         }
         for app in &self.apps {
@@ -238,6 +298,7 @@ mod tests {
                 message: Some("release build failed".into()),
                 ci_url: Some("https://github.com/aomi-labs/community-apps/actions/runs/1".into()),
             },
+            attempt: None,
             apps: vec![],
         };
         assert!(report.render().contains(

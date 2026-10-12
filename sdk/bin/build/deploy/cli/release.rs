@@ -11,10 +11,11 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Result, bail};
 
+use crate::deploy::attempt::{self, AttemptOutcome};
 use crate::deploy::build_client::BuildClient;
 use crate::deploy::flow::{self, DeployReady};
 use crate::deploy::platform::Platform;
-use crate::deploy::state::LocalDeployment;
+use crate::deploy::state::{AttemptRef, LocalDeployment};
 
 const RELEASE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 
@@ -26,7 +27,7 @@ pub(crate) async fn wait_via_build(
     label: &str,
     timeout_message: String,
 ) -> Result<()> {
-    let progress = Progress::start(label, pr_url(deployment));
+    let progress = Progress::start(label, "the release build", pr_url(deployment));
     let outcome = flow::poll_build_deployment_ready(
         client,
         platform.as_str(),
@@ -48,7 +49,7 @@ pub(crate) async fn wait_via_backend(
     label: &str,
     timeout_message: String,
 ) -> Result<()> {
-    let progress = Progress::start(label, pr_url(deployment));
+    let progress = Progress::start(label, "the release build", pr_url(deployment));
     let outcome = flow::poll_deployment_ready_with_pr(
         backend_url,
         token,
@@ -61,6 +62,37 @@ pub(crate) async fn wait_via_backend(
     .await?;
     progress.finish(&outcome);
     settle(outcome, deployment, timeout_message)
+}
+
+/// Follow the deployment attempt through build, publish, activation and runtime
+/// verification. Success means the release is live; there is nothing left to
+/// activate afterwards.
+pub(crate) async fn wait_via_attempt(
+    client: &BuildClient,
+    project_id: i64,
+    attempt: &AttemptRef,
+    label: &str,
+    timeout_message: String,
+) -> Result<()> {
+    let progress = Progress::start(
+        label,
+        "the build, activation and runtime check",
+        attempt.url.as_deref(),
+    );
+    let outcome = attempt::follow(client, project_id, attempt.id, RELEASE_TIMEOUT, |state| {
+        progress.update(state)
+    })
+    .await?;
+    progress.finish(&match &outcome {
+        AttemptOutcome::Live => DeployReady::Ready,
+        AttemptOutcome::Failed(detail) => DeployReady::Failed(detail.clone()),
+        AttemptOutcome::TimedOut => DeployReady::TimedOut,
+    });
+    match outcome {
+        AttemptOutcome::Live => Ok(()),
+        AttemptOutcome::Failed(detail) => bail!("{detail}"),
+        AttemptOutcome::TimedOut => bail!("{timeout_message}"),
+    }
 }
 
 /// The long wait, made visible: on a TTY a spinner line redrawn in place with
@@ -76,9 +108,9 @@ struct Progress {
 }
 
 impl Progress {
-    fn start(label: &str, pr: Option<&str>) -> Self {
+    fn start(label: &str, waiting_for: &str, pr: Option<&str>) -> Self {
         let interactive = std::io::stdout().is_terminal();
-        println!("{label}   waiting for the release build (up to 30 min, Ctrl-C to stop)");
+        println!("{label}   waiting for {waiting_for} (up to 30 min, Ctrl-C to stop)");
         if let Some(pr) = pr {
             println!("        watching {pr}");
         }

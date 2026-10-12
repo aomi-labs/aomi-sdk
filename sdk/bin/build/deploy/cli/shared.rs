@@ -246,6 +246,17 @@ pub(crate) fn commit_on_remote(git_root: &Path, commit: &str) -> Option<bool> {
         .map(|out| !out.trim().is_empty())
 }
 
+/// Tip commit of `branch` on `origin`, as the remote reports it. `None` when
+/// the remote cannot be asked or has no such branch.
+pub(crate) fn remote_branch_tip(git_root: &Path, branch: &str) -> Option<String> {
+    let refname = format!("refs/heads/{branch}");
+    let out = git_output_at(git_root, ["ls-remote", "origin", refname.as_str()]).ok()?;
+    out.lines()
+        .find(|line| line.split_whitespace().nth(1) == Some(refname.as_str()))
+        .and_then(|line| line.split_whitespace().next())
+        .map(str::to_string)
+}
+
 fn normalize_start_dir(path: &Path) -> Result<PathBuf> {
     let path = if path.as_os_str().is_empty() {
         Path::new(".")
