@@ -1,5 +1,17 @@
 # Changelog
 
+## 5.1.2
+
+### Fixed
+
+- `aomi-build deploy` now starts and follows the Project's deployment attempt,
+  including retry-safe deployment creation, instead of the retired install path.
+
+### Compatibility
+
+- The SDK and CLI still share one version. Hosts and plugins must be rebuilt
+  against exactly SDK 5.1.2; the exact-version compatibility gate is unchanged.
+
 ## 5.1.1
 
 ### Added
