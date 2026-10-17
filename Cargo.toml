@@ -8,6 +8,7 @@ members = [
     "ext",
 ]
 exclude = [
+    "apps/solana-defi",
     "apps/across",
     "apps/admin",
     "apps/binance",
