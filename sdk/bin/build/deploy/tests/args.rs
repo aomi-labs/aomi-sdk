@@ -3,6 +3,49 @@
 
 use super::*;
 
+#[test]
+fn builder_recovery_and_operating_commands_parse_without_local_state() {
+    for args in [
+        vec![
+            "status",
+            "--project-id",
+            "1664",
+            "--commit",
+            "abc1234",
+            "--json",
+        ],
+        vec![
+            "activate",
+            "--project-id",
+            "1664",
+            "--release-tag",
+            "apps-release",
+        ],
+        vec!["deploy", "--activate", "--smoke"],
+        vec!["deploy", "--build-only"],
+        vec!["upgrade", "--version", "5.1.1", "--dry-run"],
+        vec!["logs", "--project-id", "1664", "--limit", "10"],
+        vec!["env", "list", "--app-id", "10"],
+        vec![
+            "env",
+            "set",
+            "--app-id",
+            "10",
+            "KEY",
+            "--file",
+            "secret.txt",
+        ],
+        vec!["env", "unset", "--app-id", "10", "KEY"],
+    ] {
+        let mut command = vec!["aomi-build"];
+        command.extend(args);
+        crate::Cli::try_parse_from(command).expect("parse builder recovery command");
+    }
+    assert!(
+        crate::Cli::try_parse_from(["aomi-build", "deploy", "--build-only", "--smoke"]).is_err()
+    );
+}
+
 // ── deploy: arg parsing ─────────────────────────────────────────────────────
 
 #[test]

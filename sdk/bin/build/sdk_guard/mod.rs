@@ -226,7 +226,7 @@ pub async fn ensure_project_sdk(
     if from_backend && required != aomi_sdk::AOMI_SDK_VERSION {
         eprintln!(
             "  ! this aomi-build was built with SDK {} but the backend runs {required} — \
-             update aomi-build if checks or codegen misbehave",
+             run `aomi-build upgrade --version {required}` before compile or codegen",
             aomi_sdk::AOMI_SDK_VERSION
         );
     }

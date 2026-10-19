@@ -77,10 +77,10 @@ struct Progress {
 
 impl Progress {
     fn start(label: &str, pr: Option<&str>) -> Self {
-        let interactive = std::io::stdout().is_terminal();
-        println!("{label}   waiting for the release build (up to 30 min, Ctrl-C to stop)");
+        let interactive = std::io::stderr().is_terminal();
+        eprintln!("{label}   waiting for the release build (up to 30 min, Ctrl-C to stop)");
         if let Some(pr) = pr {
-            println!("        watching {pr}");
+            eprintln!("        watching {pr}");
         }
         let state = Arc::new(Mutex::new(String::from("pending")));
         let started = Instant::now();
@@ -89,13 +89,13 @@ impl Progress {
             tokio::spawn(async move {
                 const FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
                 for frame in (0..FRAMES.len()).cycle() {
-                    print!(
+                    eprint!(
                         "\r\x1b[2K        {} {} · {}",
                         FRAMES[frame],
                         state.lock().expect("progress state poisoned"),
                         fmt_elapsed(started.elapsed())
                     );
-                    let _ = std::io::stdout().flush();
+                    let _ = std::io::stderr().flush();
                     tokio::time::sleep(Duration::from_millis(120)).await;
                 }
             })
@@ -113,7 +113,7 @@ impl Progress {
         if self.interactive {
             *self.state.lock().expect("progress state poisoned") = state.to_string();
         } else {
-            println!("        build: {state}");
+            eprintln!("        build: {state}");
         }
     }
 
@@ -121,11 +121,11 @@ impl Progress {
         self.stop();
         let elapsed = fmt_elapsed(self.started.elapsed());
         match outcome {
-            DeployReady::Ready => println!("{}   ✓ ready in {elapsed}", self.label),
-            DeployReady::Failed(_) => println!("{}   ✗ failed after {elapsed}", self.label),
-            DeployReady::NoCi(_) => println!("{}   ✗ no CI ran ({elapsed})", self.label),
+            DeployReady::Ready => eprintln!("{}   ✓ ready in {elapsed}", self.label),
+            DeployReady::Failed(_) => eprintln!("{}   ✗ failed after {elapsed}", self.label),
+            DeployReady::NoCi(_) => eprintln!("{}   ✗ no CI ran ({elapsed})", self.label),
             DeployReady::TimedOut => {
-                println!("{}   ✗ still building after {elapsed}", self.label)
+                eprintln!("{}   ✗ still building after {elapsed}", self.label)
             }
         }
     }
@@ -133,8 +133,8 @@ impl Progress {
     fn stop(&mut self) {
         if let Some(ticker) = self.ticker.take() {
             ticker.abort();
-            print!("\r\x1b[2K");
-            let _ = std::io::stdout().flush();
+            eprint!("\r\x1b[2K");
+            let _ = std::io::stderr().flush();
         }
     }
 }

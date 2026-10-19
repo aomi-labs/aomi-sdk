@@ -66,7 +66,7 @@ impl Session {
         // actually establish it: which binary, which environment, who. This is
         // the only line that tells a user mid-deploy whether they're pointed at
         // staging or production.
-        println!(
+        eprintln!(
             "✓ aomi-build {} · {} · @{}\n",
             aomi_sdk::AOMI_SDK_VERSION,
             session.env_label(),

@@ -84,6 +84,48 @@ impl BuildClient {
             .await
     }
 
+    pub async fn refresh(&self) -> Result<CliExchangeResult> {
+        self.post(
+            "/api/bff/cli/refresh",
+            &serde_json::json!({}),
+            "login renewal",
+        )
+        .await
+    }
+
+    pub async fn get_json(
+        &self,
+        path: &str,
+        query: &[(&str, String)],
+    ) -> Result<serde_json::Value> {
+        let mut url = self.url(path)?;
+        url.query_pairs_mut()
+            .extend_pairs(query.iter().map(|(key, value)| (*key, value.as_str())));
+        self.send(self.http.get(url).bearer_auth(&self.bearer), "read")
+            .await
+    }
+
+    pub async fn post_json(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        self.post(path, body, "write").await
+    }
+
+    pub async fn delete_json(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+    ) -> Result<serde_json::Value> {
+        let url = self.url(path)?;
+        self.send(
+            self.http.delete(url).bearer_auth(&self.bearer).json(body),
+            "delete",
+        )
+        .await
+    }
+
     /// Probe the saved credential, separating "Build says this login is no
     /// longer valid" from "Build could not be reached".
     ///

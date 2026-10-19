@@ -14,6 +14,8 @@ use crate::deploy::status::{DeploymentBackendStatus, StatusResult};
 
 #[derive(Debug, Args, Clone)]
 pub struct StatusArgs {
+    #[command(flatten)]
+    pub selector: super::selector::DeploymentSelector,
     /// Backend base URL (default: `AOMI_BACKEND_URL`). Pass `--backend ''` to
     /// skip the backend probe.
     #[arg(long, value_name = "URL")]
@@ -39,14 +41,25 @@ pub struct StatusArgs {
 
 impl StatusArgs {
     pub async fn run(self) -> Result<()> {
-        let (git_root, _) = git_context(&self.path)?;
-        let state = LocalDeployment::read(&git_root)?.ok_or_else(|| {
-            anyhow!(
-                "no .aomi/deployment.json at {} — run `{} deploy` first",
-                git_root.display(),
-                bin_name()
-            )
-        })?;
+        let local = git_context(&self.path)
+            .ok()
+            .map(|(root, _)| LocalDeployment::read(&root))
+            .transpose()?
+            .flatten();
+        let state = if self.selector.explicit() || local.is_none() {
+            self.selector
+                .resolve(&self.path, &self.backend, &self.build_url)
+                .await?
+                .1
+        } else {
+            local.ok_or_else(|| {
+                anyhow!(
+                    "no .aomi/deployment.json at {} — run `{} deploy` first",
+                    self.path.display(),
+                    bin_name()
+                )
+            })?
+        };
 
         // `--backend ''` explicitly opts out; otherwise flag/env.
         let backend_url = match &self.backend {
@@ -66,16 +79,58 @@ impl StatusArgs {
         };
         let mut report = StatusResult::collect(&state, backend_url, token).await;
         if let Some(build_url) = build_url {
-            let status = Session::at(&build_url, None)
-                .await?
+            let session = Session::at(&build_url, None).await?;
+            let status = session
                 .client
                 .status(&state.deployment.platform.platform, &state.deployment.id)
                 .await?;
+            if let Some(manifest) = &status.deployment {
+                if manifest.source.repository_id != state.deployment.source.repository_id
+                    || manifest.source.commit_hash != state.deployment.source.commit_hash
+                {
+                    anyhow::bail!(
+                        "local deployment cache does not match this environment; select --project-id and --commit explicitly"
+                    );
+                }
+            }
             report.deployment = DeploymentBackendStatus::Found {
                 state: status.state,
                 message: status.message,
                 ci_url: status.ci.and_then(|ci| ci.url),
             };
+            let live = session
+                .client
+                .get_json(
+                    "/api/bff/launch/apps",
+                    &[("projectId", state.project_id.to_string())],
+                )
+                .await?;
+            for app in &mut report.apps {
+                if let Some(row) = live["apps"]
+                    .as_array()
+                    .and_then(|rows| rows.iter().find(|row| row["name"] == app.name))
+                {
+                    app.application_id = row["id"].as_i64();
+                    let matches = row["app_release_tag"].as_str() == Some(app.release_tag.as_str());
+                    let loaded = matches && row["loaded"].as_bool() == Some(true);
+                    app.backend = crate::deploy::status::BackendAppStatus::Found {
+                        is_active: matches && row["is_active"].as_bool() == Some(true),
+                        artifact_ready: loaded.then_some(true),
+                        loaded,
+                    };
+                }
+            }
+            report.activated = !report.apps.is_empty()
+                && report.apps.iter().all(|app| {
+                    matches!(
+                        app.backend,
+                        crate::deploy::status::BackendAppStatus::Found {
+                            is_active: true,
+                            loaded: true,
+                            ..
+                        }
+                    )
+                });
         }
         if self.json {
             println!("{}", serde_json::to_string_pretty(&report)?);

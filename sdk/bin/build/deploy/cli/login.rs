@@ -1,6 +1,6 @@
 //! `login` — authenticate the local CLI as a verified GitHub Builder.
 
-use std::io::{ErrorKind, Read, Write};
+use std::io::{ErrorKind, IsTerminal, Read, Write};
 use std::net::TcpListener;
 use std::time::{Duration, Instant};
 
@@ -39,6 +39,12 @@ pub struct LoginArgs {
 
 impl LoginArgs {
     pub async fn run(self) -> Result<()> {
+        if !self.no_browser && (!std::io::stdin().is_terminal() || !std::io::stderr().is_terminal())
+        {
+            bail!(
+                "browser login requires a terminal; set AOMI_BUILD_TOKEN for automation, or explicitly use login --no-browser to complete the printed URL manually"
+            );
+        }
         let backend_url = resolve_backend(&self.backend);
         let build_url =
             resolve_build_url(&self.build_url, backend_url.as_deref()).ok_or_else(|| {
@@ -86,9 +92,29 @@ pub async fn authenticate_with_options(build_url: &str, no_browser: bool) -> Res
     let env_token = env_value(BUILD_TOKEN_ENV);
     let saved_token = AomiConfig::load().cli_access_token;
     if let Some(token) = env_token.clone().or(saved_token) {
-        let client = BuildClient::new(build_url, token)?;
+        let mut client = BuildClient::new(build_url, token.clone())?;
         match client.probe_identity().await {
             AuthProbe::SignedIn(identity) => {
+                if env_token.is_none() && needs_renewal(&token) {
+                    match client.refresh().await {
+                        Ok(renewed) => {
+                            client = BuildClient::new(build_url, renewed.access_token.clone())?;
+                            AomiConfig::update(|config| {
+                                apply_identity(
+                                    config,
+                                    build_url,
+                                    &identity,
+                                    Some(renewed.access_token),
+                                )
+                            })?;
+                        }
+                        // Keep a still-valid credential when an older Build deployment
+                        // lacks renewal or the renewal service is temporarily unavailable.
+                        Err(_) => eprintln!(
+                            "CLI login renewal unavailable; continuing with the verified saved login."
+                        ),
+                    }
+                }
                 AomiConfig::update(|config| apply_identity(config, build_url, &identity, None))?;
                 return Ok(Authenticated { client, identity });
             }
@@ -114,9 +140,35 @@ pub async fn authenticate_with_options(build_url: &str, no_browser: bool) -> Res
         );
     }
 
-    println!("You need to log in to Aomi Build.");
+    if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
+        bail!(
+            "Aomi Build login is missing or expired. Noninteractive commands cannot open a browser. Run `aomi-build login --build-url {build_url}` interactively, or set {BUILD_TOKEN_ENV} for headless automation."
+        );
+    }
+    eprintln!("You need to log in to Aomi Build.");
     let (authenticated, _) = browser_login_and_save(build_url, None, no_browser).await?;
     Ok(authenticated)
+}
+
+fn needs_renewal(token: &str) -> bool {
+    let Some(payload) = token
+        .split('.')
+        .nth(1)
+        .and_then(|part| URL_SAFE_NO_PAD.decode(part).ok())
+    else {
+        return false;
+    };
+    let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&payload) else {
+        return false;
+    };
+    let Some(expiry) = payload.get("exp").and_then(|value| value.as_u64()) else {
+        return false;
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    expiry.saturating_sub(now) < 7 * 24 * 60 * 60
 }
 
 struct LoginIdentity {
@@ -283,7 +335,25 @@ fn write_callback_response(
 
 #[cfg(test)]
 mod tests {
-    use super::completion_url;
+    use super::{completion_url, needs_renewal};
+    use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+
+    #[test]
+    fn only_credentials_near_expiry_request_renewal() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let token = |expiry| {
+            format!(
+                "header.{}.signature",
+                URL_SAFE_NO_PAD.encode(serde_json::json!({"exp":expiry}).to_string())
+            )
+        };
+        assert!(needs_renewal(&token(now + 3600)));
+        assert!(!needs_renewal(&token(now + 30 * 86400)));
+        assert!(!needs_renewal("not-a-jwt"));
+    }
 
     #[test]
     fn completion_url_exposes_only_the_result() {

@@ -1,5 +1,26 @@
 # aomi-build
 
+## Recover and operate a hosted deployment
+
+`aomi-build deploy --activate --smoke --backend <api-origin>` builds, waits for the published release, activates it, verifies loaded state, and starts a public guest smoke chat against the returned application ID. Known staging/production Build URLs select their corresponding Chat origin; custom environments need `--smoke-url <portal-origin>`. Use `--build-only` to stop at ready to promote.
+
+Status and activation can resolve owned server deployments without `.aomi/deployment.json`:
+
+```sh
+aomi-build status --project-id <id> --commit <full-source-sha> --backend <api-origin> --json
+aomi-build activate --project-id <id> --deployment-id <deployment-id> --backend <api-origin>
+aomi-build activate --project-id <id> --release-tag <published-tag> --backend <api-origin>
+aomi-build logs --project-id <id> --backend <api-origin>
+aomi-build env list --app-id <application-id> --backend <api-origin>
+aomi-build env set --app-id <application-id> API_KEY --file <secret-file> --backend <api-origin>
+aomi-build env unset --app-id <application-id> API_KEY --backend <api-origin>
+aomi-build upgrade --backend <api-origin>
+```
+
+`--repo owner/repo` can select a unique owned project instead of its ID. Commit lookup searches its recent 100 deployments; a deployment ID can select an older record directly. Explicit release tags activate directly without a CI poll; the backend still verifies artifacts, SDK ABI and ownership. Specify `--platform` for a non-community platform.
+
+Secret values are read from a file or stdin, never from arguments or printed responses; undeclared keys are supported. Noninteractive commands fail immediately when login is missing or expired. Use `AOMI_BUILD_TOKEN` for automation. Valid saved logins renew before expiry; a failed renewal preserves the verified credential. The compile command returns an actionable SDK compatibility error if a built plugin cannot be loaded. `upgrade --version <version> --dry-run` prints the exact matching CLI install command.
+
 CLI for scaffolding, building, deploying, activating, and testing Aomi apps.
 
 `aomi-build` is the deterministic Rust CLI and lightweight wizard for codegen,
