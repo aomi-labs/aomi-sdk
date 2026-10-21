@@ -103,6 +103,7 @@ jobs:
           plugins_dir = repo / "plugins"
           sdk_toml = tomllib.loads((repo / "sdk" / "Cargo.toml").read_text())
           sdk_version = sdk_toml["package"]["version"]
+          ffi_version = sdk_toml["package"]["metadata"]["aomi"]["ffi_version"]
 
           app_metadata = {}
           for app_toml_path in sorted((repo / "apps").glob("*/Cargo.toml")):
@@ -135,6 +136,7 @@ jobs:
           manifest = {
               "app_release_tag": "${{ needs.resolve.outputs.tag }}",
               "sdk_version": sdk_version,
+              "ffi_version": ffi_version,
               "target": "${{ matrix.target }}",
               "commit": "${{ github.sha }}",
               "plugins": plugins,

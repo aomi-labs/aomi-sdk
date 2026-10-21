@@ -32,6 +32,8 @@ jobs:
         run: cargo test -p aomi-sdk --test ffi_compatibility -- --nocapture
       - name: Check FFI formatting
         run: cargo fmt --all -- --check
+      - name: Check release FFI policy
+        run: python3 -m unittest discover -s scripts -p 'test_release_ffi.py'
 
   check:
     name: Check & Test
