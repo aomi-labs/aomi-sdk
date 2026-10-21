@@ -7,8 +7,8 @@ use eyre::{Result, bail};
 pub const AOMI_FFI_VERSION: u32 = 1;
 
 /// Optional extensions understood by this FFI implementation. Runtime policy
-/// may still refuse an operation; supporting a capability never grants access.
-pub const AOMI_FFI_CAPABILITIES: &[&str] = &[
+/// may still refuse an operation; supporting an interface never grants access.
+pub const AOMI_FFI_INTERFACES: &[&str] = &[
     "async_tools_v1",
     "routes_v1",
     "app_skills_v1",
@@ -43,10 +43,10 @@ pub fn validate_ffi_version(ffi_version: Option<u32>, sdk_version: &str) -> Resu
     Ok(version)
 }
 
-pub fn validate_ffi_capabilities(required: &[String]) -> Result<()> {
-    for capability in required {
-        if !AOMI_FFI_CAPABILITIES.contains(&capability.as_str()) {
-            bail!("unsupported required FFI capability: {capability}");
+pub fn validate_ffi_interfaces(required: &[String]) -> Result<()> {
+    for interface in required {
+        if !AOMI_FFI_INTERFACES.contains(&interface.as_str()) {
+            bail!("unsupported required FFI interface: {interface}");
         }
     }
     Ok(())
@@ -72,8 +72,8 @@ mod tests {
     }
 
     #[test]
-    fn unknown_required_capabilities_fail_closed() {
-        assert!(validate_ffi_capabilities(&["routes_v1".into()]).is_ok());
-        assert!(validate_ffi_capabilities(&["future_permission_v2".into()]).is_err());
+    fn unknown_required_interfaces_fail_closed() {
+        assert!(validate_ffi_interfaces(&["routes_v1".into()]).is_ok());
+        assert!(validate_ffi_interfaces(&["future_permission_v2".into()]).is_err());
     }
 }

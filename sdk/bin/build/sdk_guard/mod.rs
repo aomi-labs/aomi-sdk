@@ -336,15 +336,12 @@ pub async fn resolve_required_sdk_version(
         return Ok(version);
     }
     if let Some(url) = backend_url.map(str::trim).filter(|v| !v.is_empty()) {
-        return fetch_backend_sdk_version(url)
+        return fetch_backend_compatibility(url)
             .await
+            .map(|backend| backend.sdk_version)
             .with_context(|| format!("failed to fetch backend SDK version from {url}"));
     }
     Ok(aomi_sdk::AOMI_SDK_VERSION.to_string())
-}
-
-async fn fetch_backend_sdk_version(base_url: &str) -> Result<String> {
-    Ok(fetch_backend_compatibility(base_url).await?.sdk_version)
 }
 
 #[derive(serde::Deserialize)]
@@ -400,16 +397,13 @@ async fn fetch_backend_compatibility(base_url: &str) -> Result<BackendCompatibil
     if !status.is_success() {
         bail!("server-tags endpoint returned {status}: {}", text.trim());
     }
-    let parsed: BackendCompatibility =
+    let mut parsed: BackendCompatibility =
         serde_json::from_str(&text).context("server-tags response was not valid JSON")?;
-    let version = parsed.sdk_version.trim().to_string();
-    if version.is_empty() {
+    parsed.sdk_version = parsed.sdk_version.trim().to_string();
+    if parsed.sdk_version.is_empty() {
         bail!("server-tags response did not include sdk_version");
     }
-    Ok(BackendCompatibility {
-        sdk_version: version,
-        ffi_version: parsed.ffi_version,
-    })
+    Ok(parsed)
 }
 
 mod inspect;

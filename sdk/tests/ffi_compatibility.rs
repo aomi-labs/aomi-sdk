@@ -128,6 +128,15 @@ fn probe_manifest() -> serde_json::Value {
     })
 }
 
+/// Load a probe the host must reject; returns the full error chain.
+fn probe_error(ffi: u32, manifest: serde_json::Value) -> String {
+    let (_directory, library) = probe(ffi, manifest);
+    let error = unsafe { DynFnHandle::load(&library) }
+        .err()
+        .expect("probe must be rejected");
+    format!("{error:#}")
+}
+
 #[test]
 fn independent_sdk_release_loads_when_ffi_matches() {
     let (_directory, library) = probe(1, probe_manifest());
@@ -137,28 +146,17 @@ fn independent_sdk_release_loads_when_ffi_matches() {
 
 #[test]
 fn unsupported_exports_and_inconsistent_manifests_are_rejected() {
-    let (_directory, library) = probe(2, probe_manifest());
-    let error = unsafe { DynFnHandle::load(&library) }.err().unwrap();
-    assert!(format!("{error:#}").contains("FFI version mismatch"));
+    assert!(probe_error(2, probe_manifest()).contains("FFI version mismatch"));
 
     let mut manifest = probe_manifest();
     manifest["ffi_version"] = serde_json::json!(2);
-    let (_directory, library) = probe(1, manifest);
-    assert!(unsafe { DynFnHandle::load(&library) }.is_err());
+    probe_error(1, manifest);
 
     let mut manifest = probe_manifest();
     manifest.as_object_mut().unwrap().remove("ffi_version");
-    let (_directory, library) = probe(1, manifest);
-    let error = unsafe { DynFnHandle::load(&library) }.err().unwrap();
-    assert!(error.to_string().contains("missing ffi_version"));
+    assert!(probe_error(1, manifest).contains("missing ffi_version"));
 
     let mut manifest = probe_manifest();
-    manifest["required_capabilities"] = serde_json::json!(["future_permission_v2"]);
-    let (_directory, library) = probe(1, manifest);
-    let error = unsafe { DynFnHandle::load(&library) }.err().unwrap();
-    assert!(
-        error
-            .to_string()
-            .contains("unsupported required FFI capability")
-    );
+    manifest["required_interfaces"] = serde_json::json!(["future_permission_v2"]);
+    assert!(probe_error(1, manifest).contains("unsupported required FFI interface"));
 }

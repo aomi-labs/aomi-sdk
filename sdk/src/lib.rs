@@ -145,6 +145,7 @@
 
 mod abi;
 mod builder;
+mod compatibility;
 mod ffi;
 mod handle;
 pub mod route;
@@ -152,8 +153,6 @@ mod secrets;
 mod skill;
 pub mod testing;
 mod types;
-
-mod compatibility;
 
 pub use abi::*;
 pub use compatibility::*;
