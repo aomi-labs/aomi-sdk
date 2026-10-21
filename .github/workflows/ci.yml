@@ -17,6 +17,22 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  ffi-compatibility:
+    name: Historical FFI compatibility
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.93.0"
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Load historical SDK binaries in the new host
+        run: cargo test -p aomi-sdk --test ffi_compatibility -- --nocapture
+      - name: Check FFI formatting
+        run: cargo fmt --all -- --check
+
   check:
     name: Check & Test
     runs-on: blacksmith-8vcpu-ubuntu-2404
@@ -50,6 +66,7 @@ jobs:
         run: cargo clippy --workspace --lib -- -Dwarnings
 
       - name: Test SDK
+        # Historical fixture binaries use immutable SDK revisions, not this PR.
         run: cargo test -p aomi-sdk
 
 

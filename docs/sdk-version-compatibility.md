@@ -1,51 +1,48 @@
-# SDK Version Compatibility
+# FFI Compatibility
 
-The compatibility contract between the host runtime and published plugins is the
-exact `aomi-sdk` crate version they were built against.
+Apps and hosts negotiate `ffi_version`, independently of the `aomi-sdk` package
+version. SDK 6.0.0 introduces FFI version 1; the SDK major bump reflects added Rust
+manifest fields, not a breaking change to the existing native interface.
 
-The plugin exports that value via the `aomi_sdk_version` symbol, includes it in
-`DynManifest.sdk_version`, and the host rejects any plugin whose SDK version
-does not match the host's own `AOMI_SDK_VERSION`.
+## Loading contract
 
-## Current Rule
+- `aomi_sdk_version()` remains diagnostic build metadata.
+- `aomi_ffi_version() -> u32` is read before instance creation or tool dispatch.
+- The plugin manifest must repeat that FFI version and its actual SDK version.
+- Unknown FFI versions and unknown `required_capabilities` reject loading.
+- SDK 5.1.1 and 5.1.2 binaries without the new export use a verified legacy table.
+  Every other unversioned SDK is rejected; neither semver proximity nor missing
+  metadata establishes compatibility.
 
-**Exact-match only** — host and plugin must be built with the same
-`aomi-sdk` version.
+FFI 1 covers all existing C signatures, opaque-instance ownership, plugin-owned
+strings and their free function, JSON context/result/route envelopes, async
+start/poll/cancel semantics, and destruction. Additive SDK helpers do not change
+it. An incompatible change to any of those contracts must introduce a new FFI
+version and an explicit host support decision. Supporting a capability never
+changes runtime authorization or execution policy.
 
-## Why This Is The Gate
+## Authoring and deployment
 
-- The plugin FFI surface and manifest format live inside `aomi-sdk`.
-- Published plugins from this repo are rebuilt as a unit when the SDK changes.
-- The hosted runtime already treats SDK drift as a coordinated rebuild event.
+Keep reproducible SDK pins and a committed workspace lockfile. The CLI reads the
+resolved SDK package's `package.metadata.aomi.ffi_version`; historical SDKs use
+the same narrow legacy table. When the backend advertises `ffi_version`, its SDK
+package version is informational. Old backends without that field retain their
+exact SDK requirement during rollout. Build and activation validate the actual
+artifact again; source metadata alone does not authorize loading.
 
-This makes the SDK crate version the clearest operational source of truth for
-compatibility.
+Deploy the compatible host before plugins built with the new SDK. An old host
+still rejects a different SDK. Rollback on a new host is permitted only when the
+artifact's FFI contract remains supported, regardless of its SDK release number.
 
-## What Changes `AOMI_SDK_VERSION`
+## Regression evidence
 
-`AOMI_SDK_VERSION` is compiled from `sdk/Cargo.toml` `package.version`.
+`cargo test -p aomi-sdk --test ffi_compatibility` builds frozen plugin source
+against immutable SDK 5.1.1 and 5.1.2 revisions in separate Cargo graphs, then
+loads those binaries in the candidate host. It exercises manifest, sync, async,
+error, cancellation and cleanup behavior. Standalone probes test unrelated SDK
+versions, unsupported FFI versions, missing/inconsistent declarations and unknown
+required capabilities. The ordinary SDK FFI robustness suites remain required.
 
-That means a version bump on `main` changes all of these together:
-
-1. The SDK crate version published to crates.io.
-2. The host's compiled `AOMI_SDK_VERSION`.
-3. The plugin's exported `aomi_sdk_version`.
-4. The plugin manifest's `sdk_version`.
-
-## What Does Not Change It
-
-- App-only release tags like `apps-v0.1.14`
-- Plugin implementation changes that do not bump `sdk/Cargo.toml`
-- Rebuilding the same SDK version on `publish`
-
-Those change delivery state, not compatibility state.
-
-## Release Checklist
-
-When changing the SDK compatibility contract:
-
-1. Bump `sdk/Cargo.toml`.
-2. Merge that SDK bump through `main` so crates.io and host builds align.
-3. Rebuild plugins from `publish` so released bundles carry the new SDK version.
-4. Run the SDK test suite: `cargo test -p aomi-sdk`.
-5. Run plugin validation: `aomi-build compile --release`.
+The loader is not a process isolation boundary: panic handling cannot recover
+from memory corruption, invalid native pointers, process aborts or library load
+constructors. Only trusted native plugins may be loaded in process.

@@ -243,6 +243,10 @@ fn preview_source(git_root: &Path, repo: &str) {
 /// refuses to ship a commit that lacks the repin), so saying no here just ends
 /// this deploy attempt.
 async fn ensure_sdk_interactive(session: &Session, git_root: &Path) -> Result<()> {
+    if let Ok(gate) = crate::sdk_guard::ensure_project_sdk(git_root, session.backend_url(), false).await {
+        println!("  SDK      aomi-sdk ={} · compatible with backend ✓", gate.required);
+        return Ok(());
+    }
     let required =
         crate::sdk_guard::resolve_required_sdk_version(session.backend_url(), None).await?;
     let report = crate::sdk_guard::check_project_sdk(git_root, &required)?;
