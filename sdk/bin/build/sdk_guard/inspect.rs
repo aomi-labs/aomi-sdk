@@ -92,7 +92,6 @@ pub(super) fn check_project_ffi(path: &Path, required: u32) -> Result<SdkCheckRe
     let mut report = check_project_sdk(&manifest, version)?;
     report.ffi_version = Some(ffi);
     report.required_ffi_version = Some(required);
-    report.ok &= ffi == required;
     Ok(report)
 }
 

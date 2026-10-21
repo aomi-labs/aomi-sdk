@@ -9,7 +9,7 @@ manifest fields, not a breaking change to the existing native interface.
 - `aomi_sdk_version()` remains diagnostic build metadata.
 - `aomi_ffi_version() -> u32` is read before instance creation or tool dispatch.
 - The plugin manifest must repeat that FFI version and its actual SDK version.
-- Unknown FFI versions and unknown `required_capabilities` reject loading.
+- Unknown FFI versions and unknown `required_interfaces` reject loading.
 - SDK 5.1.1 and 5.1.2 binaries without the new export use a verified legacy table.
   Every other unversioned SDK is rejected; neither semver proximity nor missing
   metadata establishes compatibility.
@@ -18,7 +18,7 @@ FFI 1 covers all existing C signatures, opaque-instance ownership, plugin-owned
 strings and their free function, JSON context/result/route envelopes, async
 start/poll/cancel semantics, and destruction. Additive SDK helpers do not change
 it. An incompatible change to any of those contracts must introduce a new FFI
-version and an explicit host support decision. Supporting a capability never
+version and an explicit host support decision. Supporting an interface never
 changes runtime authorization or execution policy.
 
 ## Authoring and deployment
@@ -41,7 +41,7 @@ against immutable SDK 5.1.1 and 5.1.2 revisions in separate Cargo graphs, then
 loads those binaries in the candidate host. It exercises manifest, sync, async,
 error, cancellation and cleanup behavior. Standalone probes test unrelated SDK
 versions, unsupported FFI versions, missing/inconsistent declarations and unknown
-required capabilities. The ordinary SDK FFI robustness suites remain required.
+required interfaces. The ordinary SDK FFI robustness suites remain required.
 
 The loader is not a process isolation boundary: panic handling cannot recover
 from memory corruption, invalid native pointers, process aborts or library load

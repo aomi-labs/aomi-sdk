@@ -321,7 +321,7 @@ mod tests {
         let manifest = DynManifest {
             sdk_version: AOMI_SDK_VERSION.to_string(),
             ffi_version: Some(aomi_sdk::AOMI_FFI_VERSION),
-            required_capabilities: vec![],
+            required_interfaces: vec![],
             name: "bad-app".to_string(),
             version: "0.1.0".to_string(),
             preamble: "x".to_string(),
@@ -351,7 +351,7 @@ mod tests {
         let manifest = DynManifest {
             sdk_version: AOMI_SDK_VERSION.to_string(),
             ffi_version: Some(aomi_sdk::AOMI_FFI_VERSION),
-            required_capabilities: vec![],
+            required_interfaces: vec![],
             name: "good-app".to_string(),
             version: "0.1.0".to_string(),
             preamble: "x".to_string(),
@@ -385,7 +385,7 @@ mod tests {
         let manifest = DynManifest {
             sdk_version: AOMI_SDK_VERSION.to_string(),
             ffi_version: Some(aomi_sdk::AOMI_FFI_VERSION),
-            required_capabilities: vec![],
+            required_interfaces: vec![],
             name: "bad-app".to_string(),
             version: "0.1.0".to_string(),
             preamble: "x".to_string(),
@@ -416,7 +416,7 @@ mod tests {
         let manifest = DynManifest {
             sdk_version: AOMI_SDK_VERSION.to_string(),
             ffi_version: Some(aomi_sdk::AOMI_FFI_VERSION),
-            required_capabilities: vec![],
+            required_interfaces: vec![],
             name: "good-app".to_string(),
             version: "0.1.0".to_string(),
             preamble: "x".to_string(),
