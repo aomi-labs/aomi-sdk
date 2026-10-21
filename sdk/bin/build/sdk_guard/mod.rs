@@ -183,10 +183,16 @@ pub async fn run_check(args: SdkCheckArgs) -> Result<()> {
 }
 
 pub async fn run_fix(args: SdkFixArgs) -> Result<()> {
-    let required = resolve_required_sdk_version(args.backend.as_deref(), args.required_version)
-        .await
-        .context("failed to resolve required aomi-sdk version")?;
-    let report = fix_project_sdk(&args.path, &required)?;
+    // Same gate as deploy/activate: with an FFI-aware backend the pin to
+    // restore is the app's own SDK, not the backend's release.
+    let backend = args.backend.as_deref();
+    let current = project_compatibility_report(&args.path, backend, args.required_version).await?;
+    let report = if current.ok {
+        current
+    } else {
+        fix_project_sdk(&args.path, &current.required_version)?;
+        project_compatibility_report(&args.path, backend, None).await?
+    };
     if args.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
@@ -249,7 +255,10 @@ pub async fn ensure_project_sdk(
     for message in report.blocking_messages() {
         println!("      {message}");
     }
-    let rerun = fix_project_sdk(&report.manifest_path, &required)?;
+    fix_project_sdk(&report.manifest_path, &required)?;
+    // Re-run the same gate, not just the pin check: the repair must also
+    // leave the resolved SDK on a supported FFI.
+    let rerun = project_compatibility_report(project_path, backend_url, None).await?;
     if !rerun.ok {
         bail!(
             "SDK auto-fix did not resolve all issues:\n{}",
@@ -351,7 +360,10 @@ struct BackendCompatibility {
     ffi_version: Option<u32>,
 }
 
-async fn project_compatibility_report(
+/// The pin check the deploy and activate gates run: FFI-based when the backend
+/// advertises `ffi_version`, exact-SDK otherwise. Errors mean the check could
+/// not run; a report with `ok == false` means it ran and the pin needs repair.
+pub async fn project_compatibility_report(
     path: &Path,
     backend: Option<&str>,
     explicit: Option<String>,

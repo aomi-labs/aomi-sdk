@@ -243,23 +243,18 @@ fn preview_source(git_root: &Path, repo: &str) {
 /// refuses to ship a commit that lacks the repin), so saying no here just ends
 /// this deploy attempt.
 async fn ensure_sdk_interactive(session: &Session, git_root: &Path) -> Result<()> {
-    if let Ok(gate) =
-        crate::sdk_guard::ensure_project_sdk(git_root, session.backend_url(), false).await
-    {
-        println!(
-            "  SDK      aomi-sdk ={} · compatible with backend ✓",
-            gate.required
-        );
-        return Ok(());
-    }
-    let required =
-        crate::sdk_guard::resolve_required_sdk_version(session.backend_url(), None).await?;
-    let report = crate::sdk_guard::check_project_sdk(git_root, &required)?;
+    // One gate, the same one deploy/activate run. A check that cannot run
+    // (network, cargo) is an error here too: falling back to exact-SDK
+    // matching would re-impose the coupling ffi_version removes.
+    let report =
+        crate::sdk_guard::project_compatibility_report(git_root, session.backend_url(), None)
+            .await?;
+    let required = report.required_version.clone();
     if report.ok {
-        println!("  SDK      aomi-sdk ={required} · matches backend ✓");
+        println!("  SDK      aomi-sdk ={required} · compatible with backend ✓");
         return Ok(());
     }
-    println!("  SDK      ✗ this backend requires aomi-sdk ={required}:");
+    println!("  SDK      ✗ aomi-sdk ={required} is not pinned cleanly:");
     for message in report.blocking_messages() {
         println!("             {message}");
     }
@@ -272,7 +267,10 @@ async fn ensure_sdk_interactive(session: &Session, git_root: &Path) -> Result<()
     if !repin {
         bail!("fix the aomi-sdk pin first (aomi-build sdk fix), then deploy again");
     }
-    let fixed = crate::sdk_guard::fix_project_sdk(git_root, &required)?;
+    crate::sdk_guard::fix_project_sdk(git_root, &required)?;
+    let fixed =
+        crate::sdk_guard::project_compatibility_report(git_root, session.backend_url(), None)
+            .await?;
     if !fixed.ok {
         bail!(
             "SDK repin did not produce a compatible manifest:\n{}",
