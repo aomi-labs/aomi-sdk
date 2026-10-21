@@ -46,25 +46,44 @@ pub fn check_project_sdk(path: &Path, required: &str) -> Result<SdkCheckReport> 
 /// SDK semver range cannot establish FFI compatibility; Cargo resolves the exact
 /// package and the built plugin is checked again by CI and the runtime loader.
 pub(super) fn check_project_ffi(path: &Path, required: u32) -> Result<SdkCheckReport> {
-    aomi_sdk::validate_ffi_version(Some(required), aomi_sdk::AOMI_SDK_VERSION)
-        .map_err(|error| anyhow!("{error:#}"))?;
-    let manifest = manifest_path(path)?;
-    let output = Command::new("cargo")
-        .args([
-            "metadata",
-            "--locked",
-            "--format-version",
-            "1",
-            "--manifest-path",
-        ])
-        .arg(&manifest)
-        .output()
-        .context("failed to resolve the app's locked SDK dependency")?;
-    if !output.status.success() {
+    if required != aomi_sdk::AOMI_FFI_VERSION {
         bail!(
-            "cargo metadata --locked failed: {}",
-            String::from_utf8_lossy(&output.stderr)
+            "the backend requires ffi_version {required}, but this aomi-build only understands \
+             ffi_version {}; update aomi-build",
+            aomi_sdk::AOMI_FFI_VERSION
         );
+    }
+    let manifest = manifest_path(path)?;
+    // A missing lockfile is allowed (the fix path generates one); only an
+    // existing lockfile is held to `--locked`, so a stale pin is reported
+    // below instead of surfacing as a cargo error.
+    let locked = find_lockfile(&manifest).is_some();
+    let mut command = Command::new("cargo");
+    command
+        .args(["metadata", "--format-version", "1", "--manifest-path"])
+        .arg(&manifest);
+    if locked {
+        command.arg("--locked");
+    }
+    let output = command
+        .output()
+        .context("failed to resolve the app's SDK dependency")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if locked {
+            // The declared pin is what `cargo update --precise` must restore.
+            // `requirement_status` against an empty requirement yields `Stale`
+            // carrying the declared version for both `=x` and `x` forms.
+            let doc = fs::read_to_string(&manifest)?.parse::<DocumentMut>()?;
+            if let DependencyStatus::Stale { version } = dependency_status(&doc, "") {
+                let mut report = check_project_sdk(&manifest, &version)?;
+                report.required_ffi_version = Some(required);
+                if !report.ok {
+                    return Ok(report);
+                }
+            }
+        }
+        bail!("cargo metadata failed: {stderr}");
     }
     let metadata: serde_json::Value = serde_json::from_slice(&output.stdout)?;
     let packages = metadata["packages"]
