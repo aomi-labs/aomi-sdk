@@ -40,6 +40,8 @@ macro_rules! impl_test_app {
 fn manifest_defaults_to_evm_core_namespace() {
     let manifest = TestApp.manifest();
     assert_eq!(manifest.sdk_version, AOMI_SDK_VERSION);
+    assert_eq!(manifest.ffi_version, Some(aomi_sdk::AOMI_FFI_VERSION));
+    assert!(manifest.required_capabilities.is_empty());
     assert_eq!(manifest.namespaces, Some(vec!["evm-core".to_string()]));
 }
 

@@ -136,6 +136,12 @@ pub struct DynToolMetadata {
 pub struct DynManifest {
     /// Exact `aomi-sdk` version the plugin was built against.
     pub sdk_version: String,
+    /// Host/plugin contract. Absent only in historical plugin manifests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ffi_version: Option<u32>,
+    /// Extensions the host must understand; unknown requirements reject load.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub required_capabilities: Vec<String>,
     /// Plugin name (used as the app key, e.g. "delta", "hello")
     pub name: String,
     /// Plugin version (semver, e.g. "0.1.0")
@@ -531,10 +537,18 @@ pub trait DynAomiApp: Clone + Default + Send + Sync + 'static {
         Vec::new()
     }
 
+    /// Optional FFI extensions required by this app. The host refuses unknown
+    /// requirements before tools can run. This does not grant permissions.
+    fn required_capabilities(&self) -> Vec<String> {
+        Vec::new()
+    }
+
     /// Build the full [`DynManifest`] for host consumption.
     fn manifest(&self) -> DynManifest {
         DynManifest {
             sdk_version: crate::AOMI_SDK_VERSION.to_string(),
+            ffi_version: Some(crate::AOMI_FFI_VERSION),
+            required_capabilities: self.required_capabilities(),
             name: self.name().to_string(),
             version: self.version().to_string(),
             preamble: self.preamble().to_string(),
