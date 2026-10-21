@@ -3,6 +3,8 @@ use std::ffi::{c_char, c_void, CString};
 
 #[unsafe(no_mangle)]
 pub extern "C" fn aomi_sdk_version() -> *const c_char {
+    // An unsupported FFI must be rejected before querying SDK diagnostics.
+    if __FFI__ != 1 { return std::ptr::null(); }
     b"__SDK__\0".as_ptr().cast()
 }
 

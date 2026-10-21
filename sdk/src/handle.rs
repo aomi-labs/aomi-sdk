@@ -9,7 +9,7 @@
 //! use aomi_sdk::DynFnHandle;
 //! use std::path::Path;
 //!
-//! // Load the plugin (validates SDK version and resolves symbols)
+//! // Load the plugin (validates FFI compatibility and resolves symbols)
 //! let handle = unsafe { DynFnHandle::load(Path::new("./libmy_plugin.so"))? };
 //!
 //! // Read the manifest to discover tools
@@ -44,7 +44,7 @@ use crate::{
 ///
 /// # Safety
 ///
-/// The loaded library must be a valid aomi-sdk plugin compiled against the
+/// The loaded library must be a valid aomi-sdk plugin compiled against
 /// a supported FFI version. The handle is `Send + Sync` because plugin
 /// instances are designed to be thread-safe (the generated code uses
 /// `Mutex` for shared state).
@@ -76,6 +76,14 @@ impl DynFnHandle {
                 .with_context(|| format!("failed to dlopen {}", path.display()))?
         };
 
+        let declared_ffi = unsafe { library.get::<DynFfiVersionFn>(SYM_AOMI_FFI_VERSION) }
+            .ok()
+            .map(|version| unsafe { version() });
+        if declared_ffi.is_some() {
+            validate_ffi_version(declared_ffi, "not queried")
+                .with_context(|| format!("incompatible plugin {}", path.display()))?;
+        }
+
         let fn_sdk_version: DynSdkVersionFn = unsafe {
             *library
                 .get::<DynSdkVersionFn>(SYM_AOMI_SDK_VERSION)
@@ -83,9 +91,6 @@ impl DynFnHandle {
         };
         let plugin_sdk_version =
             Self::read_static_c_string(unsafe { fn_sdk_version() }, "aomi_sdk_version")?;
-        let declared_ffi = unsafe { library.get::<DynFfiVersionFn>(SYM_AOMI_FFI_VERSION) }
-            .ok()
-            .map(|version| unsafe { version() });
         let ffi_version = validate_ffi_version(declared_ffi, &plugin_sdk_version)
             .with_context(|| format!("incompatible plugin {}", path.display()))?;
 
