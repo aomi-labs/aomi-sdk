@@ -50,28 +50,45 @@ pub(super) fn check_project_ffi(path: &Path, required: u32) -> Result<SdkCheckRe
         .map_err(|error| anyhow!("{error:#}"))?;
     let manifest = manifest_path(path)?;
     let output = Command::new("cargo")
-        .args(["metadata", "--locked", "--format-version", "1", "--manifest-path"])
+        .args([
+            "metadata",
+            "--locked",
+            "--format-version",
+            "1",
+            "--manifest-path",
+        ])
         .arg(&manifest)
         .output()
         .context("failed to resolve the app's locked SDK dependency")?;
     if !output.status.success() {
-        bail!("cargo metadata --locked failed: {}", String::from_utf8_lossy(&output.stderr));
+        bail!(
+            "cargo metadata --locked failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
     let metadata: serde_json::Value = serde_json::from_slice(&output.stdout)?;
-    let packages = metadata["packages"].as_array().context("Cargo packages missing")?;
-    let mut sdks = packages.iter().filter(|package| package["name"] == "aomi-sdk");
-    let sdk = sdks.next().context("Cargo graph has no aomi-sdk dependency")?;
+    let packages = metadata["packages"]
+        .as_array()
+        .context("Cargo packages missing")?;
+    let mut sdks = packages
+        .iter()
+        .filter(|package| package["name"] == "aomi-sdk");
+    let sdk = sdks
+        .next()
+        .context("Cargo graph has no aomi-sdk dependency")?;
     if sdks.next().is_some() {
         bail!("Cargo graph contains multiple aomi-sdk versions; select one FFI contract");
     }
-    let version = sdk["version"].as_str().context("SDK package version missing")?;
+    let version = sdk["version"]
+        .as_str()
+        .context("SDK package version missing")?;
     let declared = sdk["metadata"]["aomi"]["ffi_version"]
         .as_u64()
         .map(u32::try_from)
         .transpose()
         .context("SDK ffi_version exceeds u32")?;
-    let ffi = aomi_sdk::validate_ffi_version(declared, version)
-        .map_err(|error| anyhow!("{error:#}"))?;
+    let ffi =
+        aomi_sdk::validate_ffi_version(declared, version).map_err(|error| anyhow!("{error:#}"))?;
     let mut report = check_project_sdk(&manifest, version)?;
     report.ffi_version = Some(ffi);
     report.required_ffi_version = Some(required);
@@ -93,18 +110,31 @@ pub(super) fn manifest_path(path: &Path) -> Result<PathBuf> {
     if candidate.exists() {
         let text = fs::read_to_string(&candidate)?;
         let doc: toml::Value = text.parse()?;
-        if doc.get("dependencies")
+        if doc
+            .get("dependencies")
             .and_then(|deps| deps.get("aomi-sdk"))
             .and_then(|sdk| sdk.get("workspace"))
-            .and_then(toml::Value::as_bool) == Some(true)
+            .and_then(toml::Value::as_bool)
+            == Some(true)
         {
-            for parent in candidate.parent().into_iter().flat_map(Path::ancestors).skip(1) {
+            for parent in candidate
+                .parent()
+                .into_iter()
+                .flat_map(Path::ancestors)
+                .skip(1)
+            {
                 let workspace = parent.join("Cargo.toml");
-                let Ok(text) = fs::read_to_string(&workspace) else { continue };
-                let Ok(doc) = text.parse::<toml::Value>() else { continue };
-                if doc.get("workspace")
+                let Ok(text) = fs::read_to_string(&workspace) else {
+                    continue;
+                };
+                let Ok(doc) = text.parse::<toml::Value>() else {
+                    continue;
+                };
+                if doc
+                    .get("workspace")
                     .and_then(|workspace| workspace.get("dependencies"))
-                    .and_then(|deps| deps.get("aomi-sdk")).is_some()
+                    .and_then(|deps| deps.get("aomi-sdk"))
+                    .is_some()
                 {
                     return Ok(workspace.canonicalize().unwrap_or(workspace));
                 }

@@ -127,7 +127,8 @@ macro_rules! declare_dyn {
                     next_execution_id: ::std::sync::atomic::AtomicU64::new(1),
                     executions: ::std::sync::Mutex::new(::std::collections::HashMap::new()),
                 };
-                ::std::boxed::Box::into_raw(::std::boxed::Box::new(instance)) as *mut ::std::ffi::c_void
+                ::std::boxed::Box::into_raw(::std::boxed::Box::new(instance))
+                    as *mut ::std::ffi::c_void
             }));
             result.unwrap_or(::std::ptr::null_mut())
         }

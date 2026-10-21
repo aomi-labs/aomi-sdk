@@ -244,7 +244,8 @@ pub fn inspect_plugin(lib_path: &Path) -> Result<DynManifest, Vec<String>> {
     };
 
     let mut errors = validate_manifest(&manifest);
-    if let Err(error) = aomi_sdk::validate_ffi_version(manifest.ffi_version, &manifest.sdk_version) {
+    if let Err(error) = aomi_sdk::validate_ffi_version(manifest.ffi_version, &manifest.sdk_version)
+    {
         errors.push(format!("{}: {error}", manifest.name));
     }
 

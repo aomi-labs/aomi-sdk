@@ -167,9 +167,9 @@ pub async fn run(args: SdkArgs) -> eyre::Result<()> {
 }
 
 pub async fn run_check(args: SdkCheckArgs) -> Result<()> {
-    let report = project_compatibility_report(
-        &args.path, args.backend.as_deref(), args.required_version,
-    ).await?;
+    let report =
+        project_compatibility_report(&args.path, args.backend.as_deref(), args.required_version)
+            .await?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
@@ -406,7 +406,10 @@ async fn fetch_backend_compatibility(base_url: &str) -> Result<BackendCompatibil
     if version.is_empty() {
         bail!("server-tags response did not include sdk_version");
     }
-    Ok(BackendCompatibility { sdk_version: version, ffi_version: parsed.ffi_version })
+    Ok(BackendCompatibility {
+        sdk_version: version,
+        ffi_version: parsed.ffi_version,
+    })
 }
 
 mod inspect;
