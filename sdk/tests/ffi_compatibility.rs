@@ -45,16 +45,30 @@ fn historical_binaries_keep_manifest_sync_async_error_and_cancel_behavior() {
             .call_exec_tool("greet", r#"{"name":"Aomi"}"#, context())
             .unwrap();
         assert_eq!(greeting["greeting"], "Hello, Aomi!");
-        assert!(handle.call_exec_tool("unknown_tool", "{}", context()).is_err());
-        assert!(handle.call_exec_tool("greet", "not-json", context()).is_err());
-        assert!(handle.call_exec_tool("panic_sync", "{}", context()).is_err());
+        assert!(
+            handle
+                .call_exec_tool("unknown_tool", "{}", context())
+                .is_err()
+        );
+        assert!(
+            handle
+                .call_exec_tool("greet", "not-json", context())
+                .is_err()
+        );
+        assert!(
+            handle
+                .call_exec_tool("panic_sync", "{}", context())
+                .is_err()
+        );
         let result = handle
             .call_exec_tool("count_async", r#"{"upto":2}"#, context())
             .unwrap();
         assert_eq!(result["count"], 2);
-        assert!(handle
-            .call_exec_tool("fail_async", r#"{"message":"expected failure"}"#, context())
-            .is_err());
+        assert!(
+            handle
+                .call_exec_tool("fail_async", r#"{"message":"expected failure"}"#, context())
+                .is_err()
+        );
 
         let started = handle
             .call_tool_start("wait_for_cancel_async", "{}", context())
@@ -65,7 +79,10 @@ fn historical_binaries_keep_manifest_sync_async_error_and_cancel_behavior() {
         assert!(handle.call_tool_cancel(execution_id).unwrap().canceled);
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {
-            if matches!(handle.call_tool_poll(execution_id).unwrap(), AsyncExecPool::Canceled) {
+            if matches!(
+                handle.call_tool_poll(execution_id).unwrap(),
+                AsyncExecPool::Canceled
+            ) {
                 break;
             }
             assert!(Instant::now() < deadline, "cancel must terminate execution");
@@ -85,7 +102,11 @@ fn probe(ffi: u32, manifest: serde_json::Value) -> (tempfile::TempDir, PathBuf) 
     let path = directory.path().join("probe.rs");
     std::fs::write(&path, source).unwrap();
     let status = Command::new(std::env::var("RUSTC").unwrap_or_else(|_| "rustc".into()))
-        .args(["--edition=2024", "--crate-type=cdylib", "--crate-name=ffi_probe"])
+        .args([
+            "--edition=2024",
+            "--crate-type=cdylib",
+            "--crate-name=ffi_probe",
+        ])
         .arg(&path)
         .arg("--out-dir")
         .arg(directory.path())
@@ -135,5 +156,9 @@ fn unsupported_exports_and_inconsistent_manifests_are_rejected() {
     manifest["required_capabilities"] = serde_json::json!(["future_permission_v2"]);
     let (_directory, library) = probe(1, manifest);
     let error = unsafe { DynFnHandle::load(&library) }.err().unwrap();
-    assert!(error.to_string().contains("unsupported required FFI capability"));
+    assert!(
+        error
+            .to_string()
+            .contains("unsupported required FFI capability")
+    );
 }

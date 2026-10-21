@@ -30,6 +30,7 @@ def build() -> None:
             '[lib]\ncrate-type = ["cdylib"]\n[dependencies]\n'
             f'aomi-sdk = {{ git = "https://github.com/aomi-labs/aomi-sdk", rev = "{revision}", version = "={version}" }}\n'
             'serde = { version = "1", features = ["derive"] }\n'
+            'schemars = "1.0.4"\nserde_json = "1"\n'
         )
         subprocess.run(
             [os.environ.get("CARGO", "cargo"), "build", "--manifest-path", str(directory / "Cargo.toml"),
