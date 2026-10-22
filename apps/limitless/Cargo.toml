@@ -3,6 +3,11 @@ name = "limitless"
 version = "0.1.0"
 edition = "2024"
 
+# Hidden from the official bundle (2026-09-04): Limitless API credentials
+# are not obtainable for us right now. Code stays; flip `skip` to re-enable.
+[package.metadata.aomi]
+skip = true
+
 [lib]
 crate-type = ["cdylib"]
 

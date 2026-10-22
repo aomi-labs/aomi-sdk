@@ -3,6 +3,11 @@ name = "krexa"
 version = "0.1.0"
 edition = "2024"
 
+# Hidden from the official bundle (2026-09-04): no Krexa API key is provisioned
+# for the hosted runtime. Code stays; flip `skip` to re-enable.
+[package.metadata.aomi]
+skip = true
+
 [lib]
 crate-type = ["cdylib"]
 

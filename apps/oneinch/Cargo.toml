@@ -3,6 +3,11 @@ name = "oneinch"
 version = "0.1.0"
 edition = "2024"
 
+# Hidden from the official bundle (2026-09-04): 1inch requires KYC for API
+# keys. Code stays; flip `skip` to re-enable.
+[package.metadata.aomi]
+skip = true
+
 [lib]
 crate-type = ["cdylib"]
 
