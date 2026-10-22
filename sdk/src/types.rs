@@ -141,7 +141,7 @@ pub struct DynManifest {
     pub ffi_version: Option<u32>,
     /// Extensions the host must understand; unknown requirements reject load.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub required_capabilities: Vec<String>,
+    pub required_interfaces: Vec<String>,
     /// Plugin name (used as the app key, e.g. "delta", "hello")
     pub name: String,
     /// Plugin version (semver, e.g. "0.1.0")
@@ -539,7 +539,7 @@ pub trait DynAomiApp: Clone + Default + Send + Sync + 'static {
 
     /// Optional FFI extensions required by this app. The host refuses unknown
     /// requirements before tools can run. This does not grant permissions.
-    fn required_capabilities(&self) -> Vec<String> {
+    fn required_interfaces(&self) -> Vec<String> {
         Vec::new()
     }
 
@@ -548,7 +548,7 @@ pub trait DynAomiApp: Clone + Default + Send + Sync + 'static {
         DynManifest {
             sdk_version: crate::AOMI_SDK_VERSION.to_string(),
             ffi_version: Some(crate::AOMI_FFI_VERSION),
-            required_capabilities: self.required_capabilities(),
+            required_interfaces: self.required_interfaces(),
             name: self.name().to_string(),
             version: self.version().to_string(),
             preamble: self.preamble().to_string(),
