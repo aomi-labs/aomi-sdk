@@ -115,13 +115,22 @@ macro_rules! declare_dyn {
         }
 
         #[unsafe(no_mangle)]
+        pub extern "C" fn aomi_ffi_version() -> u32 {
+            $crate::AOMI_FFI_VERSION
+        }
+
+        #[unsafe(no_mangle)]
         pub extern "C" fn aomi_create() -> *mut ::std::ffi::c_void {
-            let instance = __DynInstance {
-                app: <$app_type>::default(),
-                next_execution_id: ::std::sync::atomic::AtomicU64::new(1),
-                executions: ::std::sync::Mutex::new(::std::collections::HashMap::new()),
-            };
-            ::std::boxed::Box::into_raw(::std::boxed::Box::new(instance)) as *mut ::std::ffi::c_void
+            let result = ::std::panic::catch_unwind(::std::panic::AssertUnwindSafe(|| {
+                let instance = __DynInstance {
+                    app: <$app_type>::default(),
+                    next_execution_id: ::std::sync::atomic::AtomicU64::new(1),
+                    executions: ::std::sync::Mutex::new(::std::collections::HashMap::new()),
+                };
+                ::std::boxed::Box::into_raw(::std::boxed::Box::new(instance))
+                    as *mut ::std::ffi::c_void
+            }));
+            result.unwrap_or(::std::ptr::null_mut())
         }
 
         #[unsafe(no_mangle)]
@@ -289,7 +298,10 @@ macro_rules! declare_dyn {
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn aomi_destroy(ptr: *mut ::std::ffi::c_void) {
             if !ptr.is_null() {
-                let _ = unsafe { ::std::boxed::Box::from_raw(ptr as *mut __DynInstance) };
+                // No Rust unwinding may cross the C boundary, including Drop.
+                let _ = ::std::panic::catch_unwind(::std::panic::AssertUnwindSafe(|| {
+                    let _ = unsafe { ::std::boxed::Box::from_raw(ptr as *mut __DynInstance) };
+                }));
             }
         }
 

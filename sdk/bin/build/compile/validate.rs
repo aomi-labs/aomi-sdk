@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::path::Path;
 
-use aomi_sdk::{AOMI_SDK_VERSION, DynFnHandle, DynManifest};
+use aomi_sdk::{DynFnHandle, DynManifest};
 
 /// Render the app's resolved permission manifest — the human-readable form
 /// of its guard table with selectors/discriminators derived and the
@@ -244,11 +244,9 @@ pub fn inspect_plugin(lib_path: &Path) -> Result<DynManifest, Vec<String>> {
     };
 
     let mut errors = validate_manifest(&manifest);
-    if manifest.sdk_version != AOMI_SDK_VERSION {
-        errors.push(format!(
-            "{}: plugin sdk_version '{}' does not match repo sdk version '{}'",
-            manifest.name, manifest.sdk_version, AOMI_SDK_VERSION
-        ));
+    if let Err(error) = aomi_sdk::validate_ffi_version(manifest.ffi_version, &manifest.sdk_version)
+    {
+        errors.push(format!("{}: {error}", manifest.name));
     }
 
     if errors.is_empty() {
@@ -323,6 +321,8 @@ mod tests {
     fn validate_rejects_private_host_namespaces() {
         let manifest = DynManifest {
             sdk_version: AOMI_SDK_VERSION.to_string(),
+            ffi_version: Some(aomi_sdk::AOMI_FFI_VERSION),
+            required_interfaces: vec![],
             name: "bad-app".to_string(),
             version: "0.1.0".to_string(),
             preamble: "x".to_string(),
@@ -351,6 +351,8 @@ mod tests {
     fn validate_rejects_a_misscoped_skill() {
         let manifest = DynManifest {
             sdk_version: AOMI_SDK_VERSION.to_string(),
+            ffi_version: Some(aomi_sdk::AOMI_FFI_VERSION),
+            required_interfaces: vec![],
             name: "good-app".to_string(),
             version: "0.1.0".to_string(),
             preamble: "x".to_string(),
@@ -383,6 +385,8 @@ mod tests {
     fn validate_rejects_noncanonical_ordinary_tool_names() {
         let manifest = DynManifest {
             sdk_version: AOMI_SDK_VERSION.to_string(),
+            ffi_version: Some(aomi_sdk::AOMI_FFI_VERSION),
+            required_interfaces: vec![],
             name: "bad-app".to_string(),
             version: "0.1.0".to_string(),
             preamble: "x".to_string(),
@@ -412,6 +416,8 @@ mod tests {
         let guard = r#"{"evm":{"contracts":{"R":"0x1111111111111111111111111111111111111111"},"chain_ids":[1]}}"#;
         let manifest = DynManifest {
             sdk_version: AOMI_SDK_VERSION.to_string(),
+            ffi_version: Some(aomi_sdk::AOMI_FFI_VERSION),
+            required_interfaces: vec![],
             name: "good-app".to_string(),
             version: "0.1.0".to_string(),
             preamble: "x".to_string(),

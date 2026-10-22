@@ -145,6 +145,7 @@
 
 mod abi;
 mod builder;
+mod compatibility;
 mod ffi;
 mod handle;
 pub mod route;
@@ -154,6 +155,7 @@ pub mod testing;
 mod types;
 
 pub use abi::*;
+pub use compatibility::*;
 pub use handle::*;
 pub use route::*;
 pub use secrets::*;
@@ -166,8 +168,7 @@ pub use serde_json;
 
 /// Exact SDK crate version compiled into both host and plugin builds.
 ///
-/// The runtime uses this as the compatibility gate for loading published
-/// plugins: host and plugin must be built against the same `aomi-sdk` version.
+/// Diagnostic build metadata. Plugin compatibility uses [`AOMI_FFI_VERSION`].
 pub const AOMI_SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[doc(hidden)]

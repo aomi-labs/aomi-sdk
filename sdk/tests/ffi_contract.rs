@@ -16,6 +16,10 @@ fn raw_ffi_symbols_match_the_documented_abi_surface() {
     let library = unsafe { Library::new(&path) }.expect("failed to open dyn-hello library");
 
     unsafe {
+        let ffi_version = *library
+            .get::<aomi_sdk::DynFfiVersionFn>(aomi_sdk::SYM_AOMI_FFI_VERSION)
+            .expect("missing aomi_ffi_version");
+        assert_eq!(ffi_version(), aomi_sdk::AOMI_FFI_VERSION);
         let sdk_version = *library
             .get::<DynSdkVersionFn>(SYM_AOMI_SDK_VERSION)
             .expect("missing aomi_sdk_version");
