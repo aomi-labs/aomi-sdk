@@ -68,6 +68,8 @@ pub struct SdkCheckReport {
     pub manifest_path: PathBuf,
     pub lockfile_path: Option<PathBuf>,
     pub required_version: String,
+    pub ffi_version: Option<u32>,
+    pub required_ffi_version: Option<u32>,
     pub dependency: DependencyStatus,
     pub lockfile: LockfileStatus,
     pub ok: bool,
@@ -134,6 +136,9 @@ impl SdkCheckReport {
 
     fn print_text(&self) {
         println!("Required aomi-sdk: {}", self.required_version);
+        if let Some(version) = self.required_ffi_version {
+            println!("Required ffi_version: {version} (SDK release equality is not required)");
+        }
         println!("Manifest: {}", self.manifest_path.display());
         println!("Dependency: {}", describe_dependency(&self.dependency));
         println!("Lockfile: {}", describe_lockfile(&self.lockfile));
@@ -162,10 +167,9 @@ pub async fn run(args: SdkArgs) -> eyre::Result<()> {
 }
 
 pub async fn run_check(args: SdkCheckArgs) -> Result<()> {
-    let required = resolve_required_sdk_version(args.backend.as_deref(), args.required_version)
-        .await
-        .context("failed to resolve required aomi-sdk version")?;
-    let report = check_project_sdk(&args.path, &required)?;
+    let report =
+        project_compatibility_report(&args.path, args.backend.as_deref(), args.required_version)
+            .await?;
     if args.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
@@ -179,10 +183,16 @@ pub async fn run_check(args: SdkCheckArgs) -> Result<()> {
 }
 
 pub async fn run_fix(args: SdkFixArgs) -> Result<()> {
-    let required = resolve_required_sdk_version(args.backend.as_deref(), args.required_version)
-        .await
-        .context("failed to resolve required aomi-sdk version")?;
-    let report = fix_project_sdk(&args.path, &required)?;
+    // Same gate as deploy/activate: with an FFI-aware backend the pin to
+    // restore is the app's own SDK, not the backend's release.
+    let backend = args.backend.as_deref();
+    let current = project_compatibility_report(&args.path, backend, args.required_version).await?;
+    let report = if current.ok {
+        current
+    } else {
+        fix_project_sdk(&args.path, &current.required_version)?;
+        project_compatibility_report(&args.path, backend, None).await?
+    };
     if args.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
@@ -219,18 +229,11 @@ pub async fn ensure_project_sdk(
     backend_url: Option<&str>,
     fix: bool,
 ) -> Result<SdkGate> {
-    let required = resolve_required_sdk_version(backend_url, None)
-        .await
-        .context("failed to resolve backend-required aomi-sdk version")?;
+    let report = project_compatibility_report(project_path, backend_url, None).await?;
+    // The committed-source gate checks the SDK actually selected by this app,
+    // not the SDK used to build a compatible backend.
+    let required = report.required_version.clone();
     let from_backend = backend_url.is_some_and(|url| !url.trim().is_empty());
-    if from_backend && required != aomi_sdk::AOMI_SDK_VERSION {
-        eprintln!(
-            "  ! this aomi-build was built with SDK {} but the backend runs {required} — \
-             update aomi-build if checks or codegen misbehave",
-            aomi_sdk::AOMI_SDK_VERSION
-        );
-    }
-    let report = check_project_sdk(project_path, &required)?;
     if report.ok {
         return Ok(SdkGate {
             required,
@@ -252,7 +255,10 @@ pub async fn ensure_project_sdk(
     for message in report.blocking_messages() {
         println!("      {message}");
     }
-    let rerun = fix_project_sdk(&report.manifest_path, &required)?;
+    fix_project_sdk(&report.manifest_path, &required)?;
+    // Re-run the same gate, not just the pin check: the repair must also
+    // leave the resolved SDK on a supported FFI.
+    let rerun = project_compatibility_report(project_path, backend_url, None).await?;
     if !rerun.ok {
         bail!(
             "SDK auto-fix did not resolve all issues:\n{}",
@@ -339,19 +345,50 @@ pub async fn resolve_required_sdk_version(
         return Ok(version);
     }
     if let Some(url) = backend_url.map(str::trim).filter(|v| !v.is_empty()) {
-        return fetch_backend_sdk_version(url)
+        return fetch_backend_compatibility(url)
             .await
+            .map(|backend| backend.sdk_version)
             .with_context(|| format!("failed to fetch backend SDK version from {url}"));
     }
     Ok(aomi_sdk::AOMI_SDK_VERSION.to_string())
 }
 
-async fn fetch_backend_sdk_version(base_url: &str) -> Result<String> {
-    #[derive(serde::Deserialize)]
-    struct ServerTags {
-        sdk_version: String,
-    }
+#[derive(serde::Deserialize)]
+struct BackendCompatibility {
+    sdk_version: String,
+    #[serde(default)]
+    ffi_version: Option<u32>,
+}
 
+/// The pin check the deploy and activate gates run: FFI-based when the backend
+/// advertises `ffi_version`, exact-SDK otherwise. Errors mean the check could
+/// not run; a report with `ok == false` means it ran and the pin needs repair.
+pub async fn project_compatibility_report(
+    path: &Path,
+    backend: Option<&str>,
+    explicit: Option<String>,
+) -> Result<SdkCheckReport> {
+    if explicit.is_some() {
+        let version = resolve_required_sdk_version(backend, explicit).await?;
+        return check_project_sdk(path, &version);
+    }
+    let requirement = if let Some(url) = backend.filter(|url| !url.trim().is_empty()) {
+        fetch_backend_compatibility(url).await?
+    } else {
+        BackendCompatibility {
+            sdk_version: aomi_sdk::AOMI_SDK_VERSION.to_string(),
+            ffi_version: Some(aomi_sdk::AOMI_FFI_VERSION),
+        }
+    };
+    match requirement.ffi_version {
+        Some(version) => inspect::check_project_ffi(path, version),
+        // An older backend still enforces SDK equality. Never promise that
+        // an old host can load a new plugin merely because this CLI can.
+        None => check_project_sdk(path, &requirement.sdk_version),
+    }
+}
+
+async fn fetch_backend_compatibility(base_url: &str) -> Result<BackendCompatibility> {
     let base = base_url.trim().trim_end_matches('/');
     let endpoint = format!("{base}/api/platforms/server-tags");
     let http = reqwest::Client::builder()
@@ -372,13 +409,13 @@ async fn fetch_backend_sdk_version(base_url: &str) -> Result<String> {
     if !status.is_success() {
         bail!("server-tags endpoint returned {status}: {}", text.trim());
     }
-    let parsed: ServerTags =
+    let mut parsed: BackendCompatibility =
         serde_json::from_str(&text).context("server-tags response was not valid JSON")?;
-    let version = parsed.sdk_version.trim().to_string();
-    if version.is_empty() {
+    parsed.sdk_version = parsed.sdk_version.trim().to_string();
+    if parsed.sdk_version.is_empty() {
         bail!("server-tags response did not include sdk_version");
     }
-    Ok(version)
+    Ok(parsed)
 }
 
 mod inspect;

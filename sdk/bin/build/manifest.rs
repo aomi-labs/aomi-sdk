@@ -51,6 +51,8 @@ mod tests {
         use aomi_sdk::{DynManifest, SecretSlot};
         let manifest = DynManifest {
             sdk_version: "3.0.2".into(),
+            ffi_version: Some(aomi_sdk::AOMI_FFI_VERSION),
+            required_interfaces: vec![],
             name: "binance".into(),
             version: "0.1.0".into(),
             preamble: String::new(),
