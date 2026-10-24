@@ -1,0 +1,19 @@
+[package]
+name = "trustless-work"
+version = "0.1.0"
+edition = "2024"
+
+[package.metadata.aomi]
+chain_ids = [5042002]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+aomi-sdk = { path = "../../sdk" }
+alloy-primitives = "1"
+alloy-sol-types = "1"
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls"] }
+schemars = "1.0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

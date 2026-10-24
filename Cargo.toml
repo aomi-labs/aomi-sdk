@@ -49,6 +49,7 @@ exclude = [
     "apps/cambrian",
     "apps/morpho-vaults",
     "apps/stablefx",
+    "apps/trustless-work",
 ]
 resolver = "2"
 

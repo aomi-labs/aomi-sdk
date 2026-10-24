@@ -1,0 +1,38 @@
+{
+  "user_story": "Turn a service agreement into a Trustless Work escrow on Arc Testnet: review amount, roles, milestones and fees, then stage and simulate the one unsigned escrow-creation transaction after the user confirms.",
+  "wallet_seed": {
+    "address": "0x1111111111111111111111111111111111111111",
+    "chain_id": 5042002,
+    "is_connected": true
+  },
+  "turns": [
+    {
+      "prompt": "Set up a Trustless Work escrow for this agreement. Engagement TW-AOMI-001, 'Landing page build': design and ship the landing page for 10 USDC with a 2% platform fee. Client 0x2222222222222222222222222222222222222222 approves and releases. Provider 0x3333333333333333333333333333333333333333 does the work and receives the funds. Dispute resolver 0x4444444444444444444444444444444444444444, platform 0x5555555555555555555555555555555555555555, admin 0x6666666666666666666666666666666666666666. Milestones: Design, Launch.",
+      "expected_tools": {
+        "must_call": ["trustless_work_review_escrow"]
+      }
+    },
+    {
+      "prompt": "Those details are correct. Simulate it.",
+      "expected_tools": {
+        "must_call": ["trustless_work_simulate_escrow"]
+      }
+    }
+  ],
+  "final_assertion": {
+    "user_state": {
+      "pending_txs": {
+        "min_count": 1,
+        "expect_any": [
+          {
+            "chain_id": 5042002,
+            "data_starts_with": "0x",
+            "data_min_len": 10
+          }
+        ]
+      }
+    },
+    "no_errors": false,
+    "max_turns": 6
+  }
+}
