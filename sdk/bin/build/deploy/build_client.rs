@@ -10,8 +10,8 @@ use serde::de::DeserializeOwned;
 
 use super::backend::http_client;
 use super::types::{
-    ActivateResult, AttemptResult, BuildActivateInput, BuildAttemptAction, BuildDeployInput,
-    BuildDeployResult, CliExchangeInput, CliExchangeResult, CliStatusResult,
+    ActivateResult, AttemptResult, BuildActivateInput, BuildApproveInput, BuildAttemptAction,
+    BuildDeployInput, BuildDeployResult, CliExchangeInput, CliExchangeResult, CliStatusResult,
     DeploymentStatusResult,
 };
 
@@ -55,9 +55,9 @@ impl BuildClient {
         preflight: bool,
     ) -> Result<BuildDeployResult> {
         let path = if preflight {
-            "/api/bff/deployments/preflight"
+            "/api/build/deployments/preflight"
         } else {
-            "/api/bff/deployments/deploy"
+            "/api/build/deployments/deploy"
         };
         self.post(
             path,
@@ -72,7 +72,7 @@ impl BuildClient {
         platform: &str,
         deployment_id: &str,
     ) -> Result<DeploymentStatusResult> {
-        let mut url = self.url("/api/bff/deployments/status")?;
+        let mut url = self.url("/api/build/deployments/status")?;
         url.query_pairs_mut()
             .append_pair("deploymentId", deployment_id)
             .append_pair("platform", platform);
@@ -86,7 +86,7 @@ impl BuildClient {
     /// `existing = true` instead of a second being queued.
     pub async fn start_attempt(&self, project_id: i64, branch: &str) -> Result<AttemptResult> {
         self.post(
-            "/api/bff/launch/attempts",
+            "/api/build/deployments/attempts",
             &BuildAttemptAction {
                 action: "start",
                 project_id,
@@ -100,7 +100,7 @@ impl BuildClient {
 
     /// Read one attempt with its jobs, steps and bounded failure diagnostics.
     pub async fn attempt(&self, project_id: i64, run_id: u64) -> Result<AttemptResult> {
-        let mut url = self.url("/api/bff/launch/attempts")?;
+        let mut url = self.url("/api/build/deployments/attempts")?;
         url.query_pairs_mut()
             .append_pair("projectId", &project_id.to_string())
             .append_pair("runId", &run_id.to_string());
@@ -115,7 +115,7 @@ impl BuildClient {
     pub async fn cancel_attempt(&self, project_id: i64, run_id: u64) -> Result<()> {
         let _: serde_json::Value = self
             .post(
-                "/api/bff/launch/attempts",
+                "/api/build/deployments/attempts",
                 &BuildAttemptAction {
                     action: "cancel",
                     project_id,
@@ -129,8 +129,24 @@ impl BuildClient {
     }
 
     pub async fn activate(&self, request: &BuildActivateInput) -> Result<ActivateResult> {
-        self.post("/api/bff/launch/activate", request, "activation")
+        self.post("/api/build/deployments/activate", request, "activation")
             .await
+    }
+
+    /// Approve a deployment's exact app libraries; Build then activates them.
+    pub async fn approve(&self, request: &BuildApproveInput) -> Result<serde_json::Value> {
+        self.post("/api/build/deployments/approve", request, "approval")
+            .await
+    }
+
+    /// Approve the library every live hosted app serves now.
+    pub async fn grandfather_approvals(&self) -> Result<serde_json::Value> {
+        self.post(
+            "/api/build/deployments/grandfather",
+            &serde_json::json!({}),
+            "grandfather approvals",
+        )
+        .await
     }
 
     /// Probe the saved credential, separating "Build says this login is no
@@ -139,7 +155,7 @@ impl BuildClient {
     /// Collapsing the two is what made an offline laptop or a down backend look
     /// identical to an expired session and pop a browser window at the user.
     pub async fn probe_identity(&self) -> AuthProbe {
-        let url = match self.url("/api/bff/cli/status") {
+        let url = match self.url("/api/build/cli/status") {
             Ok(url) => url,
             Err(error) => return AuthProbe::Unreachable(error),
         };
@@ -218,7 +234,7 @@ pub async fn exchange_cli_code(
     code_verifier: String,
 ) -> Result<CliExchangeResult> {
     let base = build_url.trim().trim_end_matches('/');
-    let endpoint = format!("{base}/api/bff/cli/exchange");
+    let endpoint = format!("{base}/api/build/cli/exchange");
     let response = http_client()
         .post(&endpoint)
         .json(&CliExchangeInput {

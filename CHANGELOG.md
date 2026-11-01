@@ -1,5 +1,24 @@
 # Changelog
 
+## 6.1.0
+
+### Added
+
+- `aomi-build approve <deployment>`: an Aomi approver approves the exact app
+  libraries of a promoted deployment, which activates it. `--grandfather`
+  approves every live app's current library once, when the backend's load
+  gate is switched on. Build's Edge allows only approvers to use it.
+
+### Fixed
+
+- The Build CLI calls the Edge's `/api/build/*` routes; the retired
+  `/api/bff/*` paths no longer reach Build.
+
+### Compatibility
+
+- No FFI change: plugins keep FFI version 1. CLI logins made before 6.1.0 lack
+  the `approve` scope, so approvers log in again once.
+
 ## 5.1.1
 
 ### Added

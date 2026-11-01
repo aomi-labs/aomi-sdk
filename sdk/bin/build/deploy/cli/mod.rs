@@ -39,10 +39,16 @@
 //!   --admin-key <PEM|PATH>   # AOMI_ADMIN_KEY
 //!   --admin-kid <KID>        # AOMI_ADMIN_KID
 //!
+//! approve <DEPLOYMENT>       # approver-only: approve + activate a promoted deployment
+//!   --platform <NAME>
+//!   --app <APP>              # repeatable; default: every app
+//!   --grandfather            # approve every live app's library (gate switch-on)
+//!
 //! request                    # legacy ops onboarding request (Discord)
 //! ```
 
 pub mod activate;
+pub mod approve;
 pub mod apps;
 pub mod connect;
 pub mod deploy;
@@ -57,6 +63,7 @@ pub mod token;
 pub(crate) mod shared;
 
 pub use activate::ActivateArgs;
+pub use approve::ApproveArgs;
 pub use apps::AppsArgs;
 pub use connect::ConnectArgs;
 pub use deploy::{DeployArgs, DeployStepArgs};

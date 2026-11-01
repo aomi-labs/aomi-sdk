@@ -164,6 +164,17 @@ pub struct ActivateResult {
     pub activation: Activation,
 }
 
+/// Body of `POST /api/build/deployments/approve`.
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BuildApproveInput {
+    pub deployment_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub platform: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub apps: Vec<String>,
+}
+
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BuildActivateInput {
@@ -180,7 +191,7 @@ pub struct BuildActivateInput {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Activation {
-    /// `activating` | `partial_failed`.
+    /// `activating` | `partial_failed` | `awaiting_review`.
     pub status: String,
     pub platform: String,
     pub target: ActivationTarget,
@@ -403,9 +414,9 @@ fn is_false(b: &bool) -> bool {
 //
 // The Build portal builds, publishes, activates and verifies a deployment
 // through one GitHub-owned attempt (`deploy-project.yml`) that Manager
-// dispatches for the Project. These mirror `/api/bff/launch/attempts`.
+// dispatches for the Project. These mirror `/api/build/deployments/attempts`.
 
-/// Body of `POST /api/bff/launch/attempts`.
+/// Body of `POST /api/build/deployments/attempts`.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BuildAttemptAction {
