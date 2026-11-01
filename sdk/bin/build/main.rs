@@ -72,6 +72,9 @@ enum Cmd {
     Apps(cli::AppsArgs),
     /// Check or fix the app repo's aomi-sdk pin against the backend.
     Sdk(sdk_guard::SdkArgs),
+    /// Approver only: approve a promoted deployment's exact app libraries,
+    /// which activates them.
+    Approve(cli::ApproveArgs),
     /// Ask platform ops for legacy onboarding details.
     Request(cli::RequestArgs),
 }
@@ -103,6 +106,7 @@ async fn main() -> Result<()> {
         Cmd::Project(args) => args.run().await.map_err(git_error),
         Cmd::Apps(args) => args.run().await.map_err(git_error),
         Cmd::Sdk(args) => sdk_guard::run(args).await,
+        Cmd::Approve(args) => args.run().await.map_err(git_error),
         Cmd::Request(args) => args.run().await.map_err(git_error),
     }
 }

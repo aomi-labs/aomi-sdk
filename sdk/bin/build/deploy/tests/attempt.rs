@@ -127,7 +127,7 @@ async fn start_attempt_makes_the_portals_start_call_with_the_builder_bearer() {
     let seen = server.join().unwrap();
     assert_eq!(
         seen[0].request_line,
-        "POST /api/bff/launch/attempts HTTP/1.1"
+        "POST /api/build/deployments/attempts HTTP/1.1"
     );
     assert_eq!(
         seen[0].authorization.as_deref(),
@@ -152,7 +152,7 @@ async fn attempt_read_asks_for_the_run_of_the_project() {
     assert_eq!(read.attempt.status, "queued");
     assert_eq!(
         server.join().unwrap()[0].request_line,
-        "GET /api/bff/launch/attempts?projectId=1657&runId=901 HTTP/1.1"
+        "GET /api/build/deployments/attempts?projectId=1657&runId=901 HTTP/1.1"
     );
 }
 

@@ -123,6 +123,7 @@ impl ActivateArgs {
             })?;
             let client = BackendClient::new(backend_url, token)?;
             let mut response = client.activate(&platform, &request).await?;
+            refuse_held(&response)?;
             verify_activation(&client, &platform, &mut response).await?;
             response
         } else {
@@ -234,6 +235,19 @@ impl ActivateArgs {
 /// Mirrors [`verify_activation`]'s budget on the activation-token path.
 const ACTIVATION_SETTLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 
+/// A batch with an unreviewed app library is held, not activated: waiting
+/// for it to load would only time out.
+fn refuse_held(response: &crate::deploy::types::ActivateResult) -> Result<()> {
+    if response.activation.status == "awaiting_review" {
+        return Err(anyhow!(
+            "activation is awaiting review: an Aomi approver approves the deployment \
+             (`{} approve <deployment>`), which activates it",
+            super::shared::bin_name()
+        ));
+    }
+    Ok(())
+}
+
 /// Activate through the Builder BFF and wait for the result to actually settle.
 ///
 /// The `is_active` / `artifact_ready` / `loaded` flags in an activation response
@@ -255,6 +269,7 @@ async fn activate_until_loaded(
     let mut announced = false;
     loop {
         let response = client.activate(input).await?;
+        refuse_held(&response)?;
         let apps = &response.activation.apps;
         // A hard per-app error is terminal; retrying only delays the report.
         let settled = apps.iter().any(|app| app.error.is_some())
