@@ -307,13 +307,25 @@ pub struct Project {
 }
 
 /// Response of `GET /api/integrations/github-app/oauth/start` — the GitHub App
-/// install URL the user opens to connect. Mirrors the portal's response shape
-/// (`{ ok, install_url }`); the CLI only needs `install_url`. GitHub returns the
-/// resolved `installation_id` to the App's configured redirect, not to the CLI,
-/// so there is no result/poll endpoint — the user reads it from that redirect.
+/// install URL the user opens to connect, plus the signed `state` that
+/// `oauth/result` is keyed by once GitHub hands the browser back.
 #[derive(Debug, Clone, Deserialize)]
 pub struct OAuthStart {
     pub install_url: String,
+    #[serde(default)]
+    pub state: Option<String>,
+}
+
+/// Response of `GET /api/integrations/github-app/oauth/result?state=…`:
+/// `pending` until the install callback for that state completes, then
+/// `installed` with the `installation_id`, or `failed` with the reason.
+#[derive(Debug, Clone, Deserialize)]
+pub struct OAuthResult {
+    pub status: String,
+    #[serde(default)]
+    pub installation_id: Option<i64>,
+    #[serde(default)]
+    pub error: Option<String>,
 }
 
 /// Minimal projection of `GET /api/platforms/:platform/deployments/:id/status`

@@ -7,7 +7,7 @@ use serde::de::DeserializeOwned;
 use super::platform::Platform;
 use super::types::{
     ActivateInput, ActivateResult, CreateProjectInput, DeploymentStatusResult, MintTokenInput,
-    MintTokenResult, OAuthStart, PlatformAppResult, ProjectResult,
+    MintTokenResult, OAuthResult, OAuthStart, PlatformAppResult, ProjectResult,
 };
 
 /// GET the aomi-build GitHub App install URL for `platform`. Query params mirror
@@ -55,6 +55,30 @@ pub async fn oauth_start(
     }
     serde_json::from_str(&text)
         .with_context(|| format!("oauth start endpoint {endpoint} returned invalid JSON"))
+}
+
+/// Poll the install started by [`oauth_start`]. Like it, this carries no bearer:
+/// the signed `state` is the only key.
+pub async fn oauth_result(base_url: &str, state: &str) -> Result<OAuthResult> {
+    let endpoint = format!(
+        "{}/api/integrations/github-app/oauth/result",
+        base_url.trim().trim_end_matches('/')
+    );
+    let response = http_client()
+        .get(&endpoint)
+        .query(&[("state", state)])
+        .send()
+        .await
+        .with_context(|| format!("failed to call {endpoint}"))?;
+    let status = response.status();
+    let text = response
+        .text()
+        .await
+        .context("failed to read oauth result")?;
+    if !status.is_success() {
+        bail!("{endpoint} returned {status}: {}", text.trim());
+    }
+    serde_json::from_str(&text).with_context(|| format!("{endpoint} returned invalid JSON"))
 }
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
