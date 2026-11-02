@@ -19,6 +19,7 @@ mod tool;
 #[derive(Parser)]
 #[command(
     name = "aomi-build",
+    version,
     about = "Build, deploy, and activate Aomi apps: spec → client → tool → backend"
 )]
 struct Cli {
