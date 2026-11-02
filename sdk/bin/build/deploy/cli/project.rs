@@ -155,16 +155,21 @@ impl ProjectCreateArgs {
 
         let started = Instant::now();
         loop {
-            let result = oauth_result(backend_url, &state).await?;
-            if let Some(installation_id) = result.installation_id {
-                return Ok((login, installation_id));
-            }
-            if result.status == "failed" {
-                let reason = result
-                    .error
-                    .as_deref()
-                    .unwrap_or("GitHub App approval failed");
-                bail!("couldn't connect {repo}: {reason}");
+            // A dropped poll is retried until the timeout; only the backend's answer ends the wait.
+            match oauth_result(backend_url, &state).await {
+                Ok(result) => {
+                    if let Some(installation_id) = result.installation_id {
+                        return Ok((login, installation_id));
+                    }
+                    if result.status == "failed" {
+                        let reason = result
+                            .error
+                            .as_deref()
+                            .unwrap_or("GitHub App approval failed");
+                        bail!("couldn't connect {repo}: {reason}");
+                    }
+                }
+                Err(error) => eprintln!("still waiting ({error:#})"),
             }
             if started.elapsed() >= INSTALL_TIMEOUT {
                 bail!(
