@@ -173,7 +173,7 @@ async fn browser_login(build_url: &str, no_browser: bool) -> Result<LoginIdentit
     let code_challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(code_verifier.as_bytes()));
 
     let mut login_url = Url::parse(&format!(
-        "{}/api/bff/cli/login",
+        "{}/api/build/cli/login",
         build_url.trim().trim_end_matches('/')
     ))
     .context("invalid Aomi Build URL")?;

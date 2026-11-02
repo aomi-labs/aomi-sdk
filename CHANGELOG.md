@@ -1,5 +1,23 @@
 # Changelog
 
+## 6.0.1
+
+### Fixed
+
+- `aomi-build` calls Build's `/api/build/{cli,deployments}/*` routes. Build
+  removed the old `/api/bff/*` paths, so `login`, `deploy`, `status` and
+  `activate` in 6.0.0 fail with 404 against current Build.
+
+### Added
+
+- `aomi-build --version` prints the CLI version.
+
+### Compatibility
+
+- CLI-only release. The library and FFI version (1) are unchanged; apps pinned
+  to `=6.0.0` keep building and loading. Upgrade the CLI with
+  `cargo install aomi-sdk --version 6.0.1 --features cli --locked`.
+
 ## 5.1.1
 
 ### Added

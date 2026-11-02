@@ -403,9 +403,9 @@ fn is_false(b: &bool) -> bool {
 //
 // The Build portal builds, publishes, activates and verifies a deployment
 // through one GitHub-owned attempt (`deploy-project.yml`) that Manager
-// dispatches for the Project. These mirror `/api/bff/launch/attempts`.
+// dispatches for the Project. These mirror `/api/build/deployments/attempts`.
 
-/// Body of `POST /api/bff/launch/attempts`.
+/// Body of `POST /api/build/deployments/attempts`.
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BuildAttemptAction {
