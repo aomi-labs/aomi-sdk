@@ -20,6 +20,8 @@ use crate::deploy::config::AomiConfig;
 use crate::deploy::types::CliStatusResult;
 
 const LOGIN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const NOT_FOUND: &[u8] =
+    b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 
 #[derive(Debug, Args, Clone)]
 pub struct LoginArgs {
@@ -217,29 +219,24 @@ fn wait_for_callback(
     loop {
         match listener.accept() {
             Ok((mut stream, _)) => {
-                stream.set_read_timeout(Some(Duration::from_secs(5)))?;
-                let mut bytes = [0_u8; 16 * 1024];
-                let read = stream.read(&mut bytes)?;
-                let request = String::from_utf8_lossy(&bytes[..read]);
-                let target = request
-                    .lines()
-                    .next()
-                    .and_then(|line| line.split_whitespace().nth(1))
-                    .ok_or_else(|| anyhow!("invalid local login callback"))?;
-                let callback = Url::parse(&format!("http://127.0.0.1{target}"))
-                    .context("invalid local login callback URL")?;
+                // Editors and port scanners probe new localhost ports; only a
+                // `/callback` request carrying our state ends the wait.
+                let Some(callback) = read_callback(&mut stream) else {
+                    let _ = stream.write_all(NOT_FOUND);
+                    continue;
+                };
                 let params = callback
                     .query_pairs()
                     .collect::<std::collections::HashMap<_, _>>();
                 let state = params.get("state").map(|value| value.as_ref());
+                if callback.path() != "/callback" || state != Some(expected_state) {
+                    let _ = stream.write_all(NOT_FOUND);
+                    continue;
+                }
                 let code = params.get("code").map(|value| value.to_string());
                 let error = params.get("error").map(|value| value.to_string());
-                let success = state == Some(expected_state) && code.is_some();
-                write_callback_response(&mut stream, build_url, success)?;
+                write_callback_response(&mut stream, build_url, code.is_some())?;
 
-                if state != Some(expected_state) {
-                    bail!("Aomi Build login returned an invalid state");
-                }
                 if let Some(error) = error {
                     bail!("Aomi Build login failed: {error}");
                 }
@@ -266,6 +263,17 @@ fn completion_url(build_url: &str, success: bool) -> Result<Url> {
     Ok(url)
 }
 
+/// The request target of one local connection, or `None` for anything that
+/// isn't a readable HTTP request line.
+fn read_callback(stream: &mut std::net::TcpStream) -> Option<Url> {
+    stream.set_read_timeout(Some(Duration::from_secs(5))).ok()?;
+    let mut bytes = [0_u8; 16 * 1024];
+    let read = stream.read(&mut bytes).ok()?;
+    let request = String::from_utf8_lossy(&bytes[..read]);
+    let target = request.lines().next()?.split_whitespace().nth(1)?;
+    Url::parse(&format!("http://127.0.0.1{target}")).ok()
+}
+
 fn write_callback_response(
     stream: &mut std::net::TcpStream,
     build_url: &str,
@@ -283,7 +291,10 @@ fn write_callback_response(
 
 #[cfg(test)]
 mod tests {
-    use super::completion_url;
+    use std::io::{Read, Write};
+    use std::net::{TcpListener, TcpStream};
+
+    use super::{completion_url, wait_for_callback};
 
     #[test]
     fn completion_url_exposes_only_the_result() {
@@ -302,5 +313,27 @@ mod tests {
             failed.as_str(),
             "https://build.example.test/cli/auth-complete?status=failed"
         );
+    }
+
+    #[test]
+    fn stray_local_requests_do_not_end_the_login() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let client = std::thread::spawn(move || {
+            let send = |request: &str| {
+                let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+                stream.write_all(request.as_bytes()).unwrap();
+                let _ = stream.read_to_end(&mut Vec::new());
+            };
+            drop(TcpStream::connect(("127.0.0.1", port)).unwrap());
+            send("GET / HTTP/1.1\r\n\r\n");
+            send("GET /callback?state=wrong&code=stolen HTTP/1.1\r\n\r\n");
+            send("GET /callback?state=expected&code=real HTTP/1.1\r\n\r\n");
+        });
+
+        let code = wait_for_callback(&listener, "expected", "https://build.example.test").unwrap();
+        client.join().unwrap();
+        assert_eq!(code, "real");
     }
 }

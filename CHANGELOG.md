@@ -7,6 +7,8 @@
 - `aomi-build` calls Build's `/api/build/{cli,deployments}/*` routes. Build
   removed the old `/api/bff/*` paths, so `login`, `deploy`, `status` and
   `activate` in 6.0.0 fail with 404 against current Build.
+- `aomi-build login` ignores stray requests to its local callback port (editor
+  and port-scanner probes) instead of aborting with "invalid state".
 
 ### Added
 
