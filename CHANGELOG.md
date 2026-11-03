@@ -1,5 +1,21 @@
 # Changelog
 
+## 6.0.2
+
+### Added
+
+- `aomi-build project create` works with just `aomi-build login`: without an
+  activation token it opens the GitHub App approval for the repo, waits for it,
+  and the backend creates the Project for the approving GitHub account. `--repo`
+  defaults to the checkout's origin and `--platform` to `community`.
+- A failed approval (for example, a repo that is already a Project) is reported
+  instead of waiting for the timeout, on backends that report failures.
+
+### Compatibility
+
+- CLI-only release; library and FFI version (1) unchanged. Activation tokens
+  keep the admin path.
+
 ## 6.0.1
 
 ### Fixed
