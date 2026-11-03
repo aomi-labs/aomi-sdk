@@ -5,6 +5,40 @@ use super::*;
 // ── deployment.json round-trip via the state file ───────────────────────────
 
 #[test]
+fn project_apps_record_application_ids_in_deployment_json() {
+    // Build BFF `GET /api/build/deployments/apps?projectId=…` response.
+    let apps: crate::deploy::types::ProjectAppsResult = serde_json::from_value(json!({
+        "ok": true,
+        "projectId": 42,
+        "state": "live",
+        "apps": [
+            { "id": 2937816, "name": "bot", "is_active": true, "loaded": true,
+              "app_release_tag": "apps-1-r00a1b2c3d4-bot-abc1234" },
+            { "id": 99, "name": "other-app", "is_active": true, "loaded": true,
+              "app_release_tag": null }
+        ]
+    }))
+    .unwrap();
+    let mut state = sample_state();
+    state.apply_live_attempt();
+    state.apply_application_ids(&apps.apps);
+    assert_eq!(
+        state.deployment.platform.apps[0].application_id,
+        Some(2937816)
+    );
+    assert_eq!(state.deployment.platform.apps[1].application_id, None);
+
+    let repo = TestRepo::new();
+    state.write(repo.root()).unwrap();
+    let raw: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(repo.root().join(".aomi/deployment.json")).unwrap())
+            .unwrap();
+    assert_eq!(raw["platform"]["apps"][0]["application_id"], 2937816);
+    assert!(raw["platform"]["apps"][1].get("application_id").is_none());
+    assert_eq!(LocalDeployment::read(repo.root()).unwrap().unwrap(), state);
+}
+
+#[test]
 fn local_deployment_write_then_read_round_trips() {
     let repo = TestRepo::new();
     let state = sample_state();

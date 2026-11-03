@@ -40,7 +40,7 @@ pub struct StatusArgs {
 impl StatusArgs {
     pub async fn run(self) -> Result<()> {
         let (git_root, _) = git_context(&self.path)?;
-        let state = LocalDeployment::read(&git_root)?.ok_or_else(|| {
+        let mut state = LocalDeployment::read(&git_root)?.ok_or_else(|| {
             anyhow!(
                 "no .aomi/deployment.json at {} — run `{} deploy` first",
                 git_root.display(),
@@ -64,9 +64,19 @@ impl StatusArgs {
         } else {
             resolve_build_url(&self.build_url, backend_url.as_deref())
         };
+        let session = match build_url {
+            Some(build_url) => Some(Session::at(&build_url, None).await?),
+            None => None,
+        };
+        if let Some(session) = &session
+            && let Ok(apps) = session.client.project_apps(state.project_id).await
+        {
+            // A deployment.json written before ids were recorded still gets
+            // them in the report; status leaves the file untouched.
+            state.apply_application_ids(&apps.apps);
+        }
         let mut report = StatusResult::collect(&state, backend_url, token).await;
-        if let Some(build_url) = build_url {
-            let session = Session::at(&build_url, None).await?;
+        if let Some(session) = session {
             if let Some(recorded) = &state.attempt {
                 report.attempt =
                     Some(AttemptStatus::fetch(&session.client, state.project_id, recorded).await);

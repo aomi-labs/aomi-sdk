@@ -249,6 +249,8 @@ fn activation_accepts_canonical_shapes() {
     let mut state = sample_state();
     state.apply_target_activation(&manager);
     assert_eq!(state.deployment.platform.apps[0].activated, Some(true));
+    assert_eq!(state.deployment.platform.apps[0].application_id, Some(7));
+    assert_eq!(state.deployment.platform.apps[1].application_id, None);
     assert!(state.state.ci_passed);
 
     let builder: ActivateResult = serde_json::from_value(json!({

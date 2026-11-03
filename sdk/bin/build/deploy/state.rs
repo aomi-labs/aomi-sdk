@@ -10,7 +10,9 @@ use serde::{Deserialize, Serialize};
 const DEPLOYMENT_DIR: &str = ".aomi";
 const DEPLOYMENT_FILE: &str = "deployment.json";
 
-use super::types::{ActivateResult, Activation, BuildDeployResult, DeployPayload, DeployResult};
+use super::types::{
+    ActivateResult, Activation, BuildDeployResult, DeployPayload, DeployResult, PlatformAppStatus,
+};
 
 // ── Local state (.aomi/deployment.json) ─────────────────────────────────────
 
@@ -128,6 +130,21 @@ impl LocalDeployment {
         self.state.activated = !self.deployment.platform.apps.is_empty();
     }
 
+    /// Record each deployed app's application id from the Project's
+    /// application list. The id is stable per app name across releases, so
+    /// the match is by name alone.
+    pub fn apply_application_ids(&mut self, apps: &[PlatformAppStatus]) {
+        for app in &mut self.deployment.platform.apps {
+            if let Some(id) = apps
+                .iter()
+                .find(|live| live.name == app.name)
+                .and_then(|live| live.id)
+            {
+                app.application_id = Some(id);
+            }
+        }
+    }
+
     /// Every app name recorded by the last deploy.
     pub fn app_names(&self) -> Vec<String> {
         self.deployment
@@ -155,6 +172,7 @@ impl LocalDeployment {
         for activated in &response.activation.apps {
             for app in self.deployment.platform.apps.iter_mut() {
                 if app.name == activated.name {
+                    app.application_id = activated.application_id.or(app.application_id);
                     app.activated = Some(
                         activated.is_active
                             && activated.artifact_ready

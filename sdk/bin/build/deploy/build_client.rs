@@ -12,7 +12,7 @@ use super::backend::http_client;
 use super::types::{
     ActivateResult, AttemptResult, BuildActivateInput, BuildAttemptAction, BuildDeployInput,
     BuildDeployResult, CliExchangeInput, CliExchangeResult, CliStatusResult,
-    DeploymentStatusResult,
+    DeploymentStatusResult, ProjectAppsResult,
 };
 
 /// Result of checking a stored credential against Aomi Build.
@@ -109,6 +109,15 @@ impl BuildClient {
             "deployment attempt status",
         )
         .await
+    }
+
+    /// Every application the Project owns, with its id and runtime state.
+    pub async fn project_apps(&self, project_id: i64) -> Result<ProjectAppsResult> {
+        let mut url = self.url("/api/build/deployments/apps")?;
+        url.query_pairs_mut()
+            .append_pair("projectId", &project_id.to_string());
+        self.send(self.http.get(url).bearer_auth(&self.bearer), "project apps")
+            .await
     }
 
     /// Cancel an attempt that has not started activating.
