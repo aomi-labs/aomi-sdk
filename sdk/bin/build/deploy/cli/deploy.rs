@@ -92,6 +92,9 @@ pub(crate) async fn run_activate_step(args: ActivateArgs) -> Result<()> {
         )
         .await?;
         state.apply_live_attempt();
+        state
+            .record_application_ids(&session.client, session.backend_url())
+            .await;
         state.write(&git_root)?;
         if !args.json {
             println!(
@@ -428,6 +431,11 @@ impl DeployStepArgs {
             )
             .await?;
             state.apply_live_attempt();
+            // The attempt reports no application ids. The deploy is already
+            // live, so a failed lookup only leaves the id out of the summary.
+            state
+                .record_application_ids(&prepared.session.client, prepared.session.backend_url())
+                .await;
             state.write(&prepared.git_root)?;
             if !quiet {
                 println!("[4/4] Verify runtime  ✓ release loaded");
@@ -481,6 +489,9 @@ impl DeployStepArgs {
             );
             for app in &state.deployment.platform.apps {
                 println!("    Release    {}", app.release_tag);
+                if let Some(id) = app.application_id {
+                    println!("    App id     {id}");
+                }
             }
             if let Some(project_url) = &state.project_url {
                 println!("    Project    {project_url}");

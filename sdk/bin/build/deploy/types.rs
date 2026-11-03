@@ -121,6 +121,14 @@ pub struct AppRecord {
     /// Local `.aomi/deployment.json` overlay; absent from backend deploy result.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub activated: Option<bool>,
+    /// Local overlay: the backend application id, recorded once the app is
+    /// live. Builders address the app by this id in the catalog and chat.
+    #[serde(
+        default,
+        alias = "applicationId",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub application_id: Option<i64>,
 }
 
 // Release-tag activation request and response.
@@ -393,8 +401,22 @@ pub struct PlatformAppResult {
     pub app: PlatformAppStatus,
 }
 
+/// Response of the Build BFF's `GET /api/build/deployments/apps?projectId=…`:
+/// every application the Project owns, with its runtime state.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProjectAppsResult {
+    pub apps: Vec<PlatformAppStatus>,
+}
+
+/// One application row, from the backend's single-app read, the Build BFF's
+/// per-Project list or the public Chat catalog.
 #[derive(Debug, Clone, Deserialize)]
 pub struct PlatformAppStatus {
+    /// Application id. The public catalog names it `application_id`.
+    #[serde(default, alias = "application_id")]
+    pub id: Option<i64>,
+    #[serde(default)]
+    pub name: String,
     #[serde(default)]
     pub is_active: bool,
     #[serde(default)]
