@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 const DEPLOYMENT_DIR: &str = ".aomi";
 const DEPLOYMENT_FILE: &str = "deployment.json";
 
+use super::build_client::BuildClient;
+use super::catalog::ChatCatalog;
 use super::types::{
     ActivateResult, Activation, BuildDeployResult, DeployPayload, DeployResult, PlatformAppStatus,
 };
@@ -130,18 +132,59 @@ impl LocalDeployment {
         self.state.activated = !self.deployment.platform.apps.is_empty();
     }
 
-    /// Record each deployed app's application id from the Project's
-    /// application list. The id is stable per app name across releases, so
-    /// the match is by name alone.
+    /// Record each deployed app's application id from application rows. A row
+    /// with the app's exact release tag wins. Otherwise the app takes the id of
+    /// the only row with its name; several rows with one name leave it unset.
     pub fn apply_application_ids(&mut self, apps: &[PlatformAppStatus]) {
         for app in &mut self.deployment.platform.apps {
-            if let Some(id) = apps
+            let same_release = apps
                 .iter()
-                .find(|live| live.name == app.name)
-                .and_then(|live| live.id)
-            {
+                .find(|row| row.app_release_tag.as_deref() == Some(app.release_tag.as_str()));
+            let mut same_name = apps.iter().filter(|row| row.name == app.name);
+            let only_by_name = match (same_name.next(), same_name.next()) {
+                (Some(row), None) => Some(row),
+                _ => None,
+            };
+            if let Some(id) = same_release.or(only_by_name).and_then(|row| row.id) {
                 app.application_id = Some(id);
             }
+        }
+    }
+
+    /// Fill missing application ids. The Builder's Project app list comes
+    /// first. Apps it leaves without an id are looked up in the public Chat
+    /// catalog of the backend's environment by exact release tag, so a
+    /// private app stays without one. Every lookup failure is tolerated: the
+    /// id is informational.
+    pub async fn record_application_ids(
+        &mut self,
+        client: &BuildClient,
+        backend_url: Option<&str>,
+    ) {
+        if let Ok(apps) = client.project_apps(self.project_id).await {
+            self.apply_application_ids(&apps.apps);
+        }
+        if self
+            .deployment
+            .platform
+            .apps
+            .iter()
+            .all(|app| app.application_id.is_some())
+        {
+            return;
+        }
+        let Some(catalog) = backend_url.and_then(ChatCatalog::for_backend) else {
+            return;
+        };
+        if let Ok(mut rows) = catalog.apps(&self.deployment.platform.platform).await {
+            // The catalog holds every public app on the platform, many sharing
+            // a name, so only exact release tags may match.
+            rows.retain(|row| {
+                row.app_release_tag
+                    .as_deref()
+                    .is_some_and(|tag| self.release_tag_for(&row.name) == Some(tag))
+            });
+            self.apply_application_ids(&rows);
         }
     }
 

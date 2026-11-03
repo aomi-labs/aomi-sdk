@@ -408,12 +408,12 @@ pub struct ProjectAppsResult {
     pub apps: Vec<PlatformAppStatus>,
 }
 
-/// One application row, from the backend's single-app read or the Build BFF's
-/// per-Project list.
+/// One application row, from the backend's single-app read, the Build BFF's
+/// per-Project list or the public Chat catalog.
 #[derive(Debug, Clone, Deserialize)]
 pub struct PlatformAppStatus {
-    /// Application id.
-    #[serde(default)]
+    /// Application id. The public catalog names it `application_id`.
+    #[serde(default, alias = "application_id")]
     pub id: Option<i64>,
     #[serde(default)]
     pub name: String,

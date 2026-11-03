@@ -39,6 +39,39 @@ fn project_apps_record_application_ids_in_deployment_json() {
 }
 
 #[test]
+fn application_ids_prefer_exact_release_tag_over_shared_names() {
+    // Public Chat catalog rows: `application_id`, many rows sharing a name.
+    let rows: Vec<crate::deploy::types::PlatformAppStatus> = serde_json::from_value(json!([
+        { "name": "bot", "application_id": 11, "platform": "krexa",
+          "app_release_tag": "apps-9-r00-bot-old", "is_public": true, "is_active": true },
+        { "name": "bot", "application_id": 2937816, "platform": "krexa",
+          "app_release_tag": "apps-1-r00a1b2c3d4-bot-abc1234", "is_public": true, "is_active": true },
+        { "name": "bot2", "application_id": 12, "platform": "krexa",
+          "app_release_tag": "apps-9-r00-bot2-old", "is_public": true, "is_active": true },
+        { "name": "bot2", "application_id": 13, "platform": "krexa",
+          "app_release_tag": "apps-8-r00-bot2-old", "is_public": true, "is_active": true }
+    ]))
+    .unwrap();
+    let mut state = sample_state();
+    state.apply_application_ids(&rows);
+    assert_eq!(
+        state.deployment.platform.apps[0].application_id,
+        Some(2937816)
+    );
+    // bot2's own release is absent (a private app) and its name is ambiguous.
+    assert_eq!(state.deployment.platform.apps[1].application_id, None);
+}
+
+#[test]
+fn chat_catalog_follows_known_backends_only() {
+    use crate::deploy::catalog::ChatCatalog;
+    let host = |backend| format!("{:?}", ChatCatalog::for_backend(backend).unwrap());
+    assert!(host("https://api-staging.aomi.dev/").contains("\"https://chat-staging.aomi.dev\""));
+    assert!(host("https://api.aomi.dev").contains("\"https://chat.aomi.dev\""));
+    assert!(ChatCatalog::for_backend("http://localhost:8080").is_none());
+}
+
+#[test]
 fn local_deployment_write_then_read_round_trips() {
     let repo = TestRepo::new();
     let state = sample_state();

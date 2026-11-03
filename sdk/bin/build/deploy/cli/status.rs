@@ -68,12 +68,12 @@ impl StatusArgs {
             Some(build_url) => Some(Session::at(&build_url, None).await?),
             None => None,
         };
-        if let Some(session) = &session
-            && let Ok(apps) = session.client.project_apps(state.project_id).await
-        {
+        if let Some(session) = &session {
             // A deployment.json written before ids were recorded still gets
             // them in the report; status leaves the file untouched.
-            state.apply_application_ids(&apps.apps);
+            state
+                .record_application_ids(&session.client, backend_url.as_deref())
+                .await;
         }
         let mut report = StatusResult::collect(&state, backend_url, token).await;
         if let Some(session) = session {

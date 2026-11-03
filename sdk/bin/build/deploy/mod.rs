@@ -3,6 +3,7 @@ pub(crate) mod attempt;
 pub(crate) mod auth;
 pub(crate) mod backend;
 pub(crate) mod build_client;
+pub(crate) mod catalog;
 pub(crate) mod cli;
 pub(crate) mod config;
 pub(crate) mod discord;
