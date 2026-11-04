@@ -1,5 +1,41 @@
 # Changelog
 
+## 7.0.0
+
+### Changed (breaking)
+
+- Every `host::*` route target now names a host tool exactly as the backend
+  registers it. EVM tools carry the `evm_` prefix like their Solana pairs:
+  `StageTx` → `EvmStageTx` (`evm_stage_tx`), `SimulateBatch` → `EvmSimulate`
+  (`evm_simulate`), `CommitTxs` → `EvmCommitTxs` (`evm_commit_txs`),
+  `GetTimeAndOnchainContext` → `EvmGetContext`, `GetContract` →
+  `EvmGetContract`, `GetAccountInfo` → `EvmGetAccountInfo`, `SyncChain` →
+  `EvmSyncChain`. The old `stage_tx` / `simulate_batch` / `commit_txs` names
+  no longer exist on the host, so routes built on them did nothing.
+- Solana: `SvmSimulateIx` and `SvmSimulateTx` are one `SvmSimulate`
+  (`svm_simulate`, both lanes), and `SvmSignData` is `SvmCommitMessage`
+  (`svm_commit_message`).
+- Removed targets with no host tool: `BraveSearch`, `CommitTx`, `ViewState`,
+  `RunTx`.
+
+### Added
+
+- `EvmCall`, `EvmDiscardTx`, `EvmGetTokenBalance`, `EvmGetTokenHoldings`,
+  `SvmDiscardTx`.
+
+### Fixed
+
+- `aomi-build` collision checks and the `aomi-run` host stubs use the host's
+  current namespaces (`aomi-core`, `evm-core`, `evm-reads`, `evm-sim`,
+  `svm-core`, `svm-reads`, `svm-write-ix`, `svm-write-tx`) and tool names.
+- In-repo apps and skill docs route through the renamed targets and name the
+  current host tools in their prompts.
+
+### Compatibility
+
+- FFI version (1) unchanged; only route tool names changed. Rebuild an app on
+  7.0.0 and rename its `host::*` markers.
+
 ## 6.0.2
 
 ### Added

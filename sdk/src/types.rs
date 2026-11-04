@@ -480,14 +480,14 @@ pub trait DynAomiApp: Clone + Default + Send + Sync + 'static {
     /// - EVM meta: `"evm-core"` (reads + stage/simulate/sign-message/commit)
     /// - EVM lanes: `"evm-reads"` (contract reads, account/context lookups,
     ///   fork sync) and `"evm-sim"` (`evm_stage_tx` plus session simulation
-    ///   worlds: `sim_open` / `sim_apply` / `sim_call` / `sim_snapshot` /
-    ///   `sim_revert` / `sim_close`; no commit tools)
+    ///   worlds: `evm_sim_open` / `evm_sim_apply` / `evm_sim_call` / `evm_sim_snapshot` /
+    ///   `evm_sim_revert` / `evm_sim_close`; no commit tools)
     /// - SVM meta: `"svm-core"` (expands to the full SVM catalogue)
     /// - SVM lanes (2026-07 recut): `"svm-reads"`, `"svm-write-ix"`
-    ///   (compose from instructions: `svm_stage_ix` / `svm_simulate_ix` /
-    ///   `svm_commit_txs` + `svm_sign_data`), `"svm-write-tx"`
-    ///   (venue-built transactions: `svm_stage_tx` / `svm_simulate_tx` /
-    ///   `svm_commit_txs` + `svm_sign_data`). Both lanes share the single
+    ///   (compose from instructions: `svm_stage_ix` / `svm_simulate` /
+    ///   `svm_commit_txs` + `svm_commit_message`), `"svm-write-tx"`
+    ///   (venue-built transactions: `svm_stage_tx` / `svm_simulate` /
+    ///   `svm_commit_txs` + `svm_commit_message`). Both lanes share the single
     ///   model-facing commit tool `svm_commit_txs`.
     /// - Other: `"database"` (host-private)
     ///

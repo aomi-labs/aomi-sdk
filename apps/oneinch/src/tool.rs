@@ -179,7 +179,7 @@ fn is_native(addr: &str) -> bool {
     addr.eq_ignore_ascii_case(NATIVE_SENTINEL)
 }
 
-/// Build the `host::stage_tx` args object from a 1inch `Transaction`.
+/// Build the `host::evm_stage_tx` args object from a 1inch `Transaction`.
 /// 1inch returns fully-encoded calldata, so we use `data: { raw }` (the host
 /// will not re-encode). Optional fields default conservatively.
 fn stage_tx_args(
@@ -210,7 +210,7 @@ impl DynAomiTool for BuildSwapTx {
     type App = OneinchApp;
     type Args = BuildSwapTxArgs;
     const NAME: &'static str = "oneinch_build_swap_tx";
-    const DESCRIPTION: &'static str = "Use when the user is ready to execute a 1inch swap. Composite tool: fetches a quote, checks ERC-20 allowance for the 1inch router (skipped for native sells), routes the (optional) approval and swap transactions through the host wallet, and binds the resulting tx hash. The LLM does not need to call stage_tx, simulate, or commit — the route handles it.";
+    const DESCRIPTION: &'static str = "Use when the user is ready to execute a 1inch swap. Composite tool: fetches a quote, checks ERC-20 allowance for the 1inch router (skipped for native sells), routes the (optional) approval and swap transactions through the host wallet, and binds the resulting tx hash. The LLM does not need to call evm_stage_tx, simulate, or commit — the route handles it.";
 
     fn run_with_routes(
         _app: &OneinchApp,
@@ -313,7 +313,7 @@ impl DynAomiTool for BuildSwapTx {
         ToolReturn::route(ok(preview)?)
             .next(|next| {
                 for (i, args) in stage_args.iter().enumerate() {
-                    let step = next.add::<host::StageTx>(args.clone());
+                    let step = next.add::<host::EvmStageTx>(args.clone());
                     if i == last_index {
                         step.note(
                             "Stage the 1inch swap. CRITICAL: copy `data.raw` and `to` BYTE-FOR-BYTE \
@@ -322,9 +322,9 @@ impl DynAomiTool for BuildSwapTx {
                              the staged txs and waits for the wallet.",
                         )
                         .enforce(EnforcementPolicy::Continue, |enforce| {
-                            enforce.add::<host::SimulateBatch>(json!({}));
+                            enforce.add::<host::EvmSimulate>(json!({}));
                             enforce
-                                .add::<host::CommitTxs>(json!({ "aa_preference": "auto" }))
+                                .add::<host::EvmCommitTxs>(json!({ "aa_preference": "auto" }))
                                 .bind_as("transaction_hash");
                         });
                     } else {
@@ -336,7 +336,7 @@ impl DynAomiTool for BuildSwapTx {
                 }
             })
             // No `.after::<>` / `.awaits` — 1inch is atomic per chain, so once
-            // commit_txs lands the swap is done. The bound `transaction_hash`
+            // evm_commit_txs lands the swap is done. The bound `transaction_hash`
             // ends the route.
             .try_build()
             .map_err(|e| format!("[1inch] route build: {e}"))
@@ -416,7 +416,7 @@ impl DynAomiTool for GetApproveTx {
     type App = OneinchApp;
     type Args = GetApproveTxArgs;
     const NAME: &'static str = "oneinch_get_approve_tx";
-    const DESCRIPTION: &'static str = "Use when `oneinch_check_allowance` shows insufficient allowance. Returns a raw ERC-20 approval tx (to=token, data=approve calldata, value=0) targeting the 1inch router. Stage via `stage_tx` with `data: { raw }`; do not re-encode. Omit `amount` for unlimited approval.";
+    const DESCRIPTION: &'static str = "Use when `oneinch_check_allowance` shows insufficient allowance. Returns a raw ERC-20 approval tx (to=token, data=approve calldata, value=0) targeting the 1inch router. Stage via `evm_stage_tx` with `data: { raw }`; do not re-encode. Omit `amount` for unlimited approval.";
 
     fn run(_app: &OneinchApp, args: Self::Args, ctx: DynToolCallCtx) -> Result<Value, String> {
         let api_key = resolve_key(&ctx, args.api_key.as_deref())?;

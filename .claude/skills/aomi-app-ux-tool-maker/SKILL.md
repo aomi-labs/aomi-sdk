@@ -276,9 +276,9 @@ After regenerating with `aomi-build gen-client <platform> --force`, the client m
 
 #### Wallet handoff (on-chain sig + off-chain submit)
 
-Many platforms have this shape: **build something off-chain → user signs on-chain → confirm/submit off-chain**. Examples: Khalani (`build_deposit` → `stage_tx` → `submit_order`), Across (`get_bridge_quote` → SpokePool tx → `get_deposit_status`), 1inch (`get_quote` → `approve_tx` + `swap_tx`), CoW (build order → EIP-712 signature → submit signed order), LiFi (quote → approve + swap → status), GMX/dYdX (place position → on-chain settlement).
+Many platforms have this shape: **build something off-chain → user signs on-chain → confirm/submit off-chain**. Examples: Khalani (`build_deposit` → `evm_stage_tx` → `submit_order`), Across (`get_bridge_quote` → SpokePool tx → `get_deposit_status`), 1inch (`get_quote` → `approve_tx` + `swap_tx`), CoW (build order → EIP-712 signature → submit signed order), LiFi (quote → approve + swap → status), GMX/dYdX (place position → on-chain settlement).
 
-**Wrong way (LLM orchestration):** the tool returns raw JSON like `{ approve_tx, swap_tx, status_url }` and the description says "stage these via stage_tx, then poll status." The LLM is now orchestrating a multi-step protocol it can get subtly wrong (forgets to wait for receipts, swaps order of approve+swap, copies calldata wrong, skips the post-submit step).
+**Wrong way (LLM orchestration):** the tool returns raw JSON like `{ approve_tx, swap_tx, status_url }` and the description says "stage these via evm_stage_tx, then poll status." The LLM is now orchestrating a multi-step protocol it can get subtly wrong (forgets to wait for receipts, swaps order of approve+swap, copies calldata wrong, skips the post-submit step).
 
 **Right way (`ToolReturn::route(...)` chain):** the tool emits a typed routed envelope. The host runs the wallet steps automatically, binds the resulting tx hash / signature, and fires the follow-up tool. The LLM just sees the final result.
 
@@ -288,16 +288,16 @@ The mechanics — these are SDK primitives in `aomi_sdk::*` and `host::*`:
 ToolReturn::route(ok(preview)?)            // preview = JSON the LLM sees while waiting
     .next(|next| {
         // Sequential wallet-bound steps. For approve+swap, add both;
-        // only the last one needs `.enforce(...)` since commit_txs
+        // only the last one needs `.enforce(...)` since evm_commit_txs
         // batches whatever's been staged.
         for (i, args) in stage_args.iter().enumerate() {
-            let step = next.add::<host::StageTx>(args.clone());
+            let step = next.add::<host::EvmStageTx>(args.clone());
             if i == last_index {
                 step.note("Stage the deposit. Copy data.raw and to BYTE-FOR-BYTE.")
                     .enforce(EnforcementPolicy::Continue, |enforce| {
-                        enforce.add::<host::SimulateBatch>(json!({}));
+                        enforce.add::<host::EvmSimulate>(json!({}));
                         enforce
-                            .add::<host::CommitTxs>(json!({ "aa_preference": "auto" }))
+                            .add::<host::EvmCommitTxs>(json!({ "aa_preference": "auto" }))
                             .bind_as("transaction_hash");      // ← what we await
                     });
             } else {
@@ -316,11 +316,11 @@ ToolReturn::route(ok(preview)?)            // preview = JSON the LLM sees while 
 
 | When the wallet step is | Use | What it binds | Follow-up |
 |---|---|---|---|
-| Send one or more EVM transactions | `host::StageTx` × N → `enforce(SimulateBatch + CommitTxs.bind_as("transaction_hash"))` | tx hash | `.after::<SubmitOrder>(...)` for off-chain confirm; or omit for swap-only flows |
-| Sign EIP-712 typed data (Permit2, CoW, Polymarket L2) | `host::CommitEip712` with `.bind_as("signature")` directly (no SimulateBatch/CommitTxs) | signature hex | `.after::<SubmitSignedOrder>(...)` to POST the signature |
-| Solana sign-and-broadcast | `host::SignTxSolana` with `.bind_as("signed_tx")` | base64 signed tx bytes | `.after::<SubmitTx>(...)` to POST to the venue's RPC |
+| Send one or more EVM transactions | `host::EvmStageTx` × N → `enforce(EvmSimulate + EvmCommitTxs.bind_as("transaction_hash"))` | tx hash | `.after::<SubmitOrder>(...)` for off-chain confirm; or omit for swap-only flows |
+| Sign EIP-712 typed data (Permit2, CoW, Polymarket L2) | `host::EvmCommitMessage` with `.bind_as("signature")` directly (no EvmSimulate/EvmCommitTxs) | signature hex | `.after::<SubmitSignedOrder>(...)` to POST the signature |
+| Solana sign-and-broadcast | `host::SvmCommitTxs` with `.bind_as("signed_tx")` | base64 signed tx bytes | `.after::<SubmitTx>(...)` to POST to the venue's RPC |
 
-**`stage_tx` args shape (must be exact):**
+**`evm_stage_tx` args shape (must be exact):**
 ```json
 {
   "to": "0x...",
@@ -338,13 +338,13 @@ If the API gives you fully-encoded calldata, use `data: { raw }`. If it gives yo
 
 - **`bind_as` is the contract.** The follow-up tool's args struct must have a field whose name matches the bound alias (e.g. `transaction_hash: Option<String>`), and the runtime fills it in. Tools that bind `transaction_hash` need their follow-up to accept that field.
 - **Note text matters.** The LLM sees `note(...)` strings. Tell it: "Copy `data.raw` and `to` byte-for-byte. Do not abbreviate, reformat, or truncate calldata." Without this, models hallucinate calldata fragments.
-- **Use the typed `host::*` markers**, not stringly-typed names. `host::StageTx`, `host::CommitTxs`, `host::SimulateBatch`, `host::CommitEip712`, `host::SignTxSolana` — the macro turns these into the canonical tool names; passing wrong strings silently breaks the route.
+- **Use the typed `host::*` markers**, not stringly-typed names. `host::EvmStageTx`, `host::EvmCommitTxs`, `host::EvmSimulate`, `host::EvmCommitMessage`, `host::SvmCommitTxs` — the macro turns these into the canonical tool names; passing wrong strings silently breaks the route.
 - **`EnforcementPolicy::Continue` vs `::Stop`**: `Continue` lets the route move on to `.after::<>` after enforcement runs. `Stop` halts the chain (used when one of the enforced steps is itself the terminal outcome).
 - **Don't put the wallet handoff in a side-tool.** A separate `submit_signed_tx` that the LLM has to remember to call manually defeats the whole point. The submit is `.after::<>(...)` of the build tool.
 
 **When NOT to use this pattern:**
 - The platform has no on-chain step (pure REST API).
-- The transaction is fully off-chain (database update). `stage_tx` is for EVM signing.
+- The transaction is fully off-chain (database update). `evm_stage_tx` is for EVM signing.
 - You're returning a quote only and the user explicitly didn't ask to execute. (`get_quote` is read-only; the routed pattern belongs on the `_swap` / `_bridge` / `_place_order` composite.)
 
 #### Code patterns
@@ -403,8 +403,8 @@ aomi-run target/debug/lib<platform>.dylib
 opens a local REPL against the LLM (provider via `--provider`, key from
 env). Worth doing at least once per app — you'll catch obvious naming /
 description issues and unclear PREAMBLE wording faster than via the
-formal e2e harness. Wallet-bound tools (`commit_tx`, `commit_eip712`,
-`stage_tx`, etc.) are stubbed in `aomi-run`, so route-driven flows still
+formal e2e harness. Wallet-bound tools (`evm_commit_txs`, `evm_commit_message`,
+`evm_stage_tx`, etc.) are stubbed in `aomi-run`, so route-driven flows still
 need the e2e test or the deployed backend.
 
 ### 6.5. Seed the e2e test
@@ -460,7 +460,7 @@ Suggest the user run **`/aomi-app-e2e-tester <platform>`** to expand the test an
 - ❌ **Touching `ext/src/<platform>/`.** Generated client is regenerated by `aomi-build gen-client`; never hand-edit it.
 - ❌ **Asking the user (LLM) for values you can compute.** Timestamps, polling intervals, page sizes, default chains, retry budgets — derive these in Rust.
 - ❌ **Adding `*Summary` projection structs in `tool.rs` to drop fields the LLM doesn't need.** Trim those fields **at the spec layer** instead — delete them from `ext/specs/<platform>.yaml` and `aomi-build gen-client --force`. The typed Rust struct then IS the slim shape, and `tool.rs` stays `ok(response)`. The exception (one endpoint serving multiple tool intents needing different shapes) is rare and needs justification.
-- ❌ **Returning raw `{ approve_tx, swap_tx, status_url }` JSON for the LLM to orchestrate.** When an off-chain build returns a transaction (or signature payload) the user must sign, wrap the wallet step in a `ToolReturn::route(...)` chain with `host::StageTx` (or `host::CommitEip712` / `host::SignTxSolana`) and `.enforce(SimulateBatch + CommitTxs.bind_as("transaction_hash"))`. Use `.after::<NextTool>(args).awaits("transaction_hash")` for the off-chain confirm step. The LLM should never see "now stage these txs in this order" instructions in your tool description — that's exactly what the route handles. See "Wallet handoff" section above.
+- ❌ **Returning raw `{ approve_tx, swap_tx, status_url }` JSON for the LLM to orchestrate.** When an off-chain build returns a transaction (or signature payload) the user must sign, wrap the wallet step in a `ToolReturn::route(...)` chain with `host::EvmStageTx` (or `host::EvmCommitMessage` / `host::SvmCommitTxs`) and `.enforce(EvmSimulate + EvmCommitTxs.bind_as("transaction_hash"))`. Use `.after::<NextTool>(args).awaits("transaction_hash")` for the off-chain confirm step. The LLM should never see "now stage these txs in this order" instructions in your tool description — that's exactly what the route handles. See "Wallet handoff" section above.
 - ❌ **Wrapping `reqwest::Client` with auth middleware.** Even if `Client::new_with_client(...)` would let you, don't. Auth is per-call: resolve the secret in `tool.rs`, compute any signature via `apps/<platform>/src/auth.rs` helpers, and pass headers positionally into the generated client method. See "Auth: per-call shim, not middleware" above.
 - ❌ **Declaring auth only under `securitySchemes`.** Progenitor ignores `securitySchemes` for arg generation — the header has to appear in each authed operation's `parameters:` list (typically via `$ref: '#/components/parameters/ApiKeyHeader'`). Otherwise the generated client has nowhere to plug the key in.
 - ❌ **Reimplementing HMAC, base64, or timestamps in a per-app `auth.rs`.** Those primitives live in shared [ext/src/hmac_auth.rs](ext/src/hmac_auth.rs); the per-app shim owns only the venue-specific prehash format + quirks.

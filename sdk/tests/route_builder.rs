@@ -71,20 +71,20 @@ fn svm_host_route_target_names_match_host_tools() {
         "svm_stage_tx"
     );
     assert_eq!(
-        <host::SvmSimulateIx as RouteTarget>::tool_name(),
-        "svm_simulate_ix"
+        <host::SvmSimulate as RouteTarget>::tool_name(),
+        "svm_simulate"
     );
     assert_eq!(
-        <host::SvmSimulateTx as RouteTarget>::tool_name(),
-        "svm_simulate_tx"
+        <host::SvmSimulate as RouteTarget>::tool_name(),
+        "svm_simulate"
     );
     assert_eq!(
         <host::SvmCommitTxs as RouteTarget>::tool_name(),
         "svm_commit_txs"
     );
     assert_eq!(
-        <host::SvmSignData as RouteTarget>::tool_name(),
-        "svm_sign_data"
+        <host::SvmCommitMessage as RouteTarget>::tool_name(),
+        "svm_commit_message"
     );
 }
 
@@ -157,7 +157,7 @@ fn svm_lane_2_stage_commit_route_plan_serializes() {
 #[test]
 fn svm_lane_1_stage_simulate_route_plan_serializes() {
     // Lane 1 canonical chain — stage ix list → simulate via
-    // `SvmSimulateIx({ ix_ids })`. Mirrors what a future Marinade
+    // `SvmSimulate`. Mirrors what a future Marinade
     // build_stake that wants pre-commit simulation would emit.
     let plan = ToolReturn::route(json!({"status": "previewed"}))
         .next(|next| {
@@ -167,7 +167,7 @@ fn svm_lane_1_stage_simulate_route_plan_serializes() {
             }))
             .bind_as("ix_ids");
         })
-        .after::<host::SvmSimulateIx>(json!({"mode": "rpc"}))
+        .after::<host::SvmSimulate>(json!({"mode": "rpc"}))
         .awaits("ix_ids")
         .build();
 
@@ -179,7 +179,7 @@ fn svm_lane_1_stage_simulate_route_plan_serializes() {
         .iter()
         .filter_map(|route| route.get("tool").and_then(Value::as_str))
         .collect();
-    assert_eq!(tools, vec!["svm_stage_ix", "svm_simulate_ix"]);
+    assert_eq!(tools, vec!["svm_stage_ix", "svm_simulate"]);
 
     // Lane symmetry: alias bound by stage_ix is `ix_ids`, simulate_ix
     // consumes the same alias — no XOR-arg ambiguity at any point.
@@ -205,7 +205,7 @@ fn svm_lane_2_stage_simulate_route_plan_serializes() {
             }))
             .bind_as("tx_id");
         })
-        .after::<host::SvmSimulateTx>(json!({"mode": "rpc"}))
+        .after::<host::SvmSimulate>(json!({"mode": "rpc"}))
         .awaits("tx_id")
         .build();
 
@@ -217,7 +217,7 @@ fn svm_lane_2_stage_simulate_route_plan_serializes() {
         .iter()
         .filter_map(|route| route.get("tool").and_then(Value::as_str))
         .collect();
-    assert_eq!(tools, vec!["svm_stage_tx", "svm_simulate_tx"]);
+    assert_eq!(tools, vec!["svm_stage_tx", "svm_simulate"]);
 
     let stage = &routes[0];
     assert_eq!(stage.get("bind_as").and_then(Value::as_str), Some("tx_id"));
@@ -358,11 +358,11 @@ fn route_builder_async_tool_can_bind_as() {
 fn route_builder_enforcement_can_satisfy_awaited_alias() {
     let tool_return = ToolReturn::route(json!({"status": "ok"}))
         .next(|next| {
-            next.add::<host::StageTx>(json!({"to": "0x1", "data": {"raw": "0x"}}))
+            next.add::<host::EvmStageTx>(json!({"to": "0x1", "data": {"raw": "0x"}}))
                 .enforce(EnforcementPolicy::Stop, |enforce| {
-                    enforce.add::<host::SimulateBatch>(json!({}));
+                    enforce.add::<host::EvmSimulate>(json!({}));
                     enforce
-                        .add::<host::CommitTxs>(json!({"aa_preference": "auto"}))
+                        .add::<host::EvmCommitTxs>(json!({"aa_preference": "auto"}))
                         .bind_as("transaction_hash");
                 });
         })
@@ -430,9 +430,9 @@ fn route_builder_rejects_invalid_enforced_producers() {
     assert_err_contains(
         ToolReturn::route(json!({"status": "ok"}))
             .next(|next| {
-                next.add::<host::StageTx>(json!({"to": "0x1"}))
+                next.add::<host::EvmStageTx>(json!({"to": "0x1"}))
                     .enforce(EnforcementPolicy::Stop, |_| {});
-                next.add::<host::StageTx>(json!({"to": "0x2"}))
+                next.add::<host::EvmStageTx>(json!({"to": "0x2"}))
                     .enforce(EnforcementPolicy::Stop, |_| {});
             })
             .try_build(),
@@ -442,7 +442,7 @@ fn route_builder_rejects_invalid_enforced_producers() {
     assert_err_contains(
         ToolReturn::route(json!({"status": "ok"}))
             .next(|next| {
-                next.add::<host::StageTx>(json!(["not", "an", "object"]))
+                next.add::<host::EvmStageTx>(json!(["not", "an", "object"]))
                     .enforce(EnforcementPolicy::Stop, |_| {});
             })
             .try_build(),
@@ -566,7 +566,7 @@ fn assert_all_bound(tool_return: &ToolReturn, expected: &[&str]) {
 //     a real app to wire them up.
 //   - Future helper that wraps this pattern (e.g.
 //     `build_svm_stage_sim_commit_routes`) has a reference test to mirror.
-//   - The exact host verb names (`svm_stage_tx`, `svm_simulate_tx`,
+//   - The exact host verb names (`svm_stage_tx`, `svm_simulate`,
 //     `svm_commit_txs`) are pinned against the markers; a rename in the host
 //     contract breaks here before it breaks a live wallet dispatch.
 // ===========================================================================
@@ -575,7 +575,7 @@ fn assert_all_bound(tool_return: &ToolReturn, expected: &[&str]) {
 ///
 ///   parent ──sync return──▶ svm_stage_tx          binds  tx_id
 ///                            │
-///                            └─bound event(tx_id)─▶ svm_simulate_tx   binds sim_result
+///                            └─bound event(tx_id)─▶ svm_simulate   binds sim_result
 ///                                                    │
 ///                                                    └─bound event(sim_result)─▶ svm_commit_txs
 ///
@@ -583,7 +583,7 @@ fn assert_all_bound(tool_return: &ToolReturn, expected: &[&str]) {
 /// not the stage's `tx_id`. That's what makes the chain sequential vs
 /// a fan-out (both sim and commit awaiting the same `tx_id`). The runtime
 /// injects the bound value into the awaiting step's args under the
-/// alias's name, so `svm_simulate_tx` and `svm_commit_txs` see
+/// alias's name, so `svm_simulate` and `svm_commit_txs` see
 /// `tx_id` / `sim_result` materialised at dispatch time without the app
 /// having to thread them through the static args template.
 #[test]
@@ -605,7 +605,7 @@ fn lane_2_stage_sim_commit_chain_binds_sequentially() {
     // Step 2 — simulate the staged tx. The runtime injects `tx_id`
     // from the bound alias; the app leaves it out of the static args.
     let mut sim = RouteStep::on_bound_event(
-        host::SvmSimulateTx::tool_name(),
+        host::SvmSimulate::tool_name(),
         json!({ "mode": "litesvm" }),
         "tx_id",
     );
@@ -656,8 +656,8 @@ fn lane_2_stage_sim_commit_chain_binds_sequentially() {
 
     // ── Step 2: simulate_tx ──────────────────────────────────────────
     let s = &routes[1];
-    assert_eq!(s["tool"], json!(host::SvmSimulateTx::tool_name()));
-    assert_eq!(s["tool"], json!("svm_simulate_tx"));
+    assert_eq!(s["tool"], json!(host::SvmSimulate::tool_name()));
+    assert_eq!(s["tool"], json!("svm_simulate"));
     assert_eq!(
         s["trigger"],
         json!({ "type": "on_bound_event", "alias": "tx_id" }),
@@ -709,8 +709,8 @@ fn lane_2_stage_sim_commit_chain_binds_sequentially() {
 }
 
 /// Lane 1 (composed-from-instructions) 3-node chain — symmetric to the
-/// Lane 2 case above. The host markers differ (`SvmStageIx` /
-/// `SvmSimulateIx` instead of the `*Tx` pair, sharing `SvmCommitTxs`) and the
+/// Lane 2 case above. Only the stage marker differs (`SvmStageIx` instead
+/// of `SvmStageTx`; both share `SvmSimulate` and `SvmCommitTxs`) and the
 /// stage args shape is `instructions: [...]` rather than `tx: "<b64>"`,
 /// but the binding/awaits chain is identical. Pinning both lanes here
 /// makes future host renames (or SDK marker drift) surface in one place.
@@ -732,7 +732,7 @@ fn lane_1_stage_sim_commit_chain_binds_sequentially() {
     stage.bind_as = Some("ix_ids".to_string());
 
     let mut sim = RouteStep::on_bound_event(
-        host::SvmSimulateIx::tool_name(),
+        host::SvmSimulate::tool_name(),
         json!({ "version": "legacy" }),
         "ix_ids",
     );
@@ -751,7 +751,7 @@ fn lane_1_stage_sim_commit_chain_binds_sequentially() {
     assert_eq!(routes.len(), 3);
     assert_eq!(routes[0]["tool"], json!("svm_stage_ix"));
     assert_eq!(routes[0]["bind_as"], json!("ix_ids"));
-    assert_eq!(routes[1]["tool"], json!("svm_simulate_ix"));
+    assert_eq!(routes[1]["tool"], json!("svm_simulate"));
     assert_eq!(
         routes[1]["trigger"],
         json!({ "type": "on_bound_event", "alias": "ix_ids" })
@@ -768,10 +768,10 @@ fn lane_1_stage_sim_commit_chain_binds_sequentially() {
     // refactor renames either side without updating the other, this is
     // where it breaks.
     assert_eq!(host::SvmStageIx::tool_name(), "svm_stage_ix");
-    assert_eq!(host::SvmSimulateIx::tool_name(), "svm_simulate_ix");
     assert_eq!(host::SvmStageTx::tool_name(), "svm_stage_tx");
-    assert_eq!(host::SvmSimulateTx::tool_name(), "svm_simulate_tx");
+    assert_eq!(host::SvmSimulate::tool_name(), "svm_simulate");
     assert_eq!(host::SvmCommitTxs::tool_name(), "svm_commit_txs");
+    assert_eq!(host::SvmCommitMessage::tool_name(), "svm_commit_message");
 }
 
 /// Negative test — if a 3-node chain accidentally awaits the *stage*
@@ -789,7 +789,7 @@ fn fan_out_chain_is_NOT_sequential() {
     stage.bind_as = Some("tx_id".to_string());
 
     // BOTH sim and commit awaiting the stage alias = fan-out, not chain.
-    let sim = RouteStep::on_bound_event(host::SvmSimulateTx::tool_name(), json!({}), "tx_id");
+    let sim = RouteStep::on_bound_event(host::SvmSimulate::tool_name(), json!({}), "tx_id");
     let commit = RouteStep::on_bound_event(
         host::SvmCommitTxs::tool_name(),
         json!({ "mode": "wallet" }),

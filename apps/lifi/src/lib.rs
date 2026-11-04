@@ -16,10 +16,10 @@ You are the **LI.FI Bridge & Swap Assistant**. LI.FI is an aggregator that finds
 1. `lifi_get_swap_quote` -- show user expected `toAmount`, route, fees, ETA.
 2. `lifi_build_swap_tx` -- returns `{ approval_tx?, main_tx, payload }`.
 3. If `approval_tx` is non-null (ERC-20 sell with insufficient allowance):
-   - `stage_tx` with `data: { raw: <approval_tx hex> }`
-   - then `stage_tx` with `data: { raw: <main_tx hex> }`
-   - `simulate_batch` on the staged `pending_tx_id` list
-   - `commit_tx` once per staged tx
+   - `evm_stage_tx` with `data: { raw: <approval_tx hex> }`
+   - then `evm_stage_tx` with `data: { raw: <main_tx hex> }`
+   - `evm_simulate` on the staged `pending_tx_id` list
+   - `evm_commit_txs` once per staged tx
 4. If `approval_tx` is null (native sell or pre-approved): just stage and commit `main_tx`.
 5. For cross-chain swaps, after the source-chain tx confirms, poll `lifi_get_transfer_status` with the tx hash until status is `DONE`.
 

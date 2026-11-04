@@ -51,18 +51,23 @@ pub mod host {
         };
     }
 
-    host_target!(BraveSearch, "brave_search");
-    host_target!(CommitTx, "commit_tx");
-    host_target!(CommitTxs, "commit_txs");
+    // ── EVM primitives ───────────────────────────────────────────────────
+    //
+    // Every marker names a host tool exactly as product-mono registers it
+    // (`aomi/crates/tools/src/namespace.rs`). EVM tools carry the `evm_`
+    // prefix like their Solana pairs.
+    host_target!(EvmStageTx, "evm_stage_tx");
+    host_target!(EvmSimulate, "evm_simulate");
+    host_target!(EvmCommitTxs, "evm_commit_txs");
     host_target!(EvmCommitMessage, "evm_commit_message");
-    host_target!(StageTx, "stage_tx");
-    host_target!(SimulateBatch, "simulate_batch");
-    host_target!(ViewState, "view_state");
-    host_target!(RunTx, "run_tx");
-    host_target!(GetTimeAndOnchainContext, "get_time_and_onchain_context");
-    host_target!(GetContract, "get_contract");
-    host_target!(GetAccountInfo, "get_account_info");
-    host_target!(SyncChain, "sync_chain");
+    host_target!(EvmDiscardTx, "evm_discard_tx");
+    host_target!(EvmCall, "evm_call");
+    host_target!(EvmGetContext, "evm_get_context");
+    host_target!(EvmGetContract, "evm_get_contract");
+    host_target!(EvmGetAccountInfo, "evm_get_account_info");
+    host_target!(EvmGetTokenBalance, "evm_get_token_balance");
+    host_target!(EvmGetTokenHoldings, "evm_get_token_holdings");
+    host_target!(EvmSyncChain, "evm_sync_chain");
 
     // ── SVM (Solana) primitives ──────────────────────────────────────────
     //
@@ -81,7 +86,7 @@ pub mod host {
     //                               `/swap`, Raydium tx-API) stage it
     //                               through this marker and downstream
     //                               verbs consume the minted `tx_id`.
-    //   - Lane 3 (off-chain msg)  — `SvmSignData` → `svm_sign_data`
+    //   - Lane 3 (off-chain msg)  — `SvmCommitMessage` → `svm_commit_message`
     //
     // Commit means one thing: "execute this staged transaction under
     // kernel policy". There is NO mode arg and NO sign-only verb. Two
@@ -122,8 +127,8 @@ pub mod host {
     // received from a venue (e.g. byreal `/dex/v2/build-swap-tx`,
     // Jupiter `/swap`, Raydium tx-API). The host decodes, validates
     // payer = connected wallet, then stages the blob under a fresh
-    // `pending_tx_id`. Downstream verbs (`SvmSimulateTx`,
-    // `SvmCommitTxs`) consume that id.
+    // `pending_tx_id`. Downstream verbs (`SvmSimulate`, `SvmCommitTxs`)
+    // consume that id.
     //
     // Args contract:
     //   { "tx": "<base64 VersionedTransaction>",
@@ -143,36 +148,11 @@ pub mod host {
     // venue-broadcast blobs must keep it true.
     host_target!(SvmStageTx, "svm_stage_tx");
 
-    // Lane 1 simulate consumer — assembles the staged ix list into a
-    // VersionedTransaction and simulates. Args contract:
-    //   { "ix_ids": [<u32>, ...],
-    //     "version": "legacy" | "v0",                 // optional
-    //     "address_lookup_tables": ["<pubkey>", ...], // optional (v0 only)
-    //     "compute_units": <u32>,                     // optional
-    //     "priority_microlamports": <u64>,            // optional
-    //     "mode": "litesvm" | "rpc",                  // optional, see ADR 0002
-    //     "replace_recent_blockhash": <bool>,         // optional, default true
-    //     "sig_verify": <bool>,                       // optional, default false
-    //     "accounts": ["<pubkey>", ...] }             // optional address filter
-    //
-    // Rejects ids that resolve to `svm_stage_tx`-staged blobs with a
-    // "use svm_simulate_tx" hint. Mirrors the host's lane symmetry
-    // (split landed alongside this SDK bump).
-    host_target!(SvmSimulateIx, "svm_simulate_ix");
-
-    // Lane 2 simulate consumer — simulates a `svm_stage_tx`-staged
-    // tx blob as-is. The blob's version / ALTs / blockhash / compute
-    // budget are preserved; there are no assembly args, because the
-    // blob's metadata is authoritative. Args contract:
-    //   { "tx_id": <u32>,
-    //     "mode": "litesvm" | "rpc",          // optional
-    //     "replace_recent_blockhash": <bool>, // optional, default false
-    //     "sig_verify": <bool>,               // optional, default false
-    //     "accounts": ["<pubkey>", ...] }     // optional address filter
-    //
-    // Rejects ids that resolve to `svm_stage_ix`-staged instructions
-    // with a "use svm_simulate_ix" hint.
-    host_target!(SvmSimulateTx, "svm_simulate_tx");
+    // Simulate consumer for both write lanes — one host tool,
+    // `svm_simulate`, takes the EVM shape: the ordered staged ids, from
+    // either `svm_stage_ix` or `svm_stage_tx`. Args contract:
+    //   { "transactions": [{ "id": <u32> }, ...] }
+    host_target!(SvmSimulate, "svm_simulate");
 
     // Commit consumer for both write lanes — the host registers one
     // model-facing SVM commit route, `svm_commit_txs`, in `svm-write-ix`,
@@ -199,13 +179,14 @@ pub mod host {
     // stage + commit step pairs, each binding a distinct alias.
     host_target!(SvmCommitTxs, "svm_commit_txs");
 
-    // Lane 3 producer + consumer — off-chain message signing for
-    // commit-reveal flows, Squads proposal payloads, wallet-attested
-    // intents. Host-side renamed from `svm_commit_message` in iter 39
-    // (ADR 0003 OQ #3 closed). Args contract:
+    host_target!(SvmDiscardTx, "svm_discard_tx");
+
+    // Lane 3 — off-chain message signing for commit-reveal flows, Squads
+    // proposal payloads, wallet-attested intents: a reviewed commit with
+    // no simulation step. Args contract:
     //   { "message_base64": "...", "description": "...",
     //     "domain": {...}, "kind": "..." }
-    host_target!(SvmSignData, "svm_sign_data");
+    host_target!(SvmCommitMessage, "svm_commit_message");
 }
 
 #[derive(Debug, Clone)]
