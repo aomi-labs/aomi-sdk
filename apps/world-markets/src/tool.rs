@@ -115,7 +115,8 @@ impl DynAomiTool for BuildWorldTrade {
     type Args = BuildArgs;
     const NAME: &'static str = "world_build_trade";
     const DESCRIPTION: &'static str = "Build router calldata for a previewed trade. Stage the returned transaction with \
-         evm_stage_tx exactly as given; the app's guard table vets the staged target, selector, \
+         evm_stage_tx: its `to`, `value` and `chain_id` as given, its `data` as `data.raw`, and a \
+         description; the app's guard table vets the staged target, selector, \
          chain, and `usd_amount` against hard_cap / confirm_cap.";
 
     fn run(_app: &WorldMarketsApp, args: BuildArgs, _ctx: DynToolCallCtx) -> Result<Value, String> {

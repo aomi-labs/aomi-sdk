@@ -53,8 +53,8 @@ You never construct the typed data or call `evm_commit_message` directly. Just c
 2. limitless_get_orderbook(slug="eth-above-4k-eoy")
    → confirm asks at ≤ 0.55 so the limit is realistic
 3. (if first time) USDC approval to the exchange:
-   evm_stage_tx(to=USDC, sig="approve(address,uint256)",
-            args=[<exchange>, 2^256-1])  → pending_tx_id=1
+   evm_stage_tx(to=USDC, data={encode: {signature: "approve(address,uint256)",
+            args: [<exchange>, 2^256-1]}})  → pending_tx_id=1
    evm_simulate(transactions=[{id:1}])
    evm_commit_txs(tx_ids=[1])  → user signs once
 4. limitless_build_order(

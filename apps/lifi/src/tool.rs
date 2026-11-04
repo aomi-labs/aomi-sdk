@@ -308,7 +308,7 @@ impl DynAomiTool for LifiBuildSwapTx {
     type App = LifiApp;
     type Args = LifiBuildSwapTxArgs;
     const NAME: &'static str = "lifi_build_swap_tx";
-    const DESCRIPTION: &'static str = "Use when the user is ready to execute a same-chain or cross-chain swap via LI.FI. Returns `{ approval_tx?, main_tx, payload }`. If `approval_tx` is present (ERC-20 sell needing allowance), stage it first via `evm_stage_tx` with `data: { raw }`, then stage `main_tx` the same way; `evm_simulate` on the staged ids; then `evm_commit_txs` once per staged tx. Never re-encode LI.FI calldata.";
+    const DESCRIPTION: &'static str = "Use when the user is ready to execute a same-chain or cross-chain swap via LI.FI. Returns `{ approval_tx?, main_tx, payload }`. If `approval_tx` is present (ERC-20 sell needing allowance), stage it first via `evm_stage_tx` with its `to` and `value` and its `data` as `data: { raw }`, then stage `main_tx` the same way; `evm_simulate` on the staged ids; then `evm_commit_txs` once with that ordered list. Never re-encode LI.FI calldata.";
 
     fn run(_app: &LifiApp, args: Self::Args, _ctx: DynToolCallCtx) -> Result<Value, String> {
         let (chain_name, _) = get_chain_info(&args.chain)?;
@@ -357,7 +357,7 @@ impl DynAomiTool for LifiBuildSwapTx {
             "payload": payload,
             "approval_tx": approval_tx,
             "main_tx": main_tx,
-            "note": "If approval_tx is non-null, stage it first with evm_stage_tx { raw }, then stage main_tx the same way, then evm_simulate the staged pending_tx_id list, then evm_commit_txs once per staged tx.",
+            "note": "If approval_tx is non-null, stage it first with evm_stage_tx (its to and value, its data as data.raw), then stage main_tx the same way, then evm_simulate the staged pending_tx_id list, then evm_commit_txs once with that ordered list.",
         }))
     }
 }

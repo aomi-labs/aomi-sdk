@@ -318,7 +318,7 @@ ToolReturn::route(ok(preview)?)            // preview = JSON the LLM sees while 
 |---|---|---|---|
 | Send one or more EVM transactions | `host::EvmStageTx` × N → `enforce(EvmSimulate + EvmCommitTxs.bind_as("transaction_hash"))` | tx hash | `.after::<SubmitOrder>(...)` for off-chain confirm; or omit for swap-only flows |
 | Sign EIP-712 typed data (Permit2, CoW, Polymarket L2) | `host::EvmCommitMessage` with `.bind_as("signature")` directly (no EvmSimulate/EvmCommitTxs) | signature hex | `.after::<SubmitSignedOrder>(...)` to POST the signature |
-| Solana sign-and-broadcast | `host::SvmCommitTxs` with `.bind_as("signed_tx")` | base64 signed tx bytes | `.after::<SubmitTx>(...)` to POST to the venue's RPC |
+| Solana transaction a venue must submit | `host::SvmStageTx` (with `broadcaster: "venue"`) → `host::SvmSimulate` → `host::SvmCommitTxs.bind_as("signed_tx")` | base64 signed tx bytes | `.after::<SubmitTx>(...)` to POST them to the venue; with the wallet or Aomi as broadcaster the host submits and nothing binds |
 
 **`evm_stage_tx` args shape (must be exact):**
 ```json
