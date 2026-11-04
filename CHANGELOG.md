@@ -14,7 +14,9 @@
   no longer exist on the host, so routes built on them did nothing.
 - Solana: `SvmSimulateIx` and `SvmSimulateTx` are one `SvmSimulate`
   (`svm_simulate`, both lanes), and `SvmSignData` is `SvmCommitMessage`
-  (`svm_commit_message`).
+  (`svm_commit_message`). `svm_simulate` takes the EVM shape: pass the staged
+  ids in order as `{ "transactions": [{ "id": <id> }, ...] }` where the old
+  markers took `ix_ids` or `tx_id`.
 - Removed targets with no host tool: `BraveSearch`, `CommitTx`, `ViewState`,
   `RunTx`.
 
@@ -25,9 +27,11 @@
 
 ### Fixed
 
-- `aomi-build` collision checks and the `aomi-run` host stubs use the host's
-  current namespaces (`aomi-core`, `evm-core`, `evm-reads`, `evm-sim`,
-  `svm-core`, `svm-reads`, `svm-write-ix`, `svm-write-tx`) and tool names.
+- `aomi-build` collision checks use the host's current namespaces
+  (`aomi-core`, `evm-core`, `evm-reads`, `evm-sim`, `svm-core`, `svm-reads`,
+  `svm-write-ix`, `svm-write-tx`) and tool names; the `aomi-run` host stubs
+  cover the wallet namespaces (`evm-core`, `evm-reads`, `evm-sim`, `svm-core`
+  and its lanes).
 - In-repo apps and skill docs route through the renamed targets and name the
   current host tools in their prompts.
 
@@ -35,6 +39,10 @@
 
 - FFI version (1) unchanged; only route tool names changed. Rebuild an app on
   7.0.0 and rename its `host::*` markers.
+- A host that advertises `ffi_version` loads 7.0.0 apps. An older host keeps
+  its exact SDK requirement, so deploy a current host before the rebuilt app
+  (see `docs/sdk-version-compatibility.md`). Route tool names need a host with
+  the `evm_`-prefixed tools.
 
 ## 6.0.2
 

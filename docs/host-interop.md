@@ -53,7 +53,7 @@ ToolReturn::with_routes(value, [
 
 The host treats each route as advisory: `OnSyncReturn` steps render into the next system prompt the LLM sees, while `OnBoundEvent` steps wait for the named alias to resolve. Wallet callbacks, staged transaction completions, and other out-of-band events all flow through the runtime's `RoutedEventBridge` and splice fields like `signature` or `transaction_hash` into the hinted args before the continuation prompt is injected. The runtime never parses prose; the route's structured fields are the contract.
 
-If an app returns a `evm_stage_tx` route, the host transaction model still applies: stage first, then `evm_simulate`, then `evm_commit_txs`. The SDK also still exposes legacy `evm_commit_txs`, `view_state`, and `run_tx` markers for older route plans, but the current `product-mono` EVM namespace advertises `evm_commit_txs` and `evm_call`.
+If an app returns an `evm_stage_tx` route, the host transaction model still applies: stage first, then `evm_simulate`, then `evm_commit_txs`. Every `host::*` marker names a tool the host's namespaces register; there are no legacy markers.
 
 RouteBuilder v1 invariants:
 

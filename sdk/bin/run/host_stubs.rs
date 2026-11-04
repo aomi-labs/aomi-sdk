@@ -131,6 +131,79 @@ const STUB_REGISTRY: &[(&str, &str, &str)] = &[
         "(stub) Stage an unsigned EVM transaction for later commit.",
     ),
     ("evm-core", "evm_sync_chain", "(stub) Resync the EVM fork."),
+    ("evm-reads", "evm_call", "(stub) Read a contract function."),
+    (
+        "evm-reads",
+        "evm_get_account_info",
+        "(stub) Read EVM account balance + nonce.",
+    ),
+    (
+        "evm-reads",
+        "evm_get_context",
+        "(stub) Current block time + chain context.",
+    ),
+    (
+        "evm-reads",
+        "evm_get_contract",
+        "(stub) Fetch a verified contract by address.",
+    ),
+    (
+        "evm-reads",
+        "evm_get_token_balance",
+        "(stub) Read one ERC-20 balance.",
+    ),
+    (
+        "evm-reads",
+        "evm_get_token_holdings",
+        "(stub) Read a wallet's ERC-20 holdings.",
+    ),
+    ("evm-reads", "evm_sync_chain", "(stub) Resync the EVM fork."),
+    ("evm-sim", "evm_sim_open", "(stub) Open a simulation world."),
+    (
+        "evm-sim",
+        "evm_sim_apply",
+        "(stub) Apply a transaction in a simulation world.",
+    ),
+    (
+        "evm-sim",
+        "evm_sim_call",
+        "(stub) Call a contract in a simulation world.",
+    ),
+    (
+        "evm-sim",
+        "evm_sim_snapshot",
+        "(stub) Snapshot a simulation world.",
+    ),
+    (
+        "evm-sim",
+        "evm_sim_revert",
+        "(stub) Revert a simulation world to a snapshot.",
+    ),
+    (
+        "evm-sim",
+        "evm_sim_set_code",
+        "(stub) Set contract code in a simulation world.",
+    ),
+    (
+        "evm-sim",
+        "evm_sim_set_balance",
+        "(stub) Set a balance in a simulation world.",
+    ),
+    (
+        "evm-sim",
+        "evm_sim_replay_traces",
+        "(stub) Replay traces in a simulation world.",
+    ),
+    (
+        "evm-sim",
+        "evm_sim_close",
+        "(stub) Close a simulation world.",
+    ),
+    (
+        "evm-sim",
+        "evm_stage_tx",
+        "(stub) Stage an unsigned EVM transaction for later commit.",
+    ),
     (
         "svm-reads",
         "svm_derive_address",
