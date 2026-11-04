@@ -283,7 +283,7 @@ impl DynAomiTool for ZeroxBuildSwap {
     type App = ZeroxApp;
     type Args = ZeroxBuildSwapArgs;
     const NAME: &'static str = "zerox_build_swap";
-    const DESCRIPTION: &'static str = "Use when the user wants to execute a 0x swap on-chain. Composite tool: fetches an AllowanceHolder firm quote, checks ERC-20 allowance for the 0x AllowanceHolder, then routes the (optional) approval + swap transactions through the host wallet and binds the resulting tx hash. The LLM does not call stage_tx, simulate, or commit — the route handles it. For gasless (relayer-paid) execution, use zerox_get_gasless_quote instead.";
+    const DESCRIPTION: &'static str = "Use when the user wants to execute a 0x swap on-chain. Composite tool: fetches an AllowanceHolder firm quote, checks ERC-20 allowance for the 0x AllowanceHolder, then routes the (optional) approval + swap transactions through the host wallet and binds the resulting tx hash. The LLM does not call evm_stage_tx, simulate, or commit — the route handles it. For gasless (relayer-paid) execution, use zerox_get_gasless_quote instead.";
 
     fn run_with_routes(
         _app: &ZeroxApp,
@@ -403,7 +403,7 @@ impl DynAomiTool for ZeroxBuildSwap {
         ToolReturn::route(ok(preview)?)
             .next(|next| {
                 for (i, args) in stage_args.iter().enumerate() {
-                    let step = next.add::<host::StageTx>(args.clone());
+                    let step = next.add::<host::EvmStageTx>(args.clone());
                     if i == last_index {
                         step.note(
                             "Stage the 0x swap. CRITICAL: copy `data.raw` and `to` BYTE-FOR-BYTE \
@@ -412,9 +412,9 @@ impl DynAomiTool for ZeroxBuildSwap {
                              commits the staged txs and waits for the wallet.",
                         )
                         .enforce(EnforcementPolicy::Continue, |enforce| {
-                            enforce.add::<host::SimulateBatch>(json!({}));
+                            enforce.add::<host::EvmSimulate>(json!({}));
                             enforce
-                                .add::<host::CommitTxs>(json!({ "aa_preference": "auto" }))
+                                .add::<host::EvmCommitTxs>(json!({ "aa_preference": "auto" }))
                                 .bind_as("transaction_hash");
                         });
                     } else {
@@ -425,7 +425,7 @@ impl DynAomiTool for ZeroxBuildSwap {
                     }
                 }
             })
-            // No `.after::<>` — 0x swap is atomic per chain, so once commit_txs
+            // No `.after::<>` — 0x swap is atomic per chain, so once evm_commit_txs
             // lands the swap is done. The bound `transaction_hash` ends the route.
             .try_build()
             .map_err(|e| format!("[0x] route build: {e}"))

@@ -2,7 +2,7 @@
 //!
 //! When a plugin declares `namespaces = ["evm-core"]` (or similar), the
 //! real backend wires in a concrete `ToolNamespace` that implements
-//! `commit_tx`, `stage_tx`, `simulate_batch`, etc. The dev runtime has
+//! `evm_stage_tx`, `evm_simulate`, `evm_commit_txs`, etc. The dev runtime has
 //! none of that machinery — but we can't simply omit the tools, because
 //! the LLM would then have no way to discover that these capabilities
 //! exist.
@@ -75,22 +75,11 @@ impl Tool for StubTool {
 
 /// Static registry: `(namespace, tool_name, one-line description)`.
 ///
-/// Keep in sync with the `host_target!` macro invocations in
-/// `sdk/src/route.rs` — those are the names that `RouteBuilder::after::<T>`
-/// emits, so they're the canonical list of host tools plugins know about.
+/// Mirrors product-mono `aomi/crates/tools/src/namespace.rs` and the
+/// `host_target!` markers in `sdk/src/builder.rs`, the names
+/// `RouteBuilder::after::<T>` emits.
 const STUB_REGISTRY: &[(&str, &str, &str)] = &[
-    // evm-core: wallet + EVM read/write primitives.
-    ("evm-core", "brave_search", "(stub) Web search via Brave."),
-    (
-        "evm-core",
-        "commit_tx",
-        "(stub) Submit a single EVM transaction for user signing.",
-    ),
-    (
-        "evm-core",
-        "commit_txs",
-        "(stub) Submit a batch of EVM transactions for user signing.",
-    ),
+    ("evm-core", "evm_call", "(stub) Read a contract function."),
     (
         "evm-core",
         "evm_commit_message",
@@ -98,45 +87,128 @@ const STUB_REGISTRY: &[(&str, &str, &str)] = &[
     ),
     (
         "evm-core",
-        "stage_tx",
-        "(stub) Stage an unsigned EVM transaction for later commit.",
+        "evm_commit_txs",
+        "(stub) Submit staged EVM transactions for user signing.",
     ),
     (
         "evm-core",
-        "simulate_batch",
-        "(stub) Simulate a staged batch.",
+        "evm_discard_tx",
+        "(stub) Discard a staged EVM transaction.",
     ),
     (
         "evm-core",
-        "view_state",
-        "(stub) Inspect the agent's user state.",
-    ),
-    (
-        "evm-core",
-        "run_tx",
-        "(stub) Execute a transaction end-to-end.",
-    ),
-    (
-        "evm-core",
-        "get_time_and_onchain_context",
-        "(stub) Current block time + chain context.",
-    ),
-    (
-        "evm-core",
-        "get_contract",
-        "(stub) Fetch a verified contract by address.",
-    ),
-    (
-        "evm-core",
-        "get_account_info",
+        "evm_get_account_info",
         "(stub) Read EVM account balance + nonce.",
     ),
     (
         "evm-core",
-        "sync_chain",
-        "(stub) Switch the active EVM chain.",
+        "evm_get_context",
+        "(stub) Current block time + chain context.",
     ),
-    // SVM host primitives.
+    (
+        "evm-core",
+        "evm_get_contract",
+        "(stub) Fetch a verified contract by address.",
+    ),
+    (
+        "evm-core",
+        "evm_get_token_balance",
+        "(stub) Read one ERC-20 balance.",
+    ),
+    (
+        "evm-core",
+        "evm_get_token_holdings",
+        "(stub) Read a wallet's ERC-20 holdings.",
+    ),
+    (
+        "evm-core",
+        "evm_simulate",
+        "(stub) Simulate staged EVM transactions in order.",
+    ),
+    (
+        "evm-core",
+        "evm_stage_tx",
+        "(stub) Stage an unsigned EVM transaction for later commit.",
+    ),
+    ("evm-core", "evm_sync_chain", "(stub) Resync the EVM fork."),
+    ("evm-reads", "evm_call", "(stub) Read a contract function."),
+    (
+        "evm-reads",
+        "evm_get_account_info",
+        "(stub) Read EVM account balance + nonce.",
+    ),
+    (
+        "evm-reads",
+        "evm_get_context",
+        "(stub) Current block time + chain context.",
+    ),
+    (
+        "evm-reads",
+        "evm_get_contract",
+        "(stub) Fetch a verified contract by address.",
+    ),
+    (
+        "evm-reads",
+        "evm_get_token_balance",
+        "(stub) Read one ERC-20 balance.",
+    ),
+    (
+        "evm-reads",
+        "evm_get_token_holdings",
+        "(stub) Read a wallet's ERC-20 holdings.",
+    ),
+    ("evm-reads", "evm_sync_chain", "(stub) Resync the EVM fork."),
+    ("evm-sim", "evm_sim_open", "(stub) Open a simulation world."),
+    (
+        "evm-sim",
+        "evm_sim_apply",
+        "(stub) Apply a transaction in a simulation world.",
+    ),
+    (
+        "evm-sim",
+        "evm_sim_call",
+        "(stub) Call a contract in a simulation world.",
+    ),
+    (
+        "evm-sim",
+        "evm_sim_snapshot",
+        "(stub) Snapshot a simulation world.",
+    ),
+    (
+        "evm-sim",
+        "evm_sim_revert",
+        "(stub) Revert a simulation world to a snapshot.",
+    ),
+    (
+        "evm-sim",
+        "evm_sim_set_code",
+        "(stub) Set contract code in a simulation world.",
+    ),
+    (
+        "evm-sim",
+        "evm_sim_set_balance",
+        "(stub) Set a balance in a simulation world.",
+    ),
+    (
+        "evm-sim",
+        "evm_sim_replay_traces",
+        "(stub) Replay traces in a simulation world.",
+    ),
+    (
+        "evm-sim",
+        "evm_sim_close",
+        "(stub) Close a simulation world.",
+    ),
+    (
+        "evm-sim",
+        "evm_stage_tx",
+        "(stub) Stage an unsigned EVM transaction for later commit.",
+    ),
+    (
+        "svm-reads",
+        "svm_derive_address",
+        "(stub) Derive a Solana PDA or token account.",
+    ),
     (
         "svm-reads",
         "svm_get_context",
@@ -158,76 +230,58 @@ const STUB_REGISTRY: &[(&str, &str, &str)] = &[
         "(stub) Read Solana program metadata.",
     ),
     (
-        "svm-ix-broadcast",
+        "svm-write-ix",
         "svm_stage_ix",
-        "(stub) Stage Solana instructions for later simulation or commit.",
+        "(stub) Stage Solana instructions for simulation and commit.",
     ),
     (
-        "svm-ix-broadcast",
-        "svm_simulate_ix",
-        "(stub) Simulate staged Solana instructions.",
+        "svm-write-ix",
+        "svm_simulate",
+        "(stub) Simulate staged Solana transactions in order.",
     ),
     (
-        "svm-ix-broadcast",
-        "svm_commit_ix",
-        "(stub) Request wallet approval for staged Solana instructions.",
+        "svm-write-ix",
+        "svm_commit_txs",
+        "(stub) Request wallet approval for staged Solana transactions.",
     ),
     (
-        "svm-ix-sign",
-        "svm_stage_ix",
-        "(stub) Stage Solana instructions for signing.",
+        "svm-write-ix",
+        "svm_commit_message",
+        "(stub) Request a reviewed off-chain Solana message signature.",
     ),
     (
-        "svm-ix-sign",
-        "svm_simulate_ix",
-        "(stub) Simulate staged Solana instructions.",
+        "svm-write-ix",
+        "svm_discard_tx",
+        "(stub) Discard a staged Solana transaction.",
     ),
     (
-        "svm-tx-broadcast",
+        "svm-write-tx",
         "svm_stage_tx",
         "(stub) Stage a base64 Solana transaction blob.",
     ),
     (
-        "svm-tx-broadcast",
-        "svm_simulate_tx",
-        "(stub) Simulate a staged Solana transaction blob.",
+        "svm-write-tx",
+        "svm_simulate",
+        "(stub) Simulate staged Solana transactions in order.",
     ),
     (
-        "svm-tx-broadcast",
-        "svm_commit_tx",
-        "(stub) Request wallet approval for a staged Solana transaction blob.",
+        "svm-write-tx",
+        "svm_commit_txs",
+        "(stub) Request wallet approval for staged Solana transactions.",
     ),
     (
-        "svm-tx-sign",
-        "svm_stage_tx",
-        "(stub) Stage a base64 Solana transaction blob for signing.",
+        "svm-write-tx",
+        "svm_commit_message",
+        "(stub) Request a reviewed off-chain Solana message signature.",
     ),
     (
-        "svm-tx-sign",
-        "svm_simulate_tx",
-        "(stub) Simulate a staged Solana transaction blob before signing.",
-    ),
-    (
-        "svm-tx-sign",
-        "svm_sign_tx",
-        "(stub) Sign a base64 or staged Solana transaction via the host wallet.",
-    ),
-    (
-        "svm-sign-data",
-        "svm_sign_data",
-        "(stub) Sign off-chain Solana bytes via the host wallet.",
+        "svm-write-tx",
+        "svm_discard_tx",
+        "(stub) Discard a staged Solana transaction.",
     ),
 ];
 
-const SVM_CORE_NAMESPACES: &[&str] = &[
-    "svm-reads",
-    "svm-ix-broadcast",
-    "svm-ix-sign",
-    "svm-tx-broadcast",
-    "svm-tx-sign",
-    "svm-sign-data",
-    "svm-bundle",
-];
+const SVM_CORE_NAMESPACES: &[&str] = &["svm-reads", "svm-write-ix", "svm-write-tx"];
 
 fn insert_namespace(set: &mut BTreeSet<String>, namespace: &str) {
     if namespace == "svm-core" {

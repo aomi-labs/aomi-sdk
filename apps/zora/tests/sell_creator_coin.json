@@ -13,7 +13,7 @@
       }
     },
     {
-      "prompt": "Activate the zora skill. Check my balance of papanda's creator coin via encode_and_call balanceOf, then check existing Permit2 allowances. Sell 100% of my balance for ZORA with 5% slippage. The single-hop V4 swap goes coin → ZORA (so zero_for_one flips compared to a buy). If allowances are missing, plan the Permit2 approval sequence first. Encode and simulate the swap call."
+      "prompt": "Activate the zora skill. Check my balance of papanda's creator coin via evm_call balanceOf, then check existing Permit2 allowances. Sell 100% of my balance for ZORA with 5% slippage. The single-hop V4 swap goes coin → ZORA (so zero_for_one flips compared to a buy). If allowances are missing, plan the Permit2 approval sequence first. Encode and simulate the swap call."
     }
   ],
   "final_assertion": {

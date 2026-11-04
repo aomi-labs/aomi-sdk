@@ -136,42 +136,71 @@ fn render_skill_permissions(skill: &aomi_sdk::AppSkillManifest) -> Option<String
 fn namespace_tools() -> HashMap<&'static str, Vec<&'static str>> {
     let mut m = HashMap::new();
 
+    // Mirrors product-mono `aomi/crates/tools/src/namespace.rs`.
+    m.insert(
+        "aomi-core",
+        vec![
+            "list_skills",
+            "spawn_thread",
+            "thread_return",
+            "web_fetch",
+            "web_search",
+        ],
+    );
+    m.insert(
+        "evm-reads",
+        vec![
+            "evm_call",
+            "evm_get_account_info",
+            "evm_get_context",
+            "evm_get_contract",
+            "evm_get_token_balance",
+            "evm_get_token_holdings",
+            "evm_sync_chain",
+            "get_transaction",
+            "list_transactions",
+        ],
+    );
+    m.insert(
+        "evm-sim",
+        vec![
+            "evm_sim_apply",
+            "evm_sim_call",
+            "evm_sim_close",
+            "evm_sim_open",
+            "evm_sim_replay_traces",
+            "evm_sim_revert",
+            "evm_sim_set_balance",
+            "evm_sim_set_code",
+            "evm_sim_snapshot",
+            "evm_stage_tx",
+        ],
+    );
     m.insert(
         "evm-core",
         vec![
-            "brave_search",
-            "commit_tx",
-            "commit_message",
-            "stage_tx",
-            "simulate_batch",
-            "view_state",
-            "run_tx",
-            "get_time_and_onchain_context",
-            "get_contract",
-            "get_account_info",
-            "sync_chain",
-        ],
-    );
-
-    m.insert(
-        "svm-core",
-        vec![
-            "svm_commit_txs",
-            "svm_get_account_info",
-            "svm_get_context",
-            "svm_get_program",
-            "svm_get_token_holdings",
-            "svm_sign_data",
-            "svm_sign_tx",
-            "svm_simulate_ix",
-            "svm_simulate_tx",
-            "svm_stage_ix",
-            "svm_stage_tx",
+            "evm_call",
+            "evm_commit_message",
+            "evm_commit_txs",
+            "evm_discard_tx",
+            "evm_get_account_info",
+            "evm_get_context",
+            "evm_get_contract",
+            "evm_get_token_balance",
+            "evm_get_token_holdings",
+            "evm_simulate",
+            "evm_stage_tx",
+            "evm_sync_chain",
+            "get_transaction",
+            "list_transactions",
         ],
     );
     m.insert(
         "svm-reads",
         vec![
+            "get_transaction",
+            "list_transactions",
+            "svm_derive_address",
             "svm_get_account_info",
             "svm_get_context",
             "svm_get_program",
@@ -179,20 +208,43 @@ fn namespace_tools() -> HashMap<&'static str, Vec<&'static str>> {
         ],
     );
     m.insert(
-        "svm-ix-broadcast",
-        vec!["svm_commit_ix", "svm_simulate_ix", "svm_stage_ix"],
+        "svm-write-ix",
+        vec![
+            "svm_commit_message",
+            "svm_commit_txs",
+            "svm_discard_tx",
+            "svm_simulate",
+            "svm_stage_ix",
+        ],
     );
-    m.insert("svm-ix-sign", vec!["svm_simulate_ix", "svm_stage_ix"]);
     m.insert(
-        "svm-tx-broadcast",
-        vec!["svm_commit_tx", "svm_simulate_tx", "svm_stage_tx"],
+        "svm-write-tx",
+        vec![
+            "svm_commit_message",
+            "svm_commit_txs",
+            "svm_discard_tx",
+            "svm_simulate",
+            "svm_stage_tx",
+        ],
     );
     m.insert(
-        "svm-tx-sign",
-        vec!["svm_sign_tx", "svm_simulate_tx", "svm_stage_tx"],
+        "svm-core",
+        vec![
+            "get_transaction",
+            "list_transactions",
+            "svm_commit_message",
+            "svm_commit_txs",
+            "svm_derive_address",
+            "svm_discard_tx",
+            "svm_get_account_info",
+            "svm_get_context",
+            "svm_get_program",
+            "svm_get_token_holdings",
+            "svm_simulate",
+            "svm_stage_ix",
+            "svm_stage_tx",
+        ],
     );
-    m.insert("svm-sign-data", vec!["svm_sign_data"]);
-    m.insert("svm-bundle", vec![]);
 
     m.insert(
         "database",
@@ -203,9 +255,9 @@ fn namespace_tools() -> HashMap<&'static str, Vec<&'static str>> {
             "admin_list_users",
             "admin_update_user",
             "admin_delete_user",
-            "admin_list_sessions",
-            "admin_update_session",
-            "admin_delete_session",
+            "admin_list_threads",
+            "admin_update_thread",
+            "admin_delete_thread",
             "admin_list_contracts",
             "admin_update_contract",
             "admin_delete_contract",

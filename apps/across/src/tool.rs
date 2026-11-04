@@ -188,7 +188,7 @@ impl DynAomiTool for AcrossGetBridgeQuote {
 // Closes the quote→execute gap left by `across_get_bridge_quote`. Fetches the
 // raw suggested-fees JSON (so we keep relayer params + `spokePoolAddress` that
 // the typed `AcrossSuggestedFees` struct drops), then routes one or two
-// `host::StageTx`es through the wallet: an optional ERC-20 approval against the
+// `host::EvmStageTx`es through the wallet: an optional ERC-20 approval against the
 // origin-chain SpokePool, followed by the SpokePool `depositV3` call. The
 // destination-chain fill is observed separately via `across_get_deposit_status`.
 
@@ -299,7 +299,7 @@ impl DynAomiTool for AcrossBridge {
     type App = AcrossApp;
     type Args = AcrossBridgeArgs;
     const NAME: &'static str = "across_bridge";
-    const DESCRIPTION: &'static str = "USE THIS to execute any Across bridge. Single-call composite: fetches a fresh suggested-fees quote (carries the relayer params + origin-chain SpokePool address), then routes — through the host wallet — an optional ERC-20 approval for the SpokePool, followed by the SpokePool `depositV3` call (host ABI-encodes via `data.encode`). DO NOT call `stage_tx`, `simulate_batch`, `commit_txs`, or `across_get_bridge_quote` first; this tool re-quotes internally and the route handles simulate + commit. DO NOT web-search SpokePool addresses or depositV3 ABIs — the tool already has them. After commit, the host returns the deposit tx hash; poll the destination-chain fill with `across_get_deposit_status`.";
+    const DESCRIPTION: &'static str = "USE THIS to execute any Across bridge. Single-call composite: fetches a fresh suggested-fees quote (carries the relayer params + origin-chain SpokePool address), then routes — through the host wallet — an optional ERC-20 approval for the SpokePool, followed by the SpokePool `depositV3` call (host ABI-encodes via `data.encode`). DO NOT call `evm_stage_tx`, `evm_simulate`, `evm_commit_txs`, or `across_get_bridge_quote` first; this tool re-quotes internally and the route handles simulate + commit. DO NOT web-search SpokePool addresses or depositV3 ABIs — the tool already has them. After commit, the host returns the deposit tx hash; poll the destination-chain fill with `across_get_deposit_status`.";
 
     fn run_with_routes(
         _app: &AcrossApp,
@@ -417,7 +417,7 @@ impl DynAomiTool for AcrossBridge {
         ToolReturn::route(ok(preview)?)
             .next(|next| {
                 for (i, a) in stage_args.iter().enumerate() {
-                    let step = next.add::<host::StageTx>(a.clone());
+                    let step = next.add::<host::EvmStageTx>(a.clone());
                     if i == last_index {
                         step.note(
                             "Stage the Across depositV3 call. CRITICAL: copy `to` and every entry \
@@ -429,9 +429,9 @@ impl DynAomiTool for AcrossBridge {
                              the wallet.",
                         )
                         .enforce(EnforcementPolicy::Continue, |enforce| {
-                            enforce.add::<host::SimulateBatch>(json!({}));
+                            enforce.add::<host::EvmSimulate>(json!({}));
                             enforce
-                                .add::<host::CommitTxs>(json!({ "aa_preference": "auto" }))
+                                .add::<host::EvmCommitTxs>(json!({ "aa_preference": "auto" }))
                                 .bind_as("transaction_hash");
                         });
                     } else {

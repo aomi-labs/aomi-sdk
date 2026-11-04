@@ -4,7 +4,7 @@
 //!
 //!   * `khalani_quote`            — POST /v1/quotes
 //!   * `khalani_build_deposit`    — POST /v1/deposit/build, emits the routed
-//!     `stage_tx → enforce(simulate_batch + commit_txs) →
+//!     `evm_stage_tx → enforce(evm_simulate + evm_commit_txs) →
 //!     submit_khalani_order` chain.
 //!   * `submit_khalani_order`     — PUT /v1/deposit/submit, fired by the
 //!     `OnBoundEvent` continuation.
@@ -207,7 +207,7 @@ impl DynAomiTool for BuildDeposit {
     type App = KhalaniApp;
     type Args = BuildDepositArgs;
     const NAME: &'static str = "khalani_build_deposit";
-    const DESCRIPTION: &'static str = "Use after `khalani_quote` once the user has confirmed a route. Builds the on-chain deposit transaction for the chosen quote and emits a routed plan: stage_tx is fired with the deposit calldata; enforcement automatically runs simulate_batch then commit_txs; once the wallet broadcasts, submit_khalani_order is fired as a continuation. Do not call stage_tx / simulate_batch / commit_txs / submit_khalani_order yourself — the route handles them.";
+    const DESCRIPTION: &'static str = "Use after `khalani_quote` once the user has confirmed a route. Builds the on-chain deposit transaction for the chosen quote and emits a routed plan: evm_stage_tx is fired with the deposit calldata; enforcement automatically runs evm_simulate then evm_commit_txs; once the wallet broadcasts, submit_khalani_order is fired as a continuation. Do not call evm_stage_tx / evm_simulate / evm_commit_txs / submit_khalani_order yourself — the route handles them.";
 
     fn run_with_routes(
         _app: &KhalaniApp,
@@ -266,7 +266,7 @@ impl DynAomiTool for BuildDeposit {
         ToolReturn::route(ok(preview)?)
             .next(|next| {
                 for (i, args) in stage_args.iter().enumerate() {
-                    let step = next.add::<host::StageTx>(args.clone());
+                    let step = next.add::<host::EvmStageTx>(args.clone());
                     if i == last_index {
                         step.note(
                             "Stage the Khalani deposit. CRITICAL: copy the `data.raw` and `to` \
@@ -276,9 +276,9 @@ impl DynAomiTool for BuildDeposit {
                              for the wallet.",
                         )
                         .enforce(EnforcementPolicy::Continue, |enforce| {
-                            enforce.add::<host::SimulateBatch>(json!({}));
+                            enforce.add::<host::EvmSimulate>(json!({}));
                             enforce
-                                .add::<host::CommitTxs>(json!({ "aa_preference": "auto" }))
+                                .add::<host::EvmCommitTxs>(json!({ "aa_preference": "auto" }))
                                 .bind_as("transaction_hash");
                         });
                     } else {

@@ -504,7 +504,7 @@ Use the [`aomi-app-e2e-tester`](../.claude/skills/aomi-app-e2e-tester/SKILL.md) 
 
 ### Limitations of the v1 spec format
 
-1. **`expected_tools` matches visible tool-result topics, not always raw tool names.** App-defined tools normally surface their tool name. Host tools (`stage_tx`, `simulate_batch`, `commit_txs`) may carry an LLM-set `topic` arg, and routed enforcement can fire them internally, so prefer asserting app tools unless you have verified the visible topic in a transcript.
+1. **`expected_tools` matches visible tool-result topics, not always raw tool names.** App-defined tools normally surface their tool name. Host tools (`evm_stage_tx`, `evm_simulate`, `evm_commit_txs`) may carry an LLM-set `topic` arg, and routed enforcement can fire them internally, so prefer asserting app tools unless you have verified the visible topic in a transcript.
 2. **`callback_after` consumes pending_txs.** A terminal `wallet:tx_complete` callback discards `pending_txs`, so `final_assertion.user_state.pending_txs.min_count: 1` after a callback fires will always fail. For wallet-bridge scenarios use `max_count: 0` (assert the callback consumed them) or split into two specs.
 3. **No mid-turn topic assertions.** If you want to assert a tool fired *after* a callback, drive the LLM in a subsequent turn and observe via `expected_tools` on that turn's diff.
 4. **No regex.** Topic and body matching is substring + exact only.
