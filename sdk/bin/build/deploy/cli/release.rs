@@ -141,12 +141,38 @@ impl Progress {
         }
     }
 
+    /// Columns the spinner line may use after its indent, frame and elapsed
+    /// time. A longer line wraps, and `\x1b[2K` only clears the last row, so
+    /// every frame would leave a copy of the wrapped part behind.
+    const SPARE_COLUMNS: usize = 24;
+
     fn update(&self, state: &str) {
-        if self.interactive {
-            *self.state.lock().expect("progress state poisoned") = state.to_string();
-        } else {
+        if !self.interactive {
             println!("        build: {state}");
+            return;
         }
+        let columns = std::env::var("COLUMNS")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+            .unwrap_or(80);
+        let line = Self::one_line(state, columns.saturating_sub(Self::SPARE_COLUMNS).max(20));
+        if line != state {
+            // Keep the full message (a retried status error) on screen once.
+            print!("\r\x1b[2K");
+            println!("        {state}");
+        }
+        *self.state.lock().expect("progress state poisoned") = line;
+    }
+
+    /// The first line of `state`, cut to `width` characters.
+    fn one_line(state: &str, width: usize) -> String {
+        let first = state.lines().next().unwrap_or_default();
+        if first.chars().count() <= width && first.len() == state.len() {
+            return first.to_string();
+        }
+        let mut line: String = first.chars().take(width.saturating_sub(1)).collect();
+        line.push('…');
+        line
     }
 
     fn finish(mut self, outcome: &DeployReady) {
@@ -214,4 +240,22 @@ pub(crate) fn no_ci_message(detail: &str, deployment: &LocalDeployment) -> Strin
          Check that the platform repo's deploy PR has a release workflow: {}",
         pr_url(deployment).unwrap_or("(no PR URL recorded)")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Progress;
+
+    #[test]
+    fn spinner_state_stays_on_one_row() {
+        assert_eq!(Progress::one_line("Build / dottie", 40), "Build / dottie");
+        let error = format!(
+            "status unavailable, retrying (1/15): Aomi Build deployment attempt status returned 500 Internal Server Error: {}",
+            "{\"error\":\"x\"}"
+        );
+        let line = Progress::one_line(&error, 40);
+        assert_eq!(line.chars().count(), 40);
+        assert!(line.ends_with('…'));
+        assert_eq!(Progress::one_line("first\nsecond", 40), "first…");
+    }
 }
