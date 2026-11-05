@@ -407,6 +407,15 @@ async fn fetch_backend_compatibility(base_url: &str) -> Result<BackendCompatibil
         .await
         .context("failed to read server-tags response")?;
     if !status.is_success() {
+        // A frontend host answers with its whole HTML page. Name the likely
+        // mix-up instead of dumping the page.
+        if text.trim_start().starts_with('<') {
+            bail!(
+                "{base} answered {status} with a web page: it is a frontend, not the Aomi API. \
+                 Pass the API host, such as https://api-staging.aomi.dev or https://api.aomi.dev. \
+                 `--backend` and AOMI_BACKEND_URL override the backend saved by `aomi-build login`."
+            );
+        }
         bail!("server-tags endpoint returned {status}: {}", text.trim());
     }
     let mut parsed: BackendCompatibility =
