@@ -70,7 +70,6 @@ my-cool-app/
 [app]
 name         = "my-cool-app"        # app slug, staged under apps/<installation>/<repo-key>/
 display_name = "My Cool App"
-platform     = "community"          # the platform you're shipping to
 public       = true
 
 # Optional: which backend tier may load this release. Defaults to ["staging"].
