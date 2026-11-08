@@ -46,14 +46,17 @@ my-app/
 `-- .gitignore
 ```
 
-Use `community` in `aomi.toml`:
+Declare the app in `aomi.toml`:
 
 ```toml
+[app]
 name = "my-app"
 display_name = "My App"
-platform = "community"
 public = true
 ```
+
+These fields live under the `[app]` table; a flat top-level `name` is rejected.
+The platform is not set here but in `.aomi/config.json` (below).
 
 Pin the SDK version required by the platform. The CLI can check the required
 version from the backend:
@@ -87,9 +90,14 @@ subdirectory and list its manifest in the root Project configuration:
 ```json
 {
   "version": 1,
+  "platform": "community",
   "applications": ["apps/my-app/aomi.toml"]
 }
 ```
+
+The `platform` field is required and must match the platform the Project is
+bound to (`community` here); the backend rejects a config without it, or with
+any field it does not recognize.
 
 ```bash
 aomi-build sdk check --path apps/my-app --backend https://api.aomi.dev
