@@ -1,0 +1,173 @@
+name: Sync Playground Template
+
+# aomi-labs/playground-example is what "New app" copies. Keep its aomi-sdk
+# pin on the released SDK, with a lock cargo regenerated, and merge that
+# change unattended. Publish SDK calls this after a release; dispatch it to
+# re-run for the current version.
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Released aomi-sdk version the template should pin
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: aomi-sdk version to pin (empty uses sdk/Cargo.toml)
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-playground
+  cancel-in-progress: false
+
+env:
+  TEMPLATE_REPO: aomi-labs/playground-example
+
+jobs:
+  sync:
+    name: Align playground-example
+    runs-on: ubuntu-latest
+    environment: prod
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Resolve the version
+        id: sdk
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "$VERSION" ]; then
+            VERSION="$(python3 -c 'import tomllib; print(tomllib.load(open("sdk/Cargo.toml","rb"))["package"]["version"])')"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "aligning $TEMPLATE_REPO with aomi-sdk $VERSION"
+
+      - name: Wait for crates.io to serve the release
+        env:
+          VERSION: ${{ steps.sdk.outputs.version }}
+        run: |
+          set -euo pipefail
+          for _ in $(seq 40); do
+            if curl -fsSL https://index.crates.io/ao/mi/aomi-sdk | grep -q "\"vers\":\"$VERSION\""; then
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "::error::aomi-sdk $VERSION is not on crates.io" >&2
+          exit 1
+
+      - name: Checkout template
+        uses: actions/checkout@v4
+        with:
+          repository: aomi-labs/playground-example
+          path: template
+          persist-credentials: false
+          token: ${{ secrets.OFFICIAL_GITHUB_TOKEN }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.93.0"
+
+      - name: Restore cargo cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: template
+
+      - name: Align the template
+        id: align
+        env:
+          VERSION: ${{ steps.sdk.outputs.version }}
+        run: |
+          set -euo pipefail
+          changed="$(python3 scripts/sync_playground_sdk.py --root template --required-version "$VERSION")"
+          if [ -z "$changed" ]; then
+            echo "::notice::template already pins aomi-sdk $VERSION"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "$changed"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Check the aligned template builds
+        if: steps.align.outputs.changed == 'true'
+        working-directory: template
+        run: cargo check --locked
+
+      - name: Open and merge the pin
+        if: steps.align.outputs.changed == 'true'
+        working-directory: template
+        env:
+          GH_TOKEN: ${{ secrets.OFFICIAL_GITHUB_TOKEN }}
+          VERSION: ${{ steps.sdk.outputs.version }}
+          SDK_REPO: ${{ github.repository }}
+          SDK_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          test -n "$GH_TOKEN" || {
+            echo "::error::OFFICIAL_GITHUB_TOKEN is not set in the prod environment; cannot push to $TEMPLATE_REPO" >&2
+            exit 1
+          }
+          if [ "$(gh api "repos/$TEMPLATE_REPO" --jq '.permissions.push // false' 2>/dev/null)" != "true" ]; then
+            echo "::error::OFFICIAL_GITHUB_TOKEN cannot push to $TEMPLATE_REPO" >&2
+            exit 1
+          fi
+
+          branch="automation/aomi-sdk-${VERSION}"
+          pr="$(gh pr list --repo "$TEMPLATE_REPO" --state open --head "$branch" --json number --jq '.[0].number // empty')"
+          if [ -z "$pr" ]; then
+            if git ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+              echo "::error::${branch} exists without an open PR; inspect it before retrying" >&2
+              exit 1
+            fi
+            git config user.name "aomi-release-bot"
+            git config user.email "aomi-release-bot@users.noreply.github.com"
+            git add -A
+            git commit -m "Pin aomi-sdk ${VERSION}" \
+              -m "Released from ${SDK_REPO}@${SDK_SHA}. Cargo regenerated the lock."
+            gh auth setup-git
+            git push origin "HEAD:refs/heads/${branch}"
+            printf '%s\n\n%s\n' \
+              "aomi-sdk ${VERSION} was released from ${SDK_REPO}@${SDK_SHA}. Cargo regenerated the lock." \
+              "Opened and merged by Sync Playground Template once this repository's checks pass." \
+              > /tmp/pr-body.md
+            url="$(gh pr create --repo "$TEMPLATE_REPO" --base main --head "$branch" \
+              --title "Pin aomi-sdk ${VERSION}" --body-file /tmp/pr-body.md)"
+            pr="$(gh pr view "$url" --json number --jq .number)"
+          else
+            echo "::notice::pin already proposed in $TEMPLATE_REPO#${pr}; waiting for its checks"
+          fi
+
+          # The template's own CI is the merge gate.
+          total=0; pending=1
+          for _ in $(seq 60); do
+            rollup="$(gh pr view "$pr" --repo "$TEMPLATE_REPO" --json statusCheckRollup --jq '
+              [.statusCheckRollup[] | (.conclusion // .state // "PENDING") | ascii_upcase]')"
+            total="$(jq 'length' <<<"$rollup")"
+            pending="$(jq '[.[] | select(. == "PENDING" or . == "QUEUED" or . == "IN_PROGRESS" or . == "EXPECTED" or . == "")] | length' <<<"$rollup")"
+            failed="$(jq '[.[] | select(. == "FAILURE" or . == "ERROR" or . == "CANCELLED" or . == "TIMED_OUT" or . == "ACTION_REQUIRED" or . == "STARTUP_FAILURE")] | length' <<<"$rollup")"
+            if [ "$failed" != 0 ]; then
+              echo "::error::$TEMPLATE_REPO#${pr} has failing checks; the pin stays open for review" >&2
+              exit 1
+            fi
+            if [ "$total" != 0 ] && [ "$pending" = 0 ]; then
+              break
+            fi
+            sleep 30
+          done
+          if [ "$total" = 0 ] || [ "$pending" != 0 ]; then
+            echo "::error::$TEMPLATE_REPO#${pr} checks did not finish in time; the pin stays open for review" >&2
+            exit 1
+          fi
+          gh pr merge "$pr" --repo "$TEMPLATE_REPO" --squash --delete-branch
+          echo "::notice::merged $TEMPLATE_REPO#${pr}: template pins aomi-sdk ${VERSION}"

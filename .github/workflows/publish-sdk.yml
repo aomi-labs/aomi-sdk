@@ -19,6 +19,9 @@ jobs:
     name: Publish aomi-sdk
     runs-on: blacksmith-4vcpu-ubuntu-2404
     environment: prod
+    outputs:
+      published: ${{ steps.sdk-version.outputs.publish_sdk }}
+      sdk_version: ${{ steps.sdk-version.outputs.sdk_version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -63,3 +66,14 @@ jobs:
       - name: Skip publish when SDK is unchanged
         if: steps.sdk-version.outputs.publish_sdk != 'true'
         run: echo "SDK unchanged on this main push; skipping publish."
+
+  sync-playground:
+    name: Sync playground template
+    needs: publish-sdk
+    if: needs.publish-sdk.outputs.published == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/sync-playground.yml
+    with:
+      version: ${{ needs.publish-sdk.outputs.sdk_version }}
+    secrets: inherit
