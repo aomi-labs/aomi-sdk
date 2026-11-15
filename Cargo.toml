@@ -1,6 +1,8 @@
 [workspace]
 members = [
     "sdk",
+    "sdk/examples/hello-reader",
+    "sdk/examples/keyed-header",
     "ext",
 ]
 exclude = [
