@@ -1,5 +1,31 @@
 # Changelog
 
+## 8.0.0
+
+### Changed (breaking)
+
+- `aomi-sdk` is the guest SDK for `aomi:package@1.0.0` (contract version 1).
+  A package is a `wasm32-wasip2` component, not a native `cdylib`. The WIT is
+  in `wit/`.
+- One `Tool` trait (`NAME`, `DESCRIPTION`, `Args`, `AUDIENCE`, `CONTINUATION`,
+  `async fn run(args, &Ctx) -> Result<Outcome>`) and `package!(..)`, which
+  exports `describe` and `call-tool`.
+- Tools return `Outcome::data`, `Outcome::prepared` or `Outcome::sign`.
+  Routed returns are gone.
+- New modules over the host imports: `http` (reqwest-shaped over `wstd`;
+  `Response::record()` reads the host's `aomi-record` header), `secrets`,
+  `chain`, `log`.
+
+### Removed
+
+- The native plugin path: the C ABI, `DynFnHandle`, `dyn_aomi_app!`,
+  `DynAomiTool`, routes, the FFI version gate, the `aomi-run` dev runtime and
+  the `dev-runtime` feature.
+- `aomi-build compile`, `aomi-build manifest` and `aomi-build sdk`, and the
+  SDK pin check in `deploy` and `activate` (`--fix-sdk`).
+- The four old examples; `examples/hello-reader` and `examples/keyed-header`
+  replace them.
+
 ## 7.0.0
 
 ### Changed (breaking)
