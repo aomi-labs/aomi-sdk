@@ -1,249 +1,134 @@
 //! # aomi-sdk
 //!
-//! Lightweight SDK for building dynamic Aomi plugins that are loaded at runtime
-//! as shared libraries (`cdylib`) via a stable C ABI.
-//!
-//! # Quick start
-//!
-//! A minimal plugin needs four pieces:
-//!
-//! **1. An app struct** — marker that ties everything together:
+//! The guest SDK for Aomi packages. A package is a WebAssembly component for
+//! the `aomi:package@1.0.0` world (contract version 1), built for
+//! `wasm32-wasip2`. The backend loads it into a sandbox and calls its tools.
 //!
 //! ```rust,ignore
-//! #[derive(Clone, Default)]
-//! struct MyApp;
-//! ```
+//! use aomi_sdk::{Ctx, Outcome, Result, Tool, http};
 //!
-//! **2. A typed args struct** — deserialized from incoming JSON:
+//! #[derive(serde::Deserialize, schemars::JsonSchema)]
+//! pub struct PriceArgs { coins: String }
 //!
-//! ```rust,ignore
-//! use schemars::JsonSchema;
-//! use serde::Deserialize;
-//!
-//! #[derive(Debug, Deserialize, JsonSchema)]
-//! struct GreetArgs {
-//!     name: String,
-//! }
-//! ```
-//!
-//! **3. A tool implementation** — the actual logic:
-//!
-//! ```rust,ignore
-//! use aomi_sdk::{DynAomiTool, DynToolCallCtx};
-//! use serde_json::Value;
-//!
-//! struct Greet;
-//!
-//! impl DynAomiTool for Greet {
-//!     type App = MyApp;
-//!     type Args = GreetArgs;
-//!     const NAME: &'static str = "greet";
-//!     const DESCRIPTION: &'static str = "Greet someone by name.";
-//!
-//!     fn run(_app: &MyApp, args: GreetArgs, _ctx: DynToolCallCtx) -> Result<Value, String> {
-//!         Ok(serde_json::json!({ "message": format!("Hello, {}!", args.name) }))
+//! pub struct Price;
+//! impl Tool for Price {
+//!     const NAME: &'static str = "price";
+//!     const DESCRIPTION: &'static str = "Current USD price of coins.";
+//!     type Args = PriceArgs;
+//!     async fn run(args: PriceArgs, _ctx: &Ctx) -> Result<Outcome> {
+//!         let url = format!("https://coins.llama.fi/prices/current/{}", args.coins);
+//!         let body: serde_json::Value = http::get(url).send().await?.json()?;
+//!         Ok(Outcome::data(body))
 //!     }
 //! }
+//!
+//! aomi_sdk::package!(Price);
 //! ```
 //!
-//! **4. The [`dyn_aomi_app!`] macro** — generates manifest, router, and FFI exports:
-//!
-//! ```rust,ignore
-//! aomi_sdk::dyn_aomi_app!(
-//!     app = MyApp,
-//!     name = "greeter",
-//!     version = "0.1.0",
-//!     preamble = "You are a friendly greeter.",
-//!     tools = [],
-//!     namespaces = ["evm-core"],
-//!     skills = [{
-//!         id: "greeter/writing",
-//!         description: "Write a friendly greeting",
-//!         tools: [Greet],
-//!         sections: { instructions: "skill/writing.md" },
-//!     }],
-//! );
-//! ```
-//!
-//! **`Cargo.toml`** — the crate must be a `cdylib`:
-//!
-//! ```toml
-//! [lib]
-//! crate-type = ["cdylib"]
-//!
-//! [dependencies]
-//! aomi-sdk = "^0.1.15"
-//! schemars = "1"
-//! serde = { version = "1", features = ["derive"] }
-//! serde_json = "1"
-//! ```
-//!
-//! # Async tools
-//!
-//! For long-running or streaming tools, set `IS_ASYNC = true` and implement
-//! [`DynAomiTool::run_async`] instead of `run`. The host polls for updates via
-//! the [`DynAsyncSink`]:
-//!
-//! ```rust,ignore
-//! impl DynAomiTool for StreamingTool {
-//!     type App = MyApp;
-//!     type Args = StreamArgs;
-//!     const NAME: &'static str = "stream";
-//!     const DESCRIPTION: &'static str = "Stream results over time.";
-//!     const IS_ASYNC: bool = true;
-//!
-//!     fn run_async(
-//!         _app: &MyApp,
-//!         args: StreamArgs,
-//!         _ctx: DynToolCallCtx,
-//!         sink: DynAsyncSink,
-//!     ) -> Result<(), String> {
-//!         // Emit intermediate results
-//!         sink.emit(serde_json::json!({ "step": 1 })).map_err(|e| e.to_string())?;
-//!         // Signal completion
-//!         sink.complete(serde_json::json!({ "done": true })).map_err(|e| e.to_string())?;
-//!         Ok(())
-//!     }
-//! }
-//! ```
-//!
-//! # Architecture
-//!
-//! ```text
-//! ┌──────────────────────┐         C ABI (cdylib)         ┌───────────────────┐
-//! │     Host / Backend   │◄──────────────────────────────►│   Plugin (.so)    │
-//! │                      │  aomi_create()                  │                   │
-//! │  DynFnHandle::load() │  aomi_manifest()                │  dyn_aomi_app!()  │
-//! │  call_manifest()     │  aomi_async_tool_start()        │  DynAomiTool impls│
-//! │  call_exec_tool()    │  aomi_dyn_exec_poll()           │                   │
-//! │                      │  aomi_dyn_exec_cancel()         │                   │
-//! │                      │  aomi_destroy()                 │                   │
-//! └──────────────────────┘  aomi_free_string()            └───────────────────┘
-//! ```
-//!
-//! All data crosses the boundary as JSON-serialized C strings. The `abi` module
-//! defines the function signatures; [`declare_dyn!`] and [`dyn_aomi_app!`] generate
-//! the implementations.
-//!
-//! # Audience guide
-//!
-//! | You are a…             | Start here                                         |
-//! |------------------------|----------------------------------------------------|
-//! | **Plugin author**      | [`DynAomiTool`], [`dyn_aomi_app!`], [`testing`]    |
-//! | **Host integrator**    | [`DynFnHandle`], [`DynManifest`], `abi` types        |
-//!
-//! # Re-exports
-//!
-//! [`schemars`] and [`serde_json`] are re-exported so plugin crates don't need to
-//! manage version alignment for these common dependencies.
-//!
-//! # Testing
-//!
-//! The [`testing`] module provides [`testing::TestCtxBuilder`] and
-//! [`testing::run_tool`] / [`testing::run_async_tool`] helpers to unit-test tools
-//! without loading the full FFI plugin.
+//! The crate compiles natively too, so tool logic can be unit-tested with
+//! `cargo test`; host imports (`http`, `chain`, `secrets`, `log`) panic when
+//! called outside the sandbox. [`testing::ctx`] builds a call context.
+#![allow(async_fn_in_trait)]
 
-mod abi;
-mod builder;
-mod compatibility;
-mod ffi;
-mod handle;
-pub mod route;
-mod secrets;
-mod skill;
+pub mod chain;
+mod ctx;
+pub mod http;
+mod outcome;
+pub mod secrets;
 pub mod testing;
-mod types;
+mod tool;
 
-pub use abi::*;
-pub use compatibility::*;
-pub use handle::*;
-pub use route::*;
-pub use secrets::*;
-pub use skill::*;
-pub use types::*;
+#[doc(hidden)]
+pub mod bindings {
+    wit_bindgen::generate!({
+        path: "../wit",
+        world: "%package",
+        generate_all,
+        pub_export_macro: true,
+        default_bindings_module: "aomi_sdk::bindings",
+    });
+}
 
-// Re-export serde_json and schemars for convenience in plugin code.
+use bindings::aomi::package::types;
+
+pub use bindings::aomi::package::log;
+pub use ctx::Continuation;
+pub use outcome::Outcome;
+pub use tool::Tool;
+pub use types::{
+    Attachment as Image, CallContext as Ctx, Chain, ChainFamily as Family, Erc191Domain,
+    PreparedTx as StageTx, SignRequest, SvmMessageDomain, ToolAudience as Audience,
+    ToolError as Error, Wallet, WalletKind,
+};
+
 pub use schemars;
 pub use serde_json;
 
-/// Exact SDK crate version compiled into both host and plugin builds.
-///
-/// Diagnostic build metadata. Plugin compatibility uses [`AOMI_FFI_VERSION`].
-pub const AOMI_SDK_VERSION: &str = env!("CARGO_PKG_VERSION");
+/// The contract version this SDK implements; `describe()` reports it.
+pub const CONTRACT: u32 = 1;
 
-#[doc(hidden)]
-pub const __AOMI_SDK_VERSION_CSTR: &str = concat!(env!("CARGO_PKG_VERSION"), "\0");
+/// A tool result: the outcome, or a package error the model sees as `[code] message`.
+pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-/// Resolve a secret value at tool-call time.
-///
-/// Lookup order:
-/// 1. `arg_value` — what the LLM (or upstream caller) passed explicitly.
-/// 2. `ctx.secrets[name]` — values injected by the host from the per-app
-///    secret vault (see `DynToolCallCtx::secrets`).
-/// 3. Environment variable `name` — legacy fallback for CLI / tests where
-///    no vault is in scope.
-///
-/// Returns `missing_message` when none of the three resolves.
-///
-/// The returned value is sensitive. Plugin code must never log it, put it in
-/// an error, persist it, or include it in a tool result.
-pub fn resolve_secret_value(
-    ctx: &crate::DynToolCallCtx,
-    arg_value: Option<&str>,
-    name: &str,
-    missing_message: &str,
-) -> Result<String, String> {
-    if let Some(value) = arg_value.map(str::trim).filter(|value| !value.is_empty()) {
-        return Ok(value.to_string());
+/// A package error. `code` is `[a-z0-9_]`, at most 64 bytes.
+pub fn err(code: &str, message: impl Into<String>) -> Error {
+    Error {
+        code: code.into(),
+        message: message.into(),
     }
-
-    if let Some(value) = ctx
-        .secrets
-        .get(name)
-        .map(|v| v.trim().to_string())
-        .filter(|value| !value.is_empty())
-    {
-        return Ok(value);
-    }
-
-    if let Some(value) = std::env::var(name)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    {
-        return Ok(value);
-    }
-
-    Err(missing_message.to_string())
 }
 
-/// Resolve a user-owned secret injected by the authenticated host context.
-///
-/// Unlike [`resolve_secret_value`], this function does not inspect tool
-/// arguments or process environment variables. That prevents a production
-/// plugin from silently substituting a builder or backend operator credential
-/// when the authenticated user has not supplied their own value.
-///
-/// The returned value is sensitive. Plugin code must never log it, put it in
-/// an error, persist it, or include it in a tool result.
-pub fn resolve_user_secret_value(
-    ctx: &crate::DynToolCallCtx,
-    name: &str,
-    missing_message: &str,
-) -> Result<String, String> {
-    ctx.secrets
-        .get(name)
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| missing_message.to_string())
+impl From<types::HostError> for Error {
+    fn from(e: types::HostError) -> Self {
+        err(&e.code, e.message)
+    }
 }
 
-/// Internal helpers for macros. Do not use directly.
+impl From<serde_json::Error> for Error {
+    fn from(e: serde_json::Error) -> Self {
+        err("invalid_json", e.to_string())
+    }
+}
+
 #[doc(hidden)]
 pub mod __private {
-    pub use crate::ffi::{
-        free_c_string, log_async_tool_error, log_poll_error, log_tool_exec_error,
-        log_tool_start_error, parse_c_str, serialize_to_c_ptr, string_to_c_ptr,
+    pub use crate::tool::call;
+    pub use wstd::runtime::block_on;
+}
+
+/// Exports the listed tools as the package: `describe` reports them and
+/// `call-tool` dispatches by short name, runs the tool to completion and maps
+/// its result to the WIT types. Use it once per package crate.
+#[macro_export]
+macro_rules! package {
+    ($($tool:ty),+ $(,)?) => {
+        /// The package's WIT guest, generated by `aomi_sdk::package!`.
+        pub struct AomiPackage;
+
+        impl $crate::bindings::Guest for AomiPackage {
+            fn describe() -> $crate::bindings::aomi::package::types::Manifest {
+                $crate::bindings::aomi::package::types::Manifest {
+                    contract: $crate::CONTRACT,
+                    tools: vec![$($crate::bindings::aomi::package::types::ToolDef::of::<$tool>()),+],
+                }
+            }
+
+            fn call_tool(
+                name: String,
+                args: String,
+                ctx: $crate::Ctx,
+            ) -> $crate::Result<$crate::bindings::aomi::package::types::Outcome> {
+                $crate::__private::block_on(async move {
+                    $(
+                        if name == <$tool as $crate::Tool>::NAME {
+                            return $crate::__private::call::<$tool>(&args, &ctx).await;
+                        }
+                    )+
+                    Err($crate::err("unknown_tool", format!("no tool named `{name}`")))
+                })
+            }
+        }
+
+        $crate::bindings::export!(AomiPackage with_types_in $crate::bindings);
     };
-    pub use crate::types::AsyncExecQueue;
 }

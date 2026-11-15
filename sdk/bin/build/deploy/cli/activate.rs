@@ -60,11 +60,6 @@ pub struct ActivateArgs {
     /// Print the backend response as JSON.
     #[arg(long)]
     pub json: bool,
-
-    /// Rewrite Cargo.toml/Cargo.lock to the backend-required aomi-sdk version
-    /// before activating when a mismatch is detected.
-    #[arg(long)]
-    pub fix_sdk: bool,
 }
 
 impl ActivateArgs {
@@ -90,7 +85,7 @@ impl ActivateArgs {
             return Ok(());
         }
 
-        let response = self.activate_with_state(&git_root, &mut state).await?;
+        let response = self.activate_with_state(&mut state).await?;
         state.write(&git_root)?;
         Self::print_activation(&response, self.json)?;
         Ok(())
@@ -98,7 +93,6 @@ impl ActivateArgs {
 
     pub(crate) async fn activate_with_state(
         &self,
-        git_root: &std::path::Path,
         state: &mut LocalDeployment,
     ) -> Result<crate::deploy::types::ActivateResult> {
         let platform = self
@@ -109,8 +103,6 @@ impl ActivateArgs {
         let request = self.activation_request(state)?;
 
         let backend_url = resolve_backend(&self.backend);
-        crate::sdk_guard::ensure_project_sdk(git_root, backend_url.as_deref(), self.fix_sdk)
-            .await?;
         let explicit_activation_token = self
             .activation_token
             .clone()

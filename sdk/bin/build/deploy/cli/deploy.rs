@@ -189,11 +189,6 @@ pub struct DeployStepArgs {
     /// Print machine-readable JSON.
     #[arg(long)]
     pub json: bool,
-
-    /// Rewrite Cargo.toml/Cargo.lock to the backend-required aomi-sdk version
-    /// before deploying when a mismatch is detected.
-    #[arg(long)]
-    pub fix_sdk: bool,
 }
 
 /// A deploy step with the local source and authenticated request resolved.
@@ -301,10 +296,6 @@ impl DeployStepArgs {
     /// in the commit being shipped.
     async fn prepare(&self, announce: bool) -> Result<Prepared> {
         let (git_root, _) = git_context(&self.path)?;
-        let backend_url = resolve_backend(&self.backend);
-        let sdk =
-            crate::sdk_guard::ensure_project_sdk(&git_root, backend_url.as_deref(), self.fix_sdk)
-                .await?;
         let session = Session::open(&self.backend, &self.build_url).await?;
         let request = self.build_request(&git_root)?;
         let configured_platform = crate::deploy::project_config::ProjectConfig::load(&git_root)?
@@ -334,15 +325,6 @@ impl DeployStepArgs {
                 None => {}
             }
             println!("  Source     {source}");
-            let sdk_line = if sdk.from_backend {
-                format!("aomi-sdk ={} · matches backend ✓", sdk.required)
-            } else {
-                format!(
-                    "aomi-sdk ={} · matches this CLI (no backend URL to ask) ✓",
-                    sdk.required
-                )
-            };
-            println!("  SDK        {sdk_line}");
         }
 
         if dirty == Some(true) {
@@ -352,7 +334,6 @@ impl DeployStepArgs {
                 &request.source_ref[..request.source_ref.len().min(7)]
             );
         }
-        crate::sdk_guard::ensure_committed_pin(&git_root, &request.source_ref, &sdk)?;
         if pushed == Some(false) {
             bail!(
                 "commit {} is not on any remote — the backend syncs the source from GitHub \
@@ -465,12 +446,9 @@ impl DeployStepArgs {
                 target_tags: self.target_tags.clone(),
                 path: self.path.clone(),
                 json: self.json,
-                fix_sdk: self.fix_sdk,
                 ..Default::default()
             };
-            let response = activate_args
-                .activate_with_state(&prepared.git_root, &mut state)
-                .await?;
+            let response = activate_args.activate_with_state(&mut state).await?;
             state.write(&prepared.git_root)?;
             ActivateArgs::print_activation(&response, self.json)?;
         }

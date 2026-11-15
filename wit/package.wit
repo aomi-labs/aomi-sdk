@@ -1,0 +1,380 @@
+// aomi:package — the frozen contract between a sandboxed package and the Aomi backend.
+// Contract version 1. Design: CONTRACT.md in this folder. Every host check named below
+// fails the call with one named error line (CONTRACT.md §9) unless it says otherwise.
+package aomi:%package@1.0.0;
+
+interface types {
+  /// A JSON document as UTF-8 text. The host parses it and refuses invalid JSON.
+  type json = string;
+
+  /// A chain. EVM by chain id; Solana by cluster name ("mainnet-beta", "devnet").
+  variant chain {
+    evm(u64),
+    svm(string),
+  }
+
+  enum chain-family { evm, svm }
+
+  /// Today's `WalletKind` (crates/sign/src/wallets.rs:40).
+  enum wallet-kind { browser, embedded, agent }
+
+  /// One wallet in scope for this call, after the host's `wallet_id` scoping.
+  record wallet {
+    family: chain-family,
+    address: string,
+    kind: wallet-kind,
+    /// The wallet's active chain (EVM chain id or SVM cluster), when known.
+    active-chain: option<chain>,
+    /// SVM only: the Swig funds address when it differs from the signer.
+    operating-address: option<string>,
+  }
+
+  /// Present only on a call to a tool that declared `continuation`, when the model
+  /// passed a `commit_id` the host resolved for this tool, package and thread.
+  record continuation-data {
+    commit-id: string,
+    /// The package's own state from the `sign` outcome's `then`, or a prepared
+    /// transaction's `follow-up.data`, exactly as the package returned it.
+    state: json,
+    /// A confirmed signature request: the signature (EVM 0x hex, SVM base64).
+    signature: option<string>,
+    /// A confirmed transaction commit: its on-chain hash or signature.
+    tx-hash: option<string>,
+    /// The commit's lifecycle state as the host knows it: "awaiting", "signed",
+    /// "broadcast", "confirmed", "rejected", "expired" or "failed". A status tool
+    /// uses it to tell a rejected commit from a pending one (review 1, finding 10).
+    commit-state: string,
+    /// For a follow-up that belongs to one transaction of a batch: the staged
+    /// transaction id the host resolved (review 1, finding 9). The host rejects an
+    /// ambiguous request instead of picking the first match.
+    source-tx-id: option<string>,
+  }
+
+  record call-context {
+    call-id: string,
+    thread-id: string,
+    /// Stable account id. None for guests.
+    account-id: option<string>,
+    /// The thread's agent, `publisher/name` (e.g. `aomi/main`).
+    agent-id: string,
+    wallets: list<wallet>,
+    /// The chains the agent allows. Reads, simulations and outcomes outside it fail.
+    chains: list<chain>,
+    /// Group chat or other public answer: person-owned secret slots are unavailable.
+    public: bool,
+    continuation: option<continuation-data>,
+  }
+
+  /// `model`: in the model's catalogue and tool search. `direct`: never shown to the
+  /// model; only channel shortcuts and buttons call it.
+  enum tool-audience { model, direct }
+
+  record tool-def {
+    /// Short name, `[a-z0-9_]`. The host exposes `<package>_<name>`, at most 64 bytes.
+    name: string,
+    description: string,
+    /// JSON Schema of the arguments (schemars). The host adds `wallet_id`, and
+    /// `commit_id` when `continuation` is true, then normalizes for strict providers.
+    schema: json,
+    audience: tool-audience,
+    continuation: bool,
+  }
+
+  record manifest {
+    /// Must equal the contract version the host runs (1).
+    contract: u32,
+    tools: list<tool-def>,
+  }
+
+  enum image-type { png, jpeg }
+
+  record attachment {
+    kind: image-type,
+    /// Host checks magic bytes match `kind` and the size caps.
+    bytes: list<u8>,
+    /// At most 1024 characters.
+    caption: option<string>,
+  }
+
+  record data-reply {
+    /// What the model (or, for a direct tool, the channel) receives.
+    value: json,
+    /// At most 2. The model sees only id, type and caption, never the bytes.
+    attachments: list<attachment>,
+  }
+
+  /// Which core staging lane a transaction goes through; `args` is that tool's
+  /// arguments: evm_stage_tx (StageTxParameters), svm_stage_ix (SvmStageIxParameters),
+  /// svm_stage_tx (SvmStageTxParameters).
+  enum stage-kind { evm-stage-tx, svm-stage-ix, svm-stage-tx }
+
+  record follow-up {
+    /// Short name of a `continuation` tool of this same package.
+    tool: string,
+    note: string,
+    data: json,
+  }
+
+  record prepared-tx {
+    stage: stage-kind,
+    /// Host refuses `prepared`, `routed_plan_id`, `broadcaster` and `wallet_id` here.
+    args: json,
+    /// Sequence number of one of this call's HTTP records (evidence).
+    /// Host refuses unknown seq, non-2xx status, non-JSON or dropped body.
+    evidence: option<u32>,
+    follow-up: option<follow-up>,
+  }
+
+  /// Today's `FailureRule { any, classification, advice }`.
+  record failure-rule {
+    any-of: list<string>,
+    classification: string,
+    advice: string,
+  }
+
+  record prepared-reply {
+    summary: json,
+    /// Non-empty, one chain family. Host checks the family is declared in
+    /// `[capabilities] transactions` and every chain is in the agent's chains.
+    txs: list<prepared-tx>,
+    failure-rules: list<failure-rule>,
+  }
+
+  /// Today's `Erc191Domain`.
+  record erc191-domain {
+    app: string,
+    chain-id: option<u64>,
+    verifying-contract: option<string>,
+    purpose: option<string>,
+  }
+
+  /// Today's `SvmMessageDomain`.
+  record svm-message-domain {
+    app: string,
+    cluster: option<string>,
+    program-id: option<string>,
+    nonce: option<string>,
+    purpose: option<string>,
+  }
+
+  record evm-typed-data {
+    /// EIP-712 JSON object. Host checks domain chainId/verifyingContract and primary
+    /// type against `[[capabilities.signatures]]`.
+    typed-data: json,
+    description: string,
+  }
+
+  record evm-personal {
+    message: string,
+    description: string,
+    domain: erc191-domain,
+    request-kind: option<string>,
+  }
+
+  record svm-message {
+    message: list<u8>,
+    description: string,
+    domain: svm-message-domain,
+    kind: option<string>,
+  }
+
+  variant sign-request {
+    evm-typed-data(evm-typed-data),
+    evm-personal(evm-personal),
+    svm-message(svm-message),
+  }
+
+  record next-call {
+    /// Short name of a `continuation` tool of this same package.
+    tool: string,
+    /// Shown to the model with the confirmation.
+    note: string,
+    /// Opaque to the host, at most 16 KiB, stored with the exact signature request.
+    state: json,
+    /// Unix seconds. Host caps it at 30 minutes after the outcome.
+    expires-at: option<u64>,
+  }
+
+  record sign-reply {
+    summary: json,
+    request: sign-request,
+    then: next-call,
+  }
+
+  variant outcome {
+    data(data-reply),
+    prepared(prepared-reply),
+    sign(sign-reply),
+  }
+
+  /// A package's own failure. `code` is `[a-z0-9_]`, at most 64 bytes; the model sees
+  /// `[code] message` on one line. Secret values are redacted.
+  record tool-error {
+    code: string,
+    message: string,
+  }
+
+  /// A host function's refusal, same shape; `code` is from CONTRACT.md §9.
+  record host-error {
+    code: string,
+    message: string,
+  }
+}
+
+interface secrets {
+  use types.{host-error};
+
+  /// True if the slot is declared and has a value for this call. Person slots are
+  /// false for guests and when `public`. Never fails.
+  has: func(slot: string) -> bool;
+
+  /// HMAC-SHA256 with the slot's value (decoded per the slot's `encoding`) over
+  /// `message`; returns the 32-byte MAC. Host checks the slot is declared with
+  /// `hmac = true` and available. Message at most 64 KiB.
+  hmac-sha256: func(slot: string, message: list<u8>) -> result<list<u8>, host-error>;
+
+  /// Returns the value. Host checks `owner = "builder"` and `reveal = true`; adds the
+  /// value to the call's redaction set.
+  reveal: func(slot: string) -> result<string, host-error>;
+}
+
+interface chain {
+  use types.{json, host-error};
+
+  /// Which state an EVM read sees.
+  variant view {
+    /// Head of the backend's RPC pool.
+    latest,
+    /// Exactly this block; the host errors rather than fall back to latest.
+    block(u64),
+    /// Latest, after replaying these staged transaction ids of this thread in order
+    /// on an isolated no-faucet fork. Host checks ids exist, are unique, are on this
+    /// chain and belong to a wallet in scope; any failing replay fails the read.
+    staged(list<u32>),
+  }
+
+  record read-reply {
+    /// The JSON-RPC `result` value.
+    %result: json,
+    /// Block number (EVM) or context slot (SVM) the read was served at, when known.
+    at: option<u64>,
+  }
+
+  /// One read-only EVM JSON-RPC method. Allowed: eth_chainId, eth_blockNumber,
+  /// eth_call, eth_getBalance, eth_getTransactionCount, eth_getCode,
+  /// eth_getTransactionReceipt, eth_getTransactionByHash. Host checks the method,
+  /// that the chain is in the agent's chains, and that any block parameter is
+  /// "latest" or absent (the view decides). Receipt and transaction reads refuse
+  /// `staged`. Counts against the call's chain-read limit; reply at most 1 MiB.
+  evm-read: func(chain-id: u64, at: view, method: string, params: json) -> result<read-reply, host-error>;
+
+  /// One read-only Solana JSON-RPC method at latest state. Allowed: getAccountInfo,
+  /// getBalance, getTokenAccountsByOwner, getSignaturesForAddress, getTransaction.
+  /// Host checks method and cluster; same limits as `evm-read`.
+  svm-read: func(cluster: string, method: string, params: json) -> result<read-reply, host-error>;
+}
+
+interface simulation {
+  use types.{host-error};
+
+  record sim-call {
+    to: string,
+    data: list<u8>,
+    /// Wei as a decimal string; empty means zero.
+    value: string,
+  }
+
+  variant sim-read {
+    /// eth_call against the post-state.
+    call(sim-call),
+    /// Native balance of an address in the post-state.
+    balance(string),
+  }
+
+  record sim-request {
+    chain-id: u64,
+    /// Sender of every call. Host checks it is an EVM wallet in scope.
+    %from: string,
+    /// Staged transaction ids replayed first (same checks as `view.staged`).
+    prefix: list<u32>,
+    /// At most 16, executed in order with state carried forward.
+    calls: list<sim-call>,
+    /// At most 16, run after the last call.
+    reads: list<sim-read>,
+  }
+
+  enum sim-status { succeeded, reverted, halted, failed }
+
+  record sim-log {
+    address: string,
+    topics: list<list<u8>>,
+    data: list<u8>,
+  }
+
+  record sim-outcome {
+    status: sim-status,
+    return-data: list<u8>,
+    gas-used: u64,
+    logs: list<sim-log>,
+  }
+
+  record sim-result {
+    block: u64,
+    block-hash: string,
+    calls: list<sim-outcome>,
+    /// One per read: return data, or the 32-byte big-endian balance.
+    reads: list<result<list<u8>, string>>,
+  }
+
+  /// Stateless: a fresh isolated fork at latest, no faucet, nothing persists or is
+  /// sent. Host checks chain, sender and sizes; at most 4 runs per call.
+  run: func(request: sim-request) -> result<sim-result, host-error>;
+}
+
+interface log {
+  enum level { debug, info, warn, error }
+
+  /// To the backend's tracing with package, release and call id. At most 64 lines of
+  /// 1 KiB per call; extra lines are dropped. Secret values are redacted.
+  emit: func(level: level, message: string);
+}
+
+world %package {
+  // HTTP. Host checks: HTTPS, host listed in [network], public IP, pacing; injects
+  // declared secret slots; refuses redirects; records every reply (CONTRACT.md §6).
+  import wasi:http/outgoing-handler@0.2.12;
+  import wasi:clocks/wall-clock@0.2.12;
+  import wasi:clocks/monotonic-clock@0.2.12;
+  import wasi:random/random@0.2.12;
+  import wasi:random/insecure-seed@0.2.12;
+  // Present because Rust std links them (spike r5). Environment is empty, stdin is
+  // empty, stdout/stderr are discarded, exit ends the call as `package_trap`,
+  // terminals report none.
+  import wasi:cli/environment@0.2.12;
+  import wasi:cli/exit@0.2.12;
+  import wasi:cli/stdin@0.2.12;
+  import wasi:cli/stdout@0.2.12;
+  import wasi:cli/stderr@0.2.12;
+  import wasi:cli/terminal-input@0.2.12;
+  import wasi:cli/terminal-output@0.2.12;
+  import wasi:cli/terminal-stdin@0.2.12;
+  import wasi:cli/terminal-stdout@0.2.12;
+  import wasi:cli/terminal-stderr@0.2.12;
+
+  import secrets;
+  import chain;
+  import simulation;
+  import log;
+
+  use types.{manifest, call-context, outcome, tool-error};
+
+  /// Run once at publish (and at load to confirm), never per call. Host checks
+  /// `contract`, unique short names, name length after prefix, valid schemas, and
+  /// that every `then`/`follow-up` target it later sees is a `continuation` tool.
+  export describe: func() -> manifest;
+
+  /// One tool call on a fresh instance. `args` is the model's or channel's JSON with
+  /// host fields (`wallet_id`, `commit_id`) removed. Host checks the outcome per
+  /// CONTRACT.md §3 and the limits in §9.
+  export call-tool: func(name: string, args: string, ctx: call-context) -> result<outcome, tool-error>;
+}

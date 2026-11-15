@@ -120,12 +120,10 @@ async fn deploy_then_activate(
     dir: &Path,
     repo: &str,
 ) -> Result<()> {
-    // Show what would ship and settle the SDK pin *before* asking for a yes —
-    // a confirm is only meaningful when the facts are on screen, and an SDK
-    // repin is a file rewrite the user should approve, not discover.
+    // Show what would ship before asking for a yes — a confirm is only
+    // meaningful when the facts are on screen.
     let (git_root, _) = shared::git_context(dir)?;
     preview_source(&git_root, repo);
-    ensure_sdk_interactive(session, &git_root).await?;
 
     let go = Confirm::new(&format!("Deploy `{platform}` from {}?", dir.display()))
         .with_default(true)
@@ -236,52 +234,6 @@ fn preview_source(git_root: &Path, repo: &str) {
         None => {}
     }
     println!("  Source   {line}");
-}
-
-/// Check the app's aomi-sdk pin against the backend and, on mismatch, ask
-/// before rewriting Cargo.toml/Cargo.lock. The deploy step re-verifies (and
-/// refuses to ship a commit that lacks the repin), so saying no here just ends
-/// this deploy attempt.
-async fn ensure_sdk_interactive(session: &Session, git_root: &Path) -> Result<()> {
-    // One gate, the same one deploy/activate run. A check that cannot run
-    // (network, cargo) is an error here too: falling back to exact-SDK
-    // matching would re-impose the coupling ffi_version removes.
-    let report =
-        crate::sdk_guard::project_compatibility_report(git_root, session.backend_url(), None)
-            .await?;
-    let required = report.required_version.clone();
-    if report.ok {
-        println!("  SDK      aomi-sdk ={required} · compatible with backend ✓");
-        return Ok(());
-    }
-    println!("  SDK      ✗ aomi-sdk ={required} is not pinned cleanly:");
-    for message in report.blocking_messages() {
-        println!("             {message}");
-    }
-    let repin = Confirm::new(&format!(
-        "Repin Cargo.toml/Cargo.lock to aomi-sdk ={required} now?"
-    ))
-    .with_default(true)
-    .prompt()
-    .context("wizard cancelled")?;
-    if !repin {
-        bail!("fix the aomi-sdk pin first (aomi-build sdk fix), then deploy again");
-    }
-    crate::sdk_guard::fix_project_sdk(git_root, &required)?;
-    let fixed =
-        crate::sdk_guard::project_compatibility_report(git_root, session.backend_url(), None)
-            .await?;
-    if !fixed.ok {
-        bail!(
-            "SDK repin did not produce a compatible manifest:\n{}",
-            fixed.blocking_messages().join("\n")
-        );
-    }
-    println!(
-        "  ✓ repinned to aomi-sdk ={required} — commit and push this change; \
-         the deploy ships your pushed commit, not the working tree"
-    );
-    Ok(())
 }
 
 fn local_deployment(dir: &Path) -> Result<LocalDeployment> {

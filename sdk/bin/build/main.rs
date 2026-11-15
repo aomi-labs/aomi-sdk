@@ -4,12 +4,9 @@ use eyre::Result;
 use deploy::cli;
 
 mod client;
-mod compile;
 mod deploy;
 mod init;
-mod manifest;
 mod new_app;
-mod sdk_guard;
 mod spec_load;
 mod specs;
 mod test_schema;
@@ -46,11 +43,6 @@ enum Cmd {
     /// Scaffold a bare app skeleton under `apps/<NAME>/`. Greenfield counterpart
     /// to `new-app` (which is OpenAPI-driven).
     Init(init::InitArgs),
-    /// Build every app's cdylib, copy validated plugins into `plugins/`,
-    /// codesign on macOS.
-    Compile(compile::CompileArgs),
-    /// Print a built plugin's manifest (including declared secret slots) as JSON.
-    Manifest(manifest::ManifestArgs),
     /// Deploy lifecycle: preflight, run, activate, and status.
     Deploy(Box<cli::DeployArgs>),
     /// Alias for `deploy status` for one release cycle.
@@ -71,8 +63,6 @@ enum Cmd {
     Project(cli::ProjectArgs),
     /// List a platform's apps.
     Apps(cli::AppsArgs),
-    /// Check or fix the app repo's aomi-sdk pin against the backend.
-    Sdk(sdk_guard::SdkArgs),
     /// Ask platform ops for legacy onboarding details.
     Request(cli::RequestArgs),
 }
@@ -91,8 +81,6 @@ async fn main() -> Result<()> {
         Cmd::NewApp(args) => new_app::run(args),
         Cmd::TightenSpec(args) => tighten::run(args),
         Cmd::Init(args) => init::run(args),
-        Cmd::Compile(args) => compile::run(args),
-        Cmd::Manifest(args) => manifest::run(args),
         Cmd::Deploy(args) => args.run().await.map_err(git_error),
         Cmd::Status(args) => args.run().await.map_err(git_error),
         Cmd::Activate(args) => cli::deploy::run_activate_step(args)
@@ -103,7 +91,6 @@ async fn main() -> Result<()> {
         Cmd::Token(args) => args.run().await.map_err(git_error),
         Cmd::Project(args) => args.run().await.map_err(git_error),
         Cmd::Apps(args) => args.run().await.map_err(git_error),
-        Cmd::Sdk(args) => sdk_guard::run(args).await,
         Cmd::Request(args) => args.run().await.map_err(git_error),
     }
 }

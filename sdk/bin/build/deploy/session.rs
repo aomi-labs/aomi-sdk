@@ -68,7 +68,7 @@ impl Session {
         // staging or production.
         println!(
             "✓ aomi-build {} · {} · @{}\n",
-            aomi_sdk::AOMI_SDK_VERSION,
+            env!("CARGO_PKG_VERSION"),
             session.env_label(),
             session.identity.github_login
         );

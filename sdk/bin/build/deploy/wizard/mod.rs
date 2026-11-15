@@ -20,7 +20,7 @@ const PROD_URL: &str = "https://api.aomi.dev";
 pub async fn run() -> Result<()> {
     println!(
         "aomi-build {} — let's get your app deployed.\n",
-        aomi_sdk::AOMI_SDK_VERSION
+        env!("CARGO_PKG_VERSION")
     );
     let mut config = AomiConfig::load();
 
