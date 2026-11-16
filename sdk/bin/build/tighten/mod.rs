@@ -5,11 +5,11 @@
 //! ## Workflow
 //!
 //! 1. Capture real responses from the live API (curl + redirect to file). Drop
-//!    them under `ext/specs/<platform>.samples/<operationId>.<status>.json`,
-//!    e.g. `ext/specs/khalani.samples/getQuote.200.json`.
+//!    them under `packages/<platform>/openapi.samples/<operationId>.<status>.json`,
+//!    e.g. `packages/khalani/openapi.samples/getQuote.200.json`.
 //! 2. Run `aomi-build tighten-spec khalani` to preview the diff.
 //! 3. Run `aomi-build tighten-spec khalani --in-place` to write the tightened
-//!    schemas back into `ext/specs/khalani.yaml`.
+//!    schemas back into `packages/khalani/openapi.yaml`.
 //! 4. `aomi-build gen-client khalani --force` to regenerate the typed Rust
 //!    client. The previously `Map<String, Value>` responses now become typed
 //!    structs.
@@ -25,12 +25,13 @@ use eyre::{Context, Result, bail};
 use serde_json::Value;
 use std::path::PathBuf;
 
+use crate::client::Mode;
 use crate::specs::workspace_root;
 
 #[derive(Args, Debug)]
 pub struct TightenSpecArgs {
-    /// Platform name. Spec is `ext/specs/<platform>.yaml`; samples are read
-    /// from `ext/specs/<platform>.samples/`.
+    /// Platform name. Spec is `packages/<platform>/openapi.yaml`; samples are
+    /// read from `packages/<platform>/openapi.samples/`.
     pub platform: String,
 
     /// Override the spec path.
@@ -48,16 +49,14 @@ pub struct TightenSpecArgs {
 
 pub fn run(args: TightenSpecArgs) -> Result<()> {
     let root = workspace_root()?;
-    let spec_path = args.spec.clone().unwrap_or_else(|| {
-        root.join("ext")
-            .join("specs")
-            .join(format!("{}.yaml", args.platform))
-    });
-    let samples_dir = args.samples.clone().unwrap_or_else(|| {
-        root.join("ext")
-            .join("specs")
-            .join(format!("{}.samples", args.platform))
-    });
+    let spec_path = args
+        .spec
+        .clone()
+        .unwrap_or_else(|| Mode::AppLocal.spec_path(&root, &args.platform));
+    let samples_dir = args
+        .samples
+        .clone()
+        .unwrap_or_else(|| spec_path.with_extension("samples"));
 
     if !spec_path.exists() {
         bail!("spec not found at {}", spec_path.display());

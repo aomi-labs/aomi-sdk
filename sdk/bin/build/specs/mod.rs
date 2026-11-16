@@ -165,7 +165,7 @@ fn skill_handoff_message(platform: &str) -> String {
          aomi-build gen-specs {platform} --from-url https://example.com/openapi.json\n\n\
          Otherwise, draft one from docs via the `aomi-app-client-api-gen` skill in Claude Code:\n\n  \
          /aomi-app-client-api-gen {platform} <docs-url>\n\n\
-         The skill will produce ext/specs/{platform}.yaml from the platform's docs."
+         The skill will produce packages/{platform}/openapi.yaml from the platform's docs."
     )
 }
 

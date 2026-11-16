@@ -1,7 +1,0 @@
-{
-  "platform": "cow",
-  "source": "well-known",
-  "source_url": "https://raw.githubusercontent.com/cowprotocol/services/main/crates/orderbook/openapi.yml",
-  "fetched_at": "2026-05-10T05:24:01.786385Z",
-  "upstream_version": null
-}

@@ -6,7 +6,6 @@ members = [
     "progenitor-client/fixture",
     "sdk/examples/hello-reader",
     "sdk/examples/keyed-header",
-    "ext",
 ]
 resolver = "2"
 

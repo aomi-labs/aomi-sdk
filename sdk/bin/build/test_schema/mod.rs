@@ -3,14 +3,15 @@ use eyre::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::client::Mode;
 use crate::specs::workspace_root;
 
 #[derive(Args, Debug)]
 pub struct TestSchemaArgs {
-    /// Platform name (looks for ext/specs/<platform>.yaml).
+    /// Platform name (looks for packages/<platform>/openapi.yaml).
     pub platform: String,
 
-    /// Override the spec path. Defaults to ext/specs/<platform>.yaml.
+    /// Override the spec path. Defaults to packages/<platform>/openapi.yaml.
     #[arg(long)]
     pub spec: Option<PathBuf>,
 
@@ -74,11 +75,10 @@ pub enum Runner {
 
 pub fn run(args: TestSchemaArgs) -> Result<()> {
     let root = workspace_root()?;
-    let spec_path = args.spec.clone().unwrap_or_else(|| {
-        root.join("ext")
-            .join("specs")
-            .join(format!("{}.yaml", args.platform))
-    });
+    let spec_path = args
+        .spec
+        .clone()
+        .unwrap_or_else(|| Mode::AppLocal.spec_path(&root, &args.platform));
     if !spec_path.exists() {
         bail!("spec not found at {}", spec_path.display());
     }
