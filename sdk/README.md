@@ -60,7 +60,7 @@ code. See the two examples:
 | `Outcome::prepared(summary).tx(StageTx::evm(args).evidence(n)).follow_up(tool, note, &data)` | transactions for the core staging lanes (`evm`, `svm_ix`, `svm_tx`) |
 | `Outcome::sign(summary, SignRequest::typed_data(..))`<br>`.then(tool, note, &state)` | one signature request and the continuation tool; state at most 16 KiB |
 | `err(code, message)`, `Result` | a package error; the model sees `[code] message` |
-| `http::{get, post}` | `.query/.header/.json/.body`, `.send().await`; `Response::{status, headers, bytes, text, json, record}` |
+| `http::{get, post, put, patch, delete}` | `.query/.header/.json/.body`, `.send().await`; `Response::{status, headers, bytes, text, json, record}` |
 | `secrets::{has, hmac_sha256, reveal}` | slots from `aomi.toml`; values stay in the host unless `reveal = true` |
 | `chain::evm(id)` | `call`, `balance`, `code`, `nonce`, `block_number`, `receipt`, `transaction`, `read`, `.at(View)` |
 | `chain::svm(cluster)` | `account`, `balance`, `token_accounts`, `signatures`, `transaction`, `read` |
@@ -76,4 +76,14 @@ cargo test -p aomi-sdk
 
 The crate compiles natively, so tool logic is unit-tested with `cargo test`.
 Host imports (`http`, `chain`, `secrets`, `log`) panic outside the sandbox;
-`testing::ctx()` builds a call context.
+`testing::ctx()` builds a call context and `testing::reply(status, headers,
+body)` an HTTP reply to decode.
+
+## Generated clients
+
+`aomi-build gen-client` turns an OpenAPI 3.0 spec into a typed client whose
+async methods send through `http` and return
+`aomi_progenitor_client::ResponseValue<T>`. Read `.record()` on it before
+`.into_inner()` when the reply is evidence; `?` converts its error into a
+package error. The generator (`progenitor-impl`) and runtime
+(`progenitor-client`) are a fork of progenitor 0.14 (MPL-2.0).

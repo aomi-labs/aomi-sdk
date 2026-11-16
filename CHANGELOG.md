@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `http::{put, patch, delete}` and `testing::reply` for native decoding tests.
+- `aomi-progenitor-impl` and `aomi-progenitor-client`: a progenitor 0.14 fork
+  whose generated clients send through `aomi_sdk::http`, compile for
+  `wasm32-wasip2` and keep each reply's status, headers and record number.
+  `aomi-build gen-client` uses them instead of progenitor and reqwest.
+
 ## 8.0.0
 
 ### Changed (breaking)
