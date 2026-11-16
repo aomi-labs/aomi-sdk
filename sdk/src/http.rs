@@ -24,6 +24,10 @@ pub fn post(url: impl Into<String>) -> RequestBuilder {
     RequestBuilder::new(Method::POST, url.into())
 }
 
+pub fn delete(url: impl Into<String>) -> RequestBuilder {
+    RequestBuilder::new(Method::DELETE, url.into())
+}
+
 /// A request being built. A bad query or body is kept and returned by `send`.
 #[derive(Debug)]
 pub struct RequestBuilder {
@@ -186,6 +190,19 @@ mod tests {
             reply(Some("x")).record().unwrap_err().code,
             "evidence_missing"
         );
+    }
+
+    #[test]
+    fn delete_builds_a_delete_request() {
+        let request = delete("https://api.binance.com/api/v3/order")
+            .query(&[("symbol", "BTCUSDT")])
+            .header("x-mbx-apikey", "k");
+        assert_eq!(request.method, Method::DELETE);
+        assert_eq!(
+            request.url,
+            "https://api.binance.com/api/v3/order?symbol=BTCUSDT"
+        );
+        assert_eq!(request.headers.len(), 1);
     }
 
     #[test]
