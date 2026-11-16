@@ -35,7 +35,7 @@ aomi-build deploy --help
 
 ## 2. Prepare Your Source Repo
 
-Your repo should contain a normal Rust cdylib app:
+Your repo should contain a Rust package (a `wasm32-wasip2` component, see [`sdk/README.md`](../sdk/README.md)):
 
 ```text
 my-app/
@@ -62,13 +62,13 @@ Pin the SDK version required by the platform. The CLI can check the required
 version from the backend:
 
 ```bash
-aomi-build sdk check --backend https://api.aomi.dev
+
 ```
 
 If the SDK pin is stale, let the CLI rewrite it:
 
 ```bash
-aomi-build sdk fix --backend https://api.aomi.dev
+
 ```
 
 Run your local checks, then commit and push:
@@ -100,7 +100,7 @@ bound to (`community` here); the backend rejects a config without it, or with
 any field it does not recognize.
 
 ```bash
-aomi-build sdk check --path apps/my-app --backend https://api.aomi.dev
+
 aomi-build deploy \
   --backend https://api.aomi.dev \
   --activation-token <community-token>
@@ -292,4 +292,4 @@ aomi-build deploy activate \
 | `deploy needs a project id` | The backend cannot identify your platform-bound Project. | Pass `--repo owner/repo`, pass `--project-id <id>`, or run `aomi-build project create --platform community --repo owner/repo`. |
 | SDK mismatch | Your app pins a different `aomi-sdk` than the platform requires. | Run `aomi-build deploy --fix-sdk --platform community --repo owner/repo`, commit the SDK change, and deploy again. |
 | Branch rejected | Deploy accepts immutable commits. | Check out the branch locally, push it, and deploy local `HEAD`; or pass `--commit <sha>`. |
-| Final verification is not loaded | Activation completed but the runtime did not load the plugin. | Run `aomi-build deploy status --json`; if it stays false, share the deployment id and release tag with Aomi support. |
+| Final verification is not loaded | Activation completed but the runtime did not load the package. | Run `aomi-build deploy status --json`; if it stays false, share the deployment id and release tag with Aomi support. |

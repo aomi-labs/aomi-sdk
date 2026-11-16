@@ -1,25 +1,16 @@
 # Aomi SDK Agent Guide
 
-This repository contains standalone Aomi app crates under `apps/<name>`. When an app breaks, use this process.
+This repository holds the `aomi-sdk` guest SDK, the `aomi-build` CLI and example packages. When a package breaks, use this process.
 
 ## Structure
 
-- Each app is usually split across `src/lib.rs`, `src/client.rs`, and `src/tool.rs`.
-- `lib.rs` defines the app preamble and tool list.
-- `client.rs` usually owns HTTP clients, schemas, shared helpers, and runtime builders.
-- `tool.rs` usually owns Aomi tool entrypoints and workflow orchestration.
-
-## Runtime Rules
-
-- Treat the `ToolReturn` envelope's `routes` (built via `RouteStep::on_return / on_bound_event`) as the source of truth for multi-step execution workflows.
-- Preserve wallet/tool args exactly when a tool emits a route hint.
-- Do not rebuild wallet payloads manually if the tool already emitted them.
-- Preserve callback artifacts exactly: `transaction_hash`, `signature`, `quote_id`, `route_id`, `submit_type`, and similar follow-up fields. The host splices wallet callback fields into hinted args automatically — don't re-thread them by hand.
-- Do not bypass harness-driven wallet steps with ad hoc tool calls.
+- A package is `Cargo.toml`, `aomi.toml` and `src/lib.rs` with `Tool` impls and `aomi_sdk::package!(..)`; see `docs/repo-structure.md`.
+- The WIT is `sdk/wit`; do not edit it here.
+- Build for `wasm32-wasip2`; test tool logic natively with `aomi_sdk::testing`.
 
 ## Debug Process
 
-1. Read the app code first. Find the current base URL, request paths, payload builders, and runtime flow.
+1. Read the package code first. Find the current base URL, request paths, payload builders, and `aomi.toml` hosts.
 2. Check the official docs on the public internet. Prefer official docs, API references, quick starts, and integration guides over third-party summaries.
 3. Probe live endpoints with `curl` before patching. Confirm:
    - the old host/path really fails
@@ -30,8 +21,8 @@ This repository contains standalone Aomi app crates under `apps/<name>`. When an
    - request method/path
    - request payload shape
    - response parsing
-   - prompt/preamble wording if the runtime flow changed
-5. Keep runtime flow compatibility where possible. If an app already emits route hints via `ToolReturn::with_routes`, fix the API client first and preserve the harness contract.
+   - `aomi.toml` hosts if the API moved (a request to an undeclared host fails)
+5. Fix the API client first and keep the tool's `Outcome` shape stable.
 
 ## API Migration Rules
 
@@ -43,11 +34,11 @@ This repository contains standalone Aomi app crates under `apps/<name>`. When an
 
 ## Validation
 
-Use the same checks this repo's CI uses for changed apps:
+Use the same checks this repo's CI uses:
 
-- `cargo fmt --manifest-path apps/<app>/Cargo.toml`
-- `cargo clippy --manifest-path apps/<app>/Cargo.toml --lib -- -Dwarnings`
-- `cargo test --manifest-path apps/<app>/Cargo.toml --no-run`
+- `cargo fmt --all -- --check`
+- `cargo clippy --workspace --all-targets --all-features -- -Dwarnings`
+- `cargo build -p <package> --target wasm32-wasip2 --release`
 
 Also run small targeted tests for any new helpers you add.
 
@@ -63,6 +54,5 @@ When debugging live integrations, keep one or two direct `curl` probes as eviden
 
 ## Writing Guidance
 
-- Keep app preambles aligned with the real runtime behavior.
-- If a tool now emits route hints via `ToolReturn::with_routes`, mention that the host will inject `[[SYSTEM:...]]` next-step prompts in the preamble and tool descriptions.
+- Keep tool descriptions aligned with real behavior; they are model-facing.
 - Prefer succinct operational instructions over long explanations.

@@ -3,7 +3,7 @@
 CLI for scaffolding, building, deploying, activating, and testing Aomi apps.
 
 `aomi-build` is the deterministic Rust CLI and lightweight wizard for codegen,
-compile, deploy, status, and activate. For app-from-scratch work that needs
+deploy, status, and activate. For app-from-scratch work that needs
 Codex/Claude, approvals, resumable workflow state, validation loops, and local
 smoke orchestration, use `aomi-workbench` from `../aomi-widget`.
 
@@ -22,25 +22,25 @@ Each stage is independently runnable; `aomi-build new-app` is the one-shot orche
 External docs / OpenAPI
         │
         ▼
-(1) gen-specs           ext/specs/<platform>.yaml          — OR — apps/<platform>/openapi.yaml
+(1) gen-specs           ext/specs/<platform>.yaml          — OR — packages/<platform>/openapi.yaml
         │                  (--shared)                              (default, app-local)
         ▼
-(2) gen-client          ext/src/<platform>/client.rs       — OR — apps/<platform>/src/client/
+(2) gen-client          ext/src/<platform>/client.rs       — OR — packages/<platform>/src/client/
         │
         ▼
-(3) gen-tool            apps/<platform>/src/{lib.rs, tool.rs, Cargo.toml}    ← mechanical stubs
+(3) gen-tool            packages/<platform>/src/{lib.rs, tool.rs, Cargo.toml}    ← mechanical stubs
         │
         ▼
-(4) curate              apps/<platform>/src/tool.rs                           ← user-centric tools
-        │               apps/<platform>/src/lib.rs (PREAMBLE)
+(4) curate              packages/<platform>/src/tool.rs                           ← user-centric tools
+        │               packages/<platform>/src/lib.rs (PREAMBLE)
         ▼
-(5) cargo build         apps/<platform>/target/debug/lib<platform>.dylib      ← cdylib plugin
+(5) cargo build         packages/<platform>/ --target wasm32-wasip2           ← package component
         │
         ▼
-(6) e2e test            apps/<platform>/test.json + cargo test app_e2e_specs  ← real LLM, real APIs
+(6) e2e test            packages/<platform>/test.json + cargo test app_e2e_specs  ← real LLM, real APIs
 ```
 
-Files marked `--shared` live under `ext/` and are reusable across multiple Aomi apps that wrap the same upstream (e.g. multiple apps wrapping Binance). The default is **app-local** — every artefact lives under `apps/<platform>/`.
+Files marked `--shared` live under `ext/` and are reusable across multiple Aomi apps that wrap the same upstream (e.g. multiple apps wrapping Binance). The default is **app-local** — every artefact lives under `packages/<platform>/`.
 
 ---
 
@@ -73,14 +73,12 @@ aomi-build gen-tool     <p>   # generated client → scaffold app + stub tools
 aomi-build new-app      <p>   # orchestrator: all three above + cargo build
 aomi-build tighten-spec <p>   # sharpen additionalProperties:true from real samples
 aomi-build test-schema  <p>   # schemathesis validation against live API
-aomi-build compile            # build local cdylib plugins into plugins/
+cargo build --target wasm32-wasip2 --release   # build a package component
 aomi-build deploy             # full hosted deploy lifecycle
 aomi-build deploy preflight   # validate source/backend/platform inputs only
 aomi-build deploy run         # create/update backend deployment
 aomi-build deploy activate    # activate release tags from deployment.json
 aomi-build deploy status      # local deployment.json + backend load status
-aomi-build sdk check          # verify the app pins the platform SDK version
-aomi-build sdk fix            # update the app's SDK pin when possible
 aomi-build request            # legacy ops onboarding request
 ```
 
@@ -337,7 +335,7 @@ apps/petstore/
 ├── openapi.yaml + openapi.meta.json
 ├── Cargo.toml          # progenitor-client, chrono, reqwest 0.13 directly
 └── src/
-    ├── lib.rs                         # mod client; mod tool; + dyn_aomi_app!
+    ├── lib.rs                         # Tool impls + aomi_sdk::package!
     ├── client/{mod.rs, client.rs}     # generated
     └── tool.rs                        # use crate::client::Client as GenClient;
 ```
@@ -346,7 +344,7 @@ Shared layout (when `--shared`):
 
 ```
 ext/src/<platform>/client.rs   ← shared client
-apps/<platform>/
+packages/<platform>/
 ├── Cargo.toml                  # depends on aomi-ext::<platform> feature
 └── src/
     ├── lib.rs
@@ -399,14 +397,14 @@ Auto-detects whether `schemathesis` is installed; otherwise prints install instr
 
 ---
 
-## (5) `cargo build` — produce the cdylib
+## (5) `cargo build`: produce the component
 
 ```sh
-cd apps/<platform> && cargo build
-# → apps/<platform>/target/debug/lib<platform>.dylib  (or .so / .dll)
+cargo build -p <platform> --target wasm32-wasip2 --release
+# → target/wasm32-wasip2/release/<platform>.wasm
 ```
 
-The cdylib is what the runtime loads via `DynFnHandle::load`. The `dyn_aomi_app!` macro at the bottom of `src/lib.rs` exports the FFI `aomi_manifest()` and tool-dispatch entrypoints.
+The component exports `describe` and `call-tool` through `aomi_sdk::package!`; see [`sdk/README.md`](../sdk/README.md).
 
 ---
 
@@ -415,7 +413,7 @@ The cdylib is what the runtime loads via `DynFnHandle::load`. The `dyn_aomi_app!
 Each app has a single canonical e2e spec at:
 
 ```
-apps/<platform>/test.json
+packages/<platform>/test.json
 ```
 
 The spec describes a real-LLM scenario: wallet seed, user prompts, expected tool calls per turn, optional wallet-callback injection, and a final state assertion. The runner lives in `product-mono` at `aomi/crates/runtime/tests/local-app-e2e.rs` and is invoked by setting `AOMI_E2E_APP_PATH` to the compiled dylib:
@@ -519,7 +517,7 @@ Use the [`aomi-app-e2e-tester`](../.claude/skills/aomi-app-e2e-tester/SKILL.md) 
 3. aomi-build gen-client          ─▶  client.rs
 4. aomi-build gen-tool            ─▶  app crate + stub tools
 5. aomi-app-ux-tool-maker         ─▶  curated tool.rs + PREAMBLE
-6. cargo build                    ─▶  lib<p>.dylib
+6. cargo build                    ─▶  <p>.wasm
 7. aomi-app-e2e-tester            ─▶  apps/<p>/test.json
 8. AOMI_E2E_APP_PATH=… cargo test ─▶  pass / transcript-dumped failure
 ```
