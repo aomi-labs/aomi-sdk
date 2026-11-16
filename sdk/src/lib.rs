@@ -64,6 +64,15 @@ pub use types::{
 pub use schemars;
 pub use serde_json;
 
+/// The alloy crates [`chain::Evm::provider`] is built on, at the SDK's pins.
+#[cfg(feature = "alloy")]
+pub mod alloy {
+    pub use alloy_primitives as primitives;
+    pub use alloy_provider as provider;
+    pub use alloy_rpc_types_eth as rpc;
+    pub use alloy_sol_types as sol_types;
+}
+
 /// The contract version this SDK implements; `describe()` reports it.
 pub const CONTRACT: u32 = 1;
 

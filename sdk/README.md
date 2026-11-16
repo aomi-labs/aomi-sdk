@@ -62,7 +62,7 @@ code. See the two examples:
 | `err(code, message)`, `Result` | a package error; the model sees `[code] message` |
 | `http::{get, post, put, patch, delete}` | `.query/.header/.json/.body`, `.send().await`; `Response::{status, headers, bytes, text, json, record}` |
 | `secrets::{has, hmac_sha256, reveal}` | slots from `aomi.toml`; values stay in the host unless `reveal = true` |
-| `chain::evm(id)` | `call`, `balance`, `code`, `nonce`, `block_number`, `receipt`, `transaction`, `read`, `.at(View)` |
+| `chain::evm(id)` | `call`, `balance`, `code`, `nonce`, `block_number`, `receipt`, `transaction`, `read`, `.at(View)`; feature `alloy`: `.provider()`, an alloy `RootProvider` over the same reads (a "pending" block argument reads as "latest"; alloy crates re-exported as `aomi_sdk::alloy`) |
 | `chain::svm(cluster)` | `account`, `balance`, `token_accounts`, `signatures`, `transaction`, `read` |
 | `log::emit(Level, msg)` | to the backend's log, tagged with the package and call |
 

@@ -36,6 +36,24 @@ cli = [
     "dep:eyre",
     "dep:sha2",
 ]
+# `chain::evm(id).at(view).provider()`: an alloy `RootProvider` over the
+# host's `evm-read`. Pins the alloy core crates to one coherent release.
+alloy = [
+    "dep:alloy-json-rpc",
+    "dep:alloy-primitives",
+    "dep:alloy-provider",
+    "dep:alloy-rpc-client",
+    "dep:alloy-rpc-types-eth",
+    "dep:alloy-sol-macro",
+    "dep:alloy-sol-macro-expander",
+    "dep:alloy-sol-macro-input",
+    "dep:alloy-sol-type-parser",
+    "dep:alloy-sol-types",
+    "dep:alloy-transport",
+    "dep:tower",
+]
+# `svm`: decode unsigned Solana transactions and resolve their lookup tables.
+svm = ["dep:base64", "dep:bs58"]
 
 [dependencies]
 serde = { version = "1.0", features = ["derive"] }
@@ -44,6 +62,24 @@ schemars = "1.0.4"
 serde_urlencoded = "0.7"
 wit-bindgen = "=0.63.0"
 wstd = "=0.6.8"
+
+# `alloy` feature. Core crates on 1.5.7 exactly, provider crates on 1.7.3
+# (spike S5a): a newer sol macro or type parser does not build against 1.5.7.
+alloy-json-rpc = { version = "=1.7.3", default-features = false, optional = true }
+alloy-primitives = { version = "=1.5.7", default-features = false, optional = true }
+alloy-provider = { version = "=1.7.3", default-features = false, optional = true }
+alloy-rpc-client = { version = "=1.7.3", default-features = false, optional = true }
+alloy-rpc-types-eth = { version = "=1.7.3", default-features = false, optional = true }
+alloy-sol-macro = { version = "=1.5.7", optional = true }
+alloy-sol-macro-expander = { version = "=1.5.7", optional = true }
+alloy-sol-macro-input = { version = "=1.5.7", optional = true }
+alloy-sol-type-parser = { version = "=1.5.7", default-features = false, optional = true }
+alloy-sol-types = { version = "=1.5.7", default-features = false, optional = true }
+alloy-transport = { version = "=1.7.3", default-features = false, optional = true }
+tower = { version = "0.5", default-features = false, optional = true }
+
+# `svm` feature.
+bs58 = { version = "0.5", optional = true }
 
 # Optional deps — pulled in only when the `cli` feature is enabled.
 anyhow = { version = "1", optional = true }

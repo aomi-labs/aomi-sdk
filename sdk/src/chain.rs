@@ -1,12 +1,23 @@
 //! Read-only chain access over the host's `evm-read` and `svm-read`: plain
-//! JSON-RPC params in, the JSON `result` out.
+//! JSON-RPC params in, the JSON `result` out. With the `alloy` feature,
+//! [`Evm::provider`] is an alloy provider over the same import.
 
 use serde_json::{Value, json};
 
 use crate::Result;
 use crate::bindings::aomi::package::chain as host;
 
+#[cfg(test)]
+use fake::{evm_read, svm_read};
+#[cfg(not(test))]
+use host::{evm_read, svm_read};
+
 pub use host::View;
+
+#[cfg(test)]
+pub(crate) mod fake;
+#[cfg(feature = "alloy")]
+mod provider;
 
 /// Reads on an EVM chain, at the latest block unless [`Evm::at`] says otherwise.
 pub fn evm(chain_id: u64) -> Evm {
@@ -40,7 +51,7 @@ impl Evm {
     /// One allowlisted JSON-RPC method. The view decides the block, so a block
     /// parameter must be "latest" or absent.
     pub async fn read(&self, method: &str, params: Value) -> Result<Value> {
-        let reply = host::evm_read(self.chain_id, &self.view, method, &params.to_string())?;
+        let reply = evm_read(self.chain_id, &self.view, method, &params.to_string())?;
         Ok(serde_json::from_str(&reply.result)?)
     }
 
@@ -84,7 +95,7 @@ pub struct Svm {
 impl Svm {
     /// One allowlisted Solana JSON-RPC method.
     pub async fn read(&self, method: &str, params: Value) -> Result<Value> {
-        let reply = host::svm_read(&self.cluster, method, &params.to_string())?;
+        let reply = svm_read(&self.cluster, method, &params.to_string())?;
         Ok(serde_json::from_str(&reply.result)?)
     }
 
@@ -122,5 +133,37 @@ impl Svm {
             json!([signature, { "encoding": "json", "maxSupportedTransactionVersion": 0 }]),
         )
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fake::{self, ready};
+    use super::*;
+
+    #[test]
+    fn helpers_send_their_method_params_and_view() {
+        let owner = "0x00000000219ab540356cBB839Cbe05303d7705Fa";
+        fake::evm(
+            8453,
+            View::Staged(vec![3]),
+            "eth_getBalance",
+            json!([owner, "latest"]),
+            Ok(json!("0x10")),
+        );
+        let balance = ready(evm(8453).at(View::Staged(vec![3])).balance(owner)).unwrap();
+        assert_eq!(balance, json!("0x10"));
+        let key = "So11111111111111111111111111111111111111112";
+        fake::svm(
+            "devnet",
+            "getAccountInfo",
+            json!([key, { "encoding": "base64" }]),
+            json!({ "value": null }),
+        );
+        assert_eq!(
+            ready(svm("devnet").account(key)).unwrap(),
+            json!({ "value": null })
+        );
+        fake::done();
     }
 }
