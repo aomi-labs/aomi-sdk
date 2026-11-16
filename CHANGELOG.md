@@ -10,6 +10,16 @@
   `wasm32-wasip2` and keep each reply's status, headers and record number.
   `aomi-build gen-client` uses them instead of progenitor and reqwest.
 
+### Changed
+
+- `aomi-build tighten-spec` and `test-schema` default to
+  `packages/<platform>/openapi.yaml`, like `gen-specs`.
+
+### Removed
+
+- The native apps under `apps/` and the `aomi-ext` client crate they shared.
+  Packages live in the packages repository.
+
 ## 8.0.0
 
 ### Changed (breaking)

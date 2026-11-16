@@ -1,6 +1,6 @@
 ---
 name: aomi-app-client-api-gen
-description: Draft an OpenAPI 3.0 spec for a third-party platform (e.g. Binance, Dune, DefiLlama) by reading its public documentation. By default writes to `apps/<platform>/openapi.yaml` (app-local mode); writes to `ext/specs/<platform>.yaml` when the platform is a shared library (Binance, Bybit, etc. — many Aomi apps may wrap it). Use when the user wants to add or update an Aomi app for a platform that does NOT have an official OpenAPI spec discoverable via `aomi-build gen-specs`. Output feeds `aomi-build gen-client` downstream. Triggers include "draft openapi spec for X", "/aomi-app-client-api-gen", "no spec found, run the skill", or asking to add an Aomi app for an API without a discoverable OpenAPI surface.
+description: Draft an OpenAPI 3.0 spec for a third-party platform (e.g. Binance, Dune, DefiLlama) by reading its public documentation. By default writes to `packages/<platform>/openapi.yaml` (app-local mode); writes to `crates/clients/<platform>/openapi.yaml` when the platform is a shared client (Binance, Bybit, etc. — several packages may wrap it). Use when the user wants to add or update an Aomi app for a platform that does NOT have an official OpenAPI spec discoverable via `aomi-build gen-specs`. Output feeds `aomi-build gen-client` downstream. Triggers include "draft openapi spec for X", "/aomi-app-client-api-gen", "no spec found, run the skill", or asking to add an Aomi app for an API without a discoverable OpenAPI surface.
 ---
 
 # aomi-app-client-api-gen
@@ -53,7 +53,7 @@ OpenAPI's `securitySchemes` only describes *what header to send*, not *how to co
 
 If the platform requires HMAC signing or any other computed credential (Binance, OKX, Polymarket-style), describe what header(s) to send in `securitySchemes` and add a top-level comment under `info.description` like:
 
-> **For codegen to work**, the same header must also appear as an explicit `parameters:` entry on each authed operation (typically `$ref: '#/components/parameters/ApiKeyHeader'` etc.) — progenitor ignores `securitySchemes` when generating positional args. See **[docs/auth-practices.md](../../../docs/auth-practices.md)** for the wire-level recipes Aomi already supports (Binance / Bybit / OKX / Limitless / Krexa static-bearer) and how the spec needs to be shaped for each.
+> **For codegen to work**, the same header must also appear as an explicit `parameters:` entry on each authed operation (typically `$ref: '#/components/parameters/ApiKeyHeader'` etc.) — progenitor ignores `securitySchemes` when generating positional args.
 
 
 ```
@@ -64,8 +64,8 @@ the resulting header (`X-MBX-APIKEY`) for codegen purposes.
 ```
 
 The auth shim path depends on mode: for app-local providers it's
-`apps/<platform>/src/auth.rs`; for shared providers (--shared) it's
-`ext/src/<platform>/auth.rs`.
+`packages/<platform>/src/auth.rs`; for shared providers (--shared) it's
+`crates/clients/<platform>/src/auth.rs`.
 
 Do not invent OpenAPI extensions unless absolutely necessary.
 
@@ -83,16 +83,16 @@ Before writing the file, sanity-check yourself:
 
 Choose mode first:
 
-- **App-local (default)**: spec lives at `apps/<platform>/openapi.yaml`. Use this for one-off integrations or platforms whose client is unlikely to be shared across multiple Aomi apps. The whole crate (spec, generated client, tool layer) is then self-contained.
-- **Shared (`--shared` downstream)**: spec lives at `ext/specs/<platform>.yaml`. Use this only for big-party platforms (Binance, Bybit, OKX) whose client is genuinely shared by multiple Aomi apps.
+- **App-local (default)**: spec lives at `packages/<platform>/openapi.yaml`. Use this for one-off integrations or platforms whose client is unlikely to be shared across multiple Aomi apps. The whole crate (spec, generated client, tool layer) is then self-contained.
+- **Shared (`--shared` downstream)**: spec lives at `crates/clients/<platform>/openapi.yaml`. Use this only for big-party platforms (Binance, Bybit, OKX) whose client is genuinely shared by multiple Aomi apps.
 
 If you don't know, default to **app-local**. The user can always promote later by moving files and passing `--shared` to subsequent gen commands.
 
-Write two files (paths below assume app-local mode; for shared, swap to `ext/specs/<platform>.{yaml,meta.json}`):
+Write two files (paths below assume app-local mode; for shared, swap to `crates/clients/<platform>/openapi.{yaml,meta.json}`):
 
-**`apps/<platform>/openapi.yaml`** — the spec itself.
+**`packages/<platform>/openapi.yaml`** — the spec itself.
 
-**`apps/<platform>/openapi.meta.json`** — provenance sidecar with this exact shape:
+**`packages/<platform>/openapi.meta.json`** — provenance sidecar with this exact shape:
 
 ```json
 {
