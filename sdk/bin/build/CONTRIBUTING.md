@@ -10,7 +10,7 @@ activation loads it on the runtime.
 ```
 author (you)  ->  aomi-build  ->  backend  ->  platform repo  ->  CI  ->  runtime
   aomi.toml +       deploy/         fetch src,     candidate PR,    build    activate
-  Rust cdylib       activate        stage, PR      release tag      cdylib   + load
+  Rust package       activate        stage, PR      release tag      component + load
 ```
 
 `aomi-build` is the Rust twin of the TypeScript [`@aomi-labs/deploy`](https://github.com/aomi-labs/aomi-widget/tree/main/packages/deploy)
@@ -32,15 +32,12 @@ cargo install --git https://github.com/aomi-labs/aomi-sdk --features cli aomi-sd
 
 | Command | What it does |
 |---|---|
-| `aomi-build init` | Scaffold a bare app skeleton (`aomi.toml`, `Cargo.toml`, `src/lib.rs`). |
-| `aomi-build compile` | Build the app as a Rust `cdylib` locally (codesigns on macOS). |
+| `aomi-build init` | Scaffold a package skeleton (`aomi.toml`, `Cargo.toml`, `src/lib.rs`). |
 | `aomi-build deploy` | Run the full backend deploy lifecycle: SDK check, preflight, deploy, wait, activate, verify. |
 | `aomi-build deploy preflight` | Validate backend/source/app inputs without platform repo writes. |
 | `aomi-build deploy run` | Create/update the platform deployment and write `.aomi/deployment.json`. |
 | `aomi-build deploy activate` | Activate release tags from `.aomi/deployment.json` and verify runtime load. |
 | `aomi-build deploy status` | Show local deploy state + backend deployment/app runtime state. |
-| `aomi-build sdk check` | Verify the app pins the SDK version required by the platform. |
-| `aomi-build sdk fix` | Update the app's SDK pin when possible. |
 | `aomi-build request` | Ask ops (via Discord) for source access or an activation token. |
 
 For one release cycle, `aomi-build status` aliases `aomi-build deploy status`,
@@ -62,7 +59,7 @@ my-cool-app/
 |-- Cargo.toml
 |-- .gitignore       (include .aomi/, target/, and Cargo.lock)
 `-- src/
-    `-- lib.rs       (dyn_aomi_app! registers your tools)
+    `-- lib.rs       (aomi_sdk::package! exports your tools)
 ```
 
 ```toml
@@ -85,7 +82,7 @@ platform repo for `required_sdk_version`):
 crate-type = ["cdylib"]
 
 [dependencies]
-aomi-sdk = "=3.0.2"
+aomi-sdk = "8"
 ```
 
 Do **not** put GitHub tokens or a `git` field in `aomi.toml`. Repository access
@@ -103,7 +100,7 @@ platform repo.
 
 ```bash
 cargo check && cargo test
-aomi-build compile          # produces the cdylib the platform CI will also build
+cargo build --target wasm32-wasip2 --release   # the component the platform CI also builds
 ```
 
 ## 4. Deploy

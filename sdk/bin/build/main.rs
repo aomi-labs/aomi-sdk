@@ -40,7 +40,7 @@ enum Cmd {
     /// Tighten a spec's `additionalProperties: true` response bodies by inferring
     /// schemas from real captured JSON samples in the spec's `.samples/` directory.
     TightenSpec(tighten::TightenSpecArgs),
-    /// Scaffold a bare app skeleton under `apps/<NAME>/`. Greenfield counterpart
+    /// Scaffold a package under `packages/<NAME>/` (guest `Tool`, `aomi.toml`). Greenfield counterpart
     /// to `new-app` (which is OpenAPI-driven).
     Init(init::InitArgs),
     /// Deploy lifecycle: preflight, run, activate, and status.

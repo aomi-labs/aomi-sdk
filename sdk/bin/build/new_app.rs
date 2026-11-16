@@ -28,7 +28,7 @@ pub struct NewAppArgs {
     #[arg(long)]
     pub no_tool: bool,
 
-    /// Skip the final `cargo build -p <platform>` verification.
+    /// Skip the final wasm32-wasip2 build of the package.
     #[arg(long)]
     pub no_build: bool,
 
@@ -86,15 +86,15 @@ pub fn run(args: NewAppArgs) -> Result<()> {
 
     if !args.no_build {
         println!();
-        println!("=== [verify] cargo build -p {platform} ===");
+        println!("=== [verify] cargo build -p {platform} --target wasm32-wasip2 ===");
         let root = workspace_root()?;
         let status = Command::new("cargo")
-            .args(["build", "-p", &platform])
+            .args(["build", "-p", &platform, "--target", "wasm32-wasip2"])
             .current_dir(&root)
             .status()
             .with_context(|| "failed to spawn cargo")?;
         if !status.success() {
-            eyre::bail!("cargo build -p {platform} failed");
+            eyre::bail!("cargo build -p {platform} --target wasm32-wasip2 failed");
         }
     }
 

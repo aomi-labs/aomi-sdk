@@ -1,203 +1,150 @@
-//! `aomi-build init <NAME>` — scaffold a bare app skeleton under `apps/<NAME>/`.
+//! `aomi-build init <NAME>`: scaffold a package under `packages/<NAME>/`.
 //!
 //! Counterpart to `aomi-build new-app`, which is OpenAPI-driven. `init` is
-//! the greenfield path: stub `lib.rs` + `client.rs` + `tool.rs`, no spec.
-//!
-//! Ported from the old `cargo xtask new-app` subcommand. The workspace
-//! `exclude` list mutation now goes through `toml_edit` for robust round-trip.
+//! the greenfield path: a guest `Tool`, `package!`, and an `aomi.toml`.
 
 use std::fs;
+use std::path::Path;
 
 use clap::Args;
 use eyre::{Result, bail};
-use toml_edit::{Array, DocumentMut, value};
+use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, value};
 
 use crate::specs::workspace_root;
 
 #[derive(Args, Debug)]
 pub struct InitArgs {
-    /// New app name. Lowercase alphanumeric with hyphens (e.g. `my-app`).
+    /// New package name. Lowercase alphanumeric with hyphens (e.g. `my-app`).
     pub name: String,
 }
 
-pub fn run(args: InitArgs) -> Result<()> {
-    let name = &args.name;
-
-    if !name
-        .chars()
-        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-        || name.is_empty()
-    {
-        bail!("app name must be lowercase alphanumeric with hyphens (e.g. 'my-app')");
-    }
-
-    let repo_root = workspace_root()?;
-    let app_dir = repo_root.join("apps").join(name);
-
-    if app_dir.exists() {
-        bail!("apps/{name} already exists");
-    }
-
-    let src_dir = app_dir.join("src");
-    fs::create_dir_all(&src_dir)?;
-
-    // Derive a Rust-friendly struct name from the app name.
-    let struct_name: String = name
-        .split('-')
-        .map(|part| {
-            let mut chars = part.chars();
-            match chars.next() {
-                Some(c) => c.to_uppercase().to_string() + chars.as_str(),
-                None => String::new(),
-            }
-        })
-        .collect::<String>()
-        + "App";
-
-    // Cargo.toml
-    fs::write(
-        app_dir.join("Cargo.toml"),
-        format!(
-            r#"[package]
+const CARGO_TOML: &str = r#"[package]
 name = "{name}"
 version = "0.1.0"
-edition = "2024"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
 
 [lib]
 crate-type = ["cdylib"]
 
 [dependencies]
-aomi-sdk = {{ path = "../../sdk" }}
-reqwest = {{ version = "0.12", default-features = false, features = ["json", "rustls-tls", "blocking"] }}
-schemars = "1.0.4"
-serde = {{ version = "1.0", features = ["derive"] }}
-serde_json = "1.0"
-"#
-        ),
-    )?;
+aomi-sdk.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+"#;
 
-    // src/lib.rs — built via push_str to avoid nested raw-string delimiter issues.
-    let mut lib_rs = String::new();
-    lib_rs.push_str("mod client;\nmod tool;\n\n");
-    lib_rs.push_str("use aomi_sdk::dyn_aomi_app;\n\n");
-    lib_rs.push_str("const PREAMBLE: &str = r#\"\n");
-    lib_rs.push_str(&format!("## Role\nYou are the {name} app.\n\n"));
-    lib_rs.push_str("## Purpose\nTODO: describe what this app does.\n");
-    lib_rs.push_str("\"#;\n\n");
-    lib_rs.push_str(&format!(
-        "dyn_aomi_app!(\n\
-         \x20   app = client::{struct_name},\n\
-         \x20   name = \"{name}\",\n\
-         \x20   version = \"0.1.0\",\n\
-         \x20   preamble = PREAMBLE,\n\
-         \x20   tools = [\n\
-         \x20       tool::ExampleTool,\n\
-         \x20   ],\n\
-         \x20   namespaces = [\"common\"]\n\
-         );\n"
-    ));
-    fs::write(src_dir.join("lib.rs"), lib_rs)?;
+const AOMI_TOML: &str = r#"[package]
+name = "{name}"
+description = "TODO: one line for the Library card."
+icon = "icon.png"
+contract = 1
 
-    // src/client.rs
-    fs::write(
-        src_dir.join("client.rs"),
-        format!(
-            r#"#[derive(Clone, Default)]
-pub(crate) struct {struct_name};
-"#
-        ),
-    )?;
+[network]
+hosts = []
+"#;
 
-    // src/tool.rs
-    let snake_name = name.replace('-', "_");
-    fs::write(
-        src_dir.join("tool.rs"),
-        format!(
-            r#"use aomi_sdk::{{DynAomiTool, DynToolCallCtx}};
-use schemars::JsonSchema;
+const LIB_RS: &str = r#"//! TODO: describe what this package does.
+
+use aomi_sdk::{Ctx, Outcome, Result, Tool};
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::json;
 
-use crate::client::{struct_name};
-
-#[derive(Debug, Deserialize, JsonSchema)]
-pub(crate) struct ExampleToolArgs {{
+#[derive(Deserialize, schemars::JsonSchema)]
+pub struct ExampleArgs {
     /// A sample input parameter.
-    pub query: String,
-}}
+    query: String,
+}
 
-pub(crate) struct ExampleTool;
+pub struct Example;
 
-impl DynAomiTool for ExampleTool {{
-    type App = {struct_name};
-    type Args = ExampleToolArgs;
-
-    const NAME: &'static str = "{snake_name}_example";
+impl Tool for Example {
+    const NAME: &'static str = "example";
     const DESCRIPTION: &'static str = "TODO: describe this tool.";
+    type Args = ExampleArgs;
 
-    fn run(
-        _app: &{struct_name},
-        args: Self::Args,
-        _ctx: DynToolCallCtx,
-    ) -> Result<Value, String> {{
-        Ok(serde_json::json!({{
-            "echo": args.query,
-        }}))
-    }}
-}}
-"#
-        ),
-    )?;
+    async fn run(args: ExampleArgs, _ctx: &Ctx) -> Result<Outcome> {
+        Ok(Outcome::data(json!({ "echo": args.query })))
+    }
+}
 
-    // Register in workspace exclude list via toml_edit (round-trip safe).
-    register_workspace_exclude(&repo_root, name)?;
+aomi_sdk::package!(Example);
+"#;
 
-    println!("created apps/{name}/");
-    println!("  src/lib.rs    — app manifest + preamble");
-    println!("  src/client.rs — app struct + HTTP client");
-    println!("  src/tool.rs   — tool implementations");
+pub fn run(args: InitArgs) -> Result<()> {
+    let name = &args.name;
+
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    {
+        bail!("package name must be lowercase alphanumeric with hyphens (e.g. 'my-app')");
+    }
+
+    let root = workspace_root()?;
+    let dir = root.join("packages").join(name);
+    if dir.exists() {
+        bail!("packages/{name} already exists");
+    }
+    fs::create_dir_all(dir.join("src"))?;
+    fs::write(dir.join("Cargo.toml"), CARGO_TOML.replace("{name}", name))?;
+    fs::write(dir.join("aomi.toml"), AOMI_TOML.replace("{name}", name))?;
+    fs::write(dir.join("src/lib.rs"), LIB_RS)?;
+    list_in_project(&root.join("aomi.toml"), name)?;
+
+    println!("created packages/{name}/ (Cargo.toml, aomi.toml, src/lib.rs)");
     println!();
     println!("next steps:");
-    println!("  1. edit the preamble in src/lib.rs");
-    println!("  2. add your HTTP client in src/client.rs");
-    println!("  3. implement your tools in src/tool.rs");
-    println!("  4. aomi-build compile --app {name}");
+    println!("  1. fill in aomi.toml (description, hosts) and add icon.png");
+    println!("  2. implement your tools in src/lib.rs");
+    println!("  3. cargo build -p {name} --target wasm32-wasip2 --release");
     Ok(())
 }
 
-fn register_workspace_exclude(repo_root: &std::path::Path, name: &str) -> Result<()> {
-    let workspace_toml_path = repo_root.join("Cargo.toml");
-    let raw = fs::read_to_string(&workspace_toml_path)?;
-    let mut doc: DocumentMut = raw.parse()?;
+/// Adds `[[packages]] path = "packages/<name>"` to the root `aomi.toml`, if there is one.
+fn list_in_project(path: &Path, name: &str) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let mut doc: DocumentMut = fs::read_to_string(path)?.parse()?;
+    let packages = doc
+        .entry("packages")
+        .or_insert(Item::ArrayOfTables(ArrayOfTables::new()))
+        .as_array_of_tables_mut()
+        .ok_or_else(|| eyre::eyre!("`packages` in aomi.toml is not an array of tables"))?;
+    let mut entry = Table::new();
+    entry["path"] = value(format!("packages/{name}"));
+    packages.push(entry);
+    fs::write(path, doc.to_string())?;
+    Ok(())
+}
 
-    let workspace = doc
-        .get_mut("workspace")
-        .and_then(|w| w.as_table_mut())
-        .ok_or_else(|| eyre::eyre!("workspace Cargo.toml has no [workspace] table"))?;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    let entry = format!("apps/{name}");
-    let exclude_item = workspace.entry("exclude").or_insert_with(|| {
-        let mut arr = Array::new();
-        arr.set_trailing_comma(true);
-        value(arr)
-    });
-    let exclude = exclude_item
-        .as_array_mut()
-        .ok_or_else(|| eyre::eyre!("workspace.exclude is not an array"))?;
-
-    let already_listed = exclude
-        .iter()
-        .any(|v| v.as_str().map(|s| s == entry).unwrap_or(false));
-    if !already_listed {
-        // Match the existing one-entry-per-line style: prefix the new value
-        // with a newline + four-space indent so the rendered TOML stays
-        // diff-friendly. Without this, toml_edit appends inline after the
-        // previous trailing comma.
-        let mut v = toml_edit::Value::from(entry);
-        v.decor_mut().set_prefix("\n    ");
-        exclude.push_formatted(v);
+    #[test]
+    fn scaffold_is_the_guest_api() {
+        assert!(CARGO_TOML.contains(r#"crate-type = ["cdylib"]"#));
+        assert!(LIB_RS.contains("impl Tool for Example"));
+        assert!(LIB_RS.contains("aomi_sdk::package!(Example);"));
+        assert!(!LIB_RS.contains("dyn_aomi_app"));
+        assert!(AOMI_TOML.contains("contract = 1"));
     }
 
-    fs::write(&workspace_toml_path, doc.to_string())?;
-    Ok(())
+    #[test]
+    fn listing_appends_a_packages_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("aomi.toml");
+        fs::write(
+            &file,
+            "[project]\npublisher = \"aomi\"\n\n[[packages]]\npath = \"packages/a\"\n",
+        )
+        .unwrap();
+        list_in_project(&file, "b").unwrap();
+        let out = fs::read_to_string(&file).unwrap();
+        assert!(out.contains("path = \"packages/a\"") && out.contains("path = \"packages/b\""));
+    }
 }
