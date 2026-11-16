@@ -24,6 +24,14 @@ pub fn post(url: impl Into<String>) -> RequestBuilder {
     RequestBuilder::new(Method::POST, url.into())
 }
 
+pub fn put(url: impl Into<String>) -> RequestBuilder {
+    RequestBuilder::new(Method::PUT, url.into())
+}
+
+pub fn patch(url: impl Into<String>) -> RequestBuilder {
+    RequestBuilder::new(Method::PATCH, url.into())
+}
+
 pub fn delete(url: impl Into<String>) -> RequestBuilder {
     RequestBuilder::new(Method::DELETE, url.into())
 }
@@ -127,12 +135,12 @@ fn failed(e: wstd::http::Error) -> Error {
     err("http_failed", format!("{e:#}"))
 }
 
-/// A whole HTTP reply.
+/// A whole HTTP reply. [`crate::testing::reply`] builds one for native tests.
 #[derive(Debug)]
 pub struct Response {
-    status: u16,
-    headers: HeaderMap,
-    body: Vec<u8>,
+    pub(crate) status: u16,
+    pub(crate) headers: HeaderMap,
+    pub(crate) body: Vec<u8>,
 }
 
 impl Response {
@@ -171,15 +179,8 @@ mod tests {
     use super::*;
 
     fn reply(record: Option<&str>) -> Response {
-        let mut headers = HeaderMap::new();
-        if let Some(record) = record {
-            headers.insert(RECORD_HEADER, record.parse().unwrap());
-        }
-        Response {
-            status: 200,
-            headers,
-            body: br#"{"ok":true}"#.to_vec(),
-        }
+        let headers: Vec<_> = record.map(|r| (RECORD_HEADER, r)).into_iter().collect();
+        crate::testing::reply(200, &headers, br#"{"ok":true}"#)
     }
 
     #[test]
@@ -203,6 +204,20 @@ mod tests {
             "https://api.binance.com/api/v3/order?symbol=BTCUSDT"
         );
         assert_eq!(request.headers.len(), 1);
+    }
+
+    #[test]
+    fn put_and_patch_carry_their_method_and_body() {
+        let put = put("https://api.khalani.network/v1/deposit").json(&serde_json::json!({"a": 1}));
+        assert_eq!(put.method, Method::PUT);
+        assert_eq!(put.body, br#"{"a":1}"#);
+        assert_eq!(
+            put.headers,
+            [("content-type".into(), "application/json".into())]
+        );
+        let patch = patch("https://api.dune.com/api/v1/query/1").body("x");
+        assert_eq!(patch.method, Method::PATCH);
+        assert_eq!(patch.body, b"x");
     }
 
     #[test]
