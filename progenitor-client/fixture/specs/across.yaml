@@ -1,0 +1,164 @@
+openapi: 3.0.3
+info:
+  title: Across Protocol API
+  version: '1.0'
+  description: |
+    Across Protocol bridge REST API — public, no auth required.
+
+    Covers the four endpoints used by the Aomi `across` app:
+      - GET /available-routes
+      - GET /limits
+      - GET /suggested-fees
+      - GET /deposit/status
+
+    Default host is `https://app.across.to/api`. All endpoints are unauthenticated.
+
+servers:
+  - url: https://app.across.to/api
+
+paths:
+  /available-routes:
+    get:
+      operationId: getAvailableRoutes
+      summary: List supported bridge routes (origin → destination token pairs).
+      parameters:
+        - { in: query, name: originChainId,      schema: { type: integer, format: int64 } }
+        - { in: query, name: destinationChainId, schema: { type: integer, format: int64 } }
+        - { in: query, name: originToken,        schema: { type: string } }
+        - { in: query, name: destinationToken,   schema: { type: string } }
+      responses:
+        '200':
+          description: Array of supported route entries.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/AcrossRoute' }
+
+  /limits:
+    get:
+      operationId: getLimits
+      summary: Min/max bridge amounts and instant-fill caps for a route.
+      parameters:
+        - { in: query, name: inputToken,         required: true, schema: { type: string } }
+        - { in: query, name: outputToken,        required: true, schema: { type: string } }
+        - { in: query, name: originChainId,      required: true, schema: { type: integer, format: int64 } }
+        - { in: query, name: destinationChainId, required: true, schema: { type: integer, format: int64 } }
+      responses:
+        '200':
+          description: Limits for the requested route.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AcrossLimits' }
+
+  /suggested-fees:
+    get:
+      operationId: getSuggestedFees
+      summary: Fee quote and relayer parameters for a bridge.
+      parameters:
+        - { in: query, name: inputToken,         required: true, schema: { type: string } }
+        - { in: query, name: outputToken,        required: true, schema: { type: string } }
+        - { in: query, name: originChainId,      required: true, schema: { type: integer, format: int64 } }
+        - { in: query, name: destinationChainId, required: true, schema: { type: integer, format: int64 } }
+        - { in: query, name: amount,             required: true, schema: { type: string } }
+        - { in: query, name: recipient,          schema: { type: string } }
+        - { in: query, name: message,            schema: { type: string } }
+      responses:
+        '200':
+          description: Suggested fees + relayer parameters.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AcrossSuggestedFees' }
+
+  /deposit/status:
+    get:
+      operationId: getDepositStatus
+      summary: Current fill status for a submitted deposit.
+      parameters:
+        - { in: query, name: originChainId, required: true, schema: { type: integer, format: int64 } }
+        - { in: query, name: depositId,     required: true, schema: { type: integer, format: int64 } }
+      responses:
+        '200':
+          description: Deposit status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AcrossDepositStatus' }
+
+components:
+  schemas:
+    AcrossRoute:
+      type: object
+      additionalProperties: true
+      required: [originChainId, originToken, destinationChainId, destinationToken]
+      properties:
+        originChainId:           { type: integer, format: int64 }
+        originToken:             { type: string }
+        destinationChainId:      { type: integer, format: int64 }
+        destinationToken:        { type: string }
+        originTokenSymbol:       { type: string, nullable: true }
+        destinationTokenSymbol:  { type: string, nullable: true }
+        isNative:                { type: boolean, nullable: true }
+
+    AcrossLimits:
+      type: object
+      additionalProperties: true
+      required:
+        - minDeposit
+        - maxDeposit
+        - maxDepositInstant
+        - maxDepositShortDelay
+        - recommendedDepositInstant
+      properties:
+        minDeposit:                { type: string }
+        maxDeposit:                { type: string }
+        maxDepositInstant:         { type: string }
+        maxDepositShortDelay:      { type: string }
+        recommendedDepositInstant: { type: string }
+
+    AcrossFeeComponent:
+      type: object
+      required: [pct, total]
+      properties:
+        pct:   { type: string }
+        total: { type: string }
+
+    AcrossTokenRef:
+      type: object
+      required: [address, symbol, decimals, chainId]
+      properties:
+        address:  { type: string }
+        symbol:   { type: string }
+        decimals: { type: integer, format: int64 }
+        chainId:  { type: integer, format: int64 }
+
+    AcrossSuggestedFees:
+      type: object
+      additionalProperties: true
+      required:
+        - totalRelayFee
+        - relayerCapitalFee
+        - relayerGasFee
+        - lpFee
+        - outputAmount
+        - inputToken
+        - outputToken
+      properties:
+        estimatedFillTimeSec: { type: integer, format: int64, nullable: true }
+        totalRelayFee:        { $ref: '#/components/schemas/AcrossFeeComponent' }
+        relayerCapitalFee:    { $ref: '#/components/schemas/AcrossFeeComponent' }
+        relayerGasFee:        { $ref: '#/components/schemas/AcrossFeeComponent' }
+        lpFee:                { $ref: '#/components/schemas/AcrossFeeComponent' }
+        limits:
+          allOf:
+            - { $ref: '#/components/schemas/AcrossLimits' }
+          nullable: true
+        outputAmount: { type: string }
+        inputToken:   { $ref: '#/components/schemas/AcrossTokenRef' }
+        outputToken:  { $ref: '#/components/schemas/AcrossTokenRef' }
+
+    AcrossDepositStatus:
+      type: object
+      additionalProperties: true
+      required: [status]
+      properties:
+        status: { type: string }

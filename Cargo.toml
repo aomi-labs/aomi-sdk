@@ -1,6 +1,9 @@
 [workspace]
 members = [
     "sdk",
+    "progenitor-impl",
+    "progenitor-client",
+    "progenitor-client/fixture",
     "sdk/examples/hello-reader",
     "sdk/examples/keyed-header",
     "ext",

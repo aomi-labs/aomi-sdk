@@ -1,4 +1,5 @@
 // Copyright 2022 Oxide Computer Company
+// Modified for Aomi: mock-server path matchers removed.
 
 use std::collections::HashMap;
 
@@ -35,7 +36,7 @@ impl PathTemplate {
                     "{}",
                     rename
                         .get(&n)
-                        .expect(&format!("missing path name mapping {}", n)),
+                        .unwrap_or_else(|| panic!("missing path name mapping {}", n)),
                 );
                 Some(quote! {
                     encode_path(&#param.to_string())
@@ -58,31 +59,6 @@ impl PathTemplate {
                 Component::Constant(_) => None,
             })
             .collect()
-    }
-
-    pub fn as_wildcard(&self) -> String {
-        let inner = self
-            .components
-            .iter()
-            .map(|c| match c {
-                Component::Constant(name) => name.clone(),
-                Component::Parameter(_) => "[^/]*".to_string(),
-            })
-            .collect::<String>();
-        format!("^{}$", inner)
-    }
-
-    pub fn as_wildcard_param(&self, param: &str) -> String {
-        let inner = self
-            .components
-            .iter()
-            .map(|c| match c {
-                Component::Constant(name) => name.clone(),
-                Component::Parameter(p) if p == param => "{}".to_string(),
-                Component::Parameter(_) => ".*".to_string(),
-            })
-            .collect::<String>();
-        format!("^{}$", inner)
     }
 }
 
@@ -158,15 +134,14 @@ pub fn parse(t: &str) -> Result<PathTemplate> {
     Ok(PathTemplate { components })
 }
 
-impl ToString for PathTemplate {
-    fn to_string(&self) -> std::string::String {
+impl std::fmt::Display for PathTemplate {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.components
             .iter()
-            .map(|component| match component {
-                Component::Constant(s) => s.clone(),
-                Component::Parameter(s) => format!("{{{}}}", s),
+            .try_for_each(|component| match component {
+                Component::Constant(s) => f.write_str(s),
+                Component::Parameter(s) => write!(f, "{{{}}}", s),
             })
-            .fold(String::new(), |a, b| a + &b)
     }
 }
 
@@ -178,7 +153,7 @@ mod tests {
 
     #[test]
     fn basic() {
-        let trials = vec![
+        let trials = [
             (
                 "/info",
                 "/info",
@@ -271,7 +246,7 @@ mod tests {
 
     #[test]
     fn names() {
-        let trials = vec![
+        let trials = [
             ("/info", vec![]),
             ("/measure/{number}", vec!["number".to_string()]),
             (
