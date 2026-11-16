@@ -1,6 +1,6 @@
+use aomi_progenitor_impl::Generator;
 use clap::Args;
 use eyre::{Context, Result, bail};
-use progenitor::{GenerationSettings, Generator, InterfaceStyle};
 use std::path::PathBuf;
 
 use crate::spec_load;
@@ -62,15 +62,10 @@ pub fn run(args: GenClientArgs) -> Result<()> {
     println!("Reading spec: {}", spec_path.display());
     let spec = spec_load::load_and_preprocess(&spec_path)?;
 
-    println!("Running progenitor...");
-    let mut generator = Generator::new(
-        GenerationSettings::default()
-            .with_interface(InterfaceStyle::Positional)
-            .with_tag(progenitor::TagStyle::Merged),
-    );
-    let tokens = generator
+    println!("Generating the client...");
+    let tokens = Generator::default()
         .generate_tokens(&spec)
-        .map_err(|e| eyre::eyre!("progenitor failed: {e}"))?;
+        .map_err(|e| eyre::eyre!("generation failed: {e}"))?;
 
     let formatted = format_tokens(tokens.to_string())?;
 
@@ -121,8 +116,8 @@ pub fn run(args: GenClientArgs) -> Result<()> {
 }
 
 /// Ensure apps/<platform>/Cargo.toml has the runtime deps the generated
-/// client needs: progenitor-client, chrono, uuid, regress (per detection),
-/// reqwest, serde, etc. Returns true iff the file was modified.
+/// client needs: aomi-progenitor-client, and chrono, uuid, regress per
+/// detection. Returns true iff the file was modified.
 fn wire_into_app(root: &std::path::Path, platform: &str, deps: &DetectedDeps) -> Result<bool> {
     let cargo_path = root.join("apps").join(platform).join("Cargo.toml");
     if !cargo_path.exists() {
@@ -152,10 +147,7 @@ fn wire_into_app(root: &std::path::Path, platform: &str, deps: &DetectedDeps) ->
 }
 
 fn build_app_dep_lines(deps: &DetectedDeps) -> Vec<String> {
-    let mut out = vec![
-        "progenitor-client = \"0.14\"".to_string(),
-        "reqwest = { version = \"0.13\", default-features = false, features = [\"json\", \"rustls\"] }".to_string(),
-    ];
+    let mut out = vec!["aomi-progenitor-client = \"0.14\"".to_string()];
     if deps.needs_chrono {
         out.push("chrono = { version = \"0.4\", features = [\"serde\"] }".to_string());
     }
@@ -178,8 +170,8 @@ struct DetectedDeps {
 
 impl DetectedDeps {
     fn feature_deps(&self) -> Vec<String> {
-        // progenitor-client is always needed for generated clients.
-        let mut v = vec!["dep:progenitor-client".to_string()];
+        // The runtime is always needed for generated clients.
+        let mut v = vec!["dep:aomi-progenitor-client".to_string()];
         if self.needs_chrono {
             v.push("dep:chrono".to_string());
         }
@@ -203,7 +195,7 @@ impl DetectedDeps {
     }
 }
 
-/// Scan the generated client source for dep markers. progenitor pulls in
+/// Scan the generated client source for dep markers. The generator pulls in
 /// `chrono` for date/time formats, `uuid` for `format: uuid` strings, and
 /// `regress` for `pattern:` constraints. Each shows up as a `use` or path
 /// reference in the generated code.
@@ -216,7 +208,7 @@ fn detect_generated_deps(src: &str) -> DetectedDeps {
 }
 
 /// Pull `dep:foo` strings out of an existing feature line like:
-///   `bybit = ["dep:progenitor-client", "dep:chrono", "dep:hmac", "dep:sha2"]`
+///   `bybit = ["dep:aomi-progenitor-client", "dep:chrono", "dep:hmac", "dep:sha2"]`
 fn parse_feature_deps(line: &str) -> Vec<String> {
     let mut out = Vec::new();
     let bytes = line.as_bytes();
@@ -314,7 +306,7 @@ fn wire_into_ext(
 
 fn format_tokens(raw: String) -> Result<String> {
     let parsed: syn::File = syn::parse_str(&raw).with_context(
-        || "progenitor produced unparseable Rust — this is a bug in the spec or the generator",
+        || "the generator produced unparseable Rust — this is a bug in the spec or the generator",
     )?;
     Ok(prettyplease::unparse(&parsed))
 }

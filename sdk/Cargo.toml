@@ -22,7 +22,7 @@ cli = [
     "dep:inquire",
     "dep:serde_yaml",
     "dep:chrono",
-    "dep:progenitor",
+    "dep:aomi-progenitor-impl",
     "dep:openapiv3",
     "dep:indexmap",
     "dep:prettyplease",
@@ -54,7 +54,7 @@ toml = { version = "0.8", optional = true }
 inquire = { version = "0.7", optional = true }
 serde_yaml = { version = "0.9", optional = true }
 chrono = { workspace = true, features = ["serde"], optional = true }
-progenitor = { version = "0.14", optional = true }
+aomi-progenitor-impl = { path = "../progenitor-impl", version = "0.14", optional = true }
 openapiv3 = { version = "2.2", optional = true }
 indexmap = { version = "2", optional = true }
 prettyplease = { version = "0.2", optional = true }
