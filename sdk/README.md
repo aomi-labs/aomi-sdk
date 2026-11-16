@@ -64,6 +64,7 @@ code. See the two examples:
 | `secrets::{has, hmac_sha256, reveal}` | slots from `aomi.toml`; values stay in the host unless `reveal = true` |
 | `chain::evm(id)` | `call`, `balance`, `code`, `nonce`, `block_number`, `receipt`, `transaction`, `read`, `.at(View)`; feature `alloy`: `.provider()`, an alloy `RootProvider` over the same reads (a "pending" block argument reads as "latest"; alloy crates re-exported as `aomi_sdk::alloy`) |
 | `chain::svm(cluster)` | `account`, `balance`, `token_accounts`, `signatures`, `transaction`, `read` |
+| `simulation::run(&Request)` | `Request::new(chain_id, from)` with `prefix` (staged ids), `calls` and `reads`; returns a `Report` (block, per-call status, return data, gas, logs; per-read bytes). Serde with `0x` hex bytes |
 | `log::emit(Level, msg)` | to the backend's log, tagged with the package and call |
 
 ## Build and test

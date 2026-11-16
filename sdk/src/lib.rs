@@ -26,7 +26,7 @@
 //! ```
 //!
 //! The crate compiles natively too, so tool logic can be unit-tested with
-//! `cargo test`; host imports (`http`, `chain`, `secrets`, `log`) panic when
+//! `cargo test`; host imports (`http`, `chain`, `simulation`, `secrets`, `log`) panic when
 //! called outside the sandbox. [`testing::ctx`] builds a call context.
 #![allow(async_fn_in_trait)]
 
@@ -35,6 +35,7 @@ mod ctx;
 pub mod http;
 mod outcome;
 pub mod secrets;
+pub mod simulation;
 pub mod testing;
 mod tool;
 
