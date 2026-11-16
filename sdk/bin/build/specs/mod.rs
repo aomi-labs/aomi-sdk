@@ -1,3 +1,4 @@
+use crate::client::Mode;
 use clap::{Args, ValueEnum};
 use eyre::{Context, Result, bail};
 use std::path::{Path, PathBuf};
@@ -33,8 +34,8 @@ pub struct GenSpecsArgs {
     #[arg(long, value_enum, default_value_t = Source::All)]
     pub source: Source,
 
-    /// Output path for the YAML spec. Defaults to apps/<platform>/openapi.yaml
-    /// (or ext/specs/<platform>.yaml when --shared is set), resolved against
+    /// Output path for the YAML spec. Defaults to packages/<platform>/openapi.yaml
+    /// (or crates/clients/<platform>/openapi.yaml when --shared is set), resolved against
     /// the workspace root.
     #[arg(long)]
     pub out: Option<PathBuf>,
@@ -47,9 +48,9 @@ pub struct GenSpecsArgs {
     #[arg(long)]
     pub from_url: Option<String>,
 
-    /// Treat this provider as a shared library (lives under ext/). Default is
+    /// Treat this provider as a shared library (a crate under crates/clients/). Default is
     /// app-local — the spec, generated client, and tool layer all live inside
-    /// `apps/<platform>/`. Use --shared for big platforms (Binance, Bybit, …)
+    /// `packages/<platform>/`. Use --shared for big platforms (Binance, Bybit, …)
     /// where the same client is reused by multiple Aomi apps.
     #[arg(long)]
     pub shared: bool,
@@ -57,13 +58,12 @@ pub struct GenSpecsArgs {
 
 impl GenSpecsArgs {
     pub fn default_spec_path(&self, root: &Path) -> PathBuf {
-        if self.shared {
-            root.join("ext")
-                .join("specs")
-                .join(format!("{}.yaml", self.platform))
+        let mode = if self.shared {
+            Mode::Shared
         } else {
-            root.join("apps").join(&self.platform).join("openapi.yaml")
-        }
+            Mode::AppLocal
+        };
+        mode.spec_path(root, &self.platform)
     }
 }
 

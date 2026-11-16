@@ -154,7 +154,6 @@ fn support_commands_parse_prerequisite_flags() {
                 );
                 assert_eq!(mint.admin_kid.as_deref(), Some("aomi-admin-prod-1"));
             }
-            _ => panic!("expected token mint"),
         },
         _ => panic!("expected token mint"),
     }

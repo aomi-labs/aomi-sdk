@@ -30,7 +30,7 @@ pub(super) async fn app_flow() -> Result<()> {
         vec![
             "Discover automatically",
             "Fetch from a known OpenAPI URL",
-            "Use existing apps/<name>/openapi.yaml",
+            "Use existing packages/<name>/openapi.yaml",
         ],
     )
     .prompt()
@@ -48,7 +48,7 @@ pub(super) async fn app_flow() -> Result<()> {
         None
     };
 
-    let shared = Confirm::new("Generate as a shared provider under ext/?")
+    let shared = Confirm::new("Generate as a shared client crate under crates/clients/?")
         .with_default(false)
         .prompt()
         .context("wizard cancelled")?;
@@ -118,6 +118,8 @@ fn run_existing_spec_app_flow(
         out: None,
         force,
         shared,
+        check: false,
+        preprocessed: None,
     })
     .map_err(|e| anyhow!("{e:#}"))
     .with_context(|| "gen-client failed")?;

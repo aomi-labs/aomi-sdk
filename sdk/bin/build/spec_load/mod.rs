@@ -81,11 +81,10 @@ pub fn load_and_preprocess(spec_path: &Path) -> Result<openapiv3::OpenAPI> {
     if n > 0 {
         println!("  collapsed {n} response(s) to one media type (progenitor allows one)");
     }
-    // Write the post-processed spec to a sibling .preprocessed.yaml for
-    // debugging when progenitor still chokes on something.
-    if let Ok(yaml) = serde_yaml::to_string(&spec) {
-        let dbg_path = spec_path.with_extension("preprocessed.yaml");
-        let _ = std::fs::write(&dbg_path, yaml);
-    }
     Ok(spec)
+}
+
+/// The spec as progenitor sees it, after the patches above.
+pub fn preprocessed_yaml(spec: &openapiv3::OpenAPI) -> Result<String> {
+    serde_yaml::to_string(spec).context("failed to serialize the preprocessed spec")
 }

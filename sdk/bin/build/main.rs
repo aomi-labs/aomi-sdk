@@ -27,18 +27,18 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Discover or fetch an OpenAPI spec for a platform and write it under ext/specs/.
+    /// Discover or fetch an OpenAPI spec for a platform and write it under the provider's spec path.
     GenSpecs(specs::GenSpecsArgs),
-    /// Generate a Rust client from an OpenAPI spec into ext/src/<platform>/.
+    /// Generate a Rust client from an OpenAPI spec into packages/<platform>/src/client/ or crates/clients/<platform>/.
     GenClient(client::GenClientArgs),
-    /// Scaffold an Aomi app from a generated client into apps/<platform>/.
+    /// Scaffold an Aomi app from a generated client into packages/<platform>/.
     GenTool(tool::GenToolArgs),
     /// Validate a spec against the live API using Schemathesis (auto-detected runner).
     TestSchema(test_schema::TestSchemaArgs),
     /// Orchestrator: gen-specs → gen-client → gen-tool → cargo build.
     NewApp(new_app::NewAppArgs),
     /// Tighten a spec's `additionalProperties: true` response bodies by inferring
-    /// schemas from real captured JSON samples in `ext/specs/<platform>.samples/`.
+    /// schemas from real captured JSON samples in the spec's `.samples/` directory.
     TightenSpec(tighten::TightenSpecArgs),
     /// Scaffold a bare app skeleton under `apps/<NAME>/`. Greenfield counterpart
     /// to `new-app` (which is OpenAPI-driven).

@@ -59,6 +59,8 @@ pub fn run(args: NewAppArgs) -> Result<()> {
         out: None,
         force: args.force,
         shared: args.shared,
+        check: false,
+        preprocessed: None,
     })
     .with_context(|| "gen-client failed")?;
 
