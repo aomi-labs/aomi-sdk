@@ -9,7 +9,7 @@ use anyhow::{Context, Result, anyhow, bail};
 use inquire::{Confirm, Select, Text};
 
 use super::print_step_error;
-use crate::new_app::NewAppArgs;
+use crate::new_package::NewPackageArgs;
 use crate::specs::workspace_root;
 
 /// Create an app inside the current Aomi workspace using the OpenAPI-driven
@@ -75,7 +75,7 @@ pub(super) async fn app_flow() -> Result<()> {
     } else {
         let platform_for_codegen = platform.clone();
         let result = tokio::task::spawn_blocking(move || {
-            crate::new_app::run(NewAppArgs {
+            crate::new_package::run(NewPackageArgs {
                 platform: platform_for_codegen,
                 from_url,
                 all,

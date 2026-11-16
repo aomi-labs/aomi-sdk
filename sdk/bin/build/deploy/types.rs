@@ -121,14 +121,10 @@ pub struct AppRecord {
     /// Local `.aomi/deployment.json` overlay; absent from backend deploy result.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub activated: Option<bool>,
-    /// Local overlay: the backend application id, recorded once the app is
-    /// live. Builders address the app by this id in the catalog and chat.
-    #[serde(
-        default,
-        alias = "applicationId",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub application_id: Option<i64>,
+    /// Local overlay: the backend agent id, recorded once the app is live.
+    /// Builders address the agent by this id in the catalog and chat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_id: Option<i64>,
 }
 
 // Release-tag activation request and response.
@@ -244,8 +240,13 @@ pub struct ActivationPromotion {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ActivatedApp {
-    #[serde(alias = "applicationId", skip_serializing_if = "Option::is_none")]
-    pub application_id: Option<i64>,
+    /// Backend wire name: `application_id` / `applicationId`.
+    #[serde(
+        rename = "application_id",
+        alias = "applicationId",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub agent_id: Option<i64>,
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
@@ -412,7 +413,7 @@ pub struct ProjectAppsResult {
 /// per-Project list or the public Chat catalog.
 #[derive(Debug, Clone, Deserialize)]
 pub struct PlatformAppStatus {
-    /// Application id. The public catalog names it `application_id`.
+    /// Agent id. The public catalog names it `application_id`.
     #[serde(default, alias = "application_id")]
     pub id: Option<i64>,
     #[serde(default)]

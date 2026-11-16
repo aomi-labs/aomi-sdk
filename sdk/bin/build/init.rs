@@ -1,6 +1,6 @@
 //! `aomi-build init <NAME>`: scaffold a package under `packages/<NAME>/`.
 //!
-//! Counterpart to `aomi-build new-app`, which is OpenAPI-driven. `init` is
+//! Counterpart to `aomi-build new-package`, which is OpenAPI-driven. `init` is
 //! the greenfield path: a guest `Tool`, `package!`, and an `aomi.toml`.
 
 use std::fs;

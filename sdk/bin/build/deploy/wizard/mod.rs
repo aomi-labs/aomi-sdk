@@ -33,7 +33,7 @@ pub async fn run() -> Result<()> {
             vec![
                 "Deploy the app in a local directory",
                 "Create an OpenAPI-driven app locally",
-                "Scaffold a new app from the example template",
+                "Scaffold a new package from the example template",
                 "Quit",
             ],
         )

@@ -45,19 +45,19 @@ Files marked `--shared` live in a client crate under `crates/clients/` and are r
 
 ```sh
 # One-shot orchestrator. Chains gen-specs → gen-client → gen-tool → cargo build.
-aomi-build new-app petstore
+aomi-build new-package petstore
 
 # With explicit URL when discovery doesn't find the spec:
-aomi-build new-app petstore --from-url https://example.com/openapi.json
+aomi-build new-package petstore --from-url https://example.com/openapi.json
 
 # Stop after gen-client (skip tool scaffolding):
-aomi-build new-app petstore --no-tool
+aomi-build new-package petstore --no-tool
 
 # Treat as shared (client crate under crates/clients/):
-aomi-build new-app binance --shared
+aomi-build new-package binance --shared
 ```
 
-After `new-app` finishes, the app **compiles** but has mechanical one-tool-per-endpoint stubs. Bring it to "actually useful" with stage (4) — see [Curating the tool layer](#4-curating-the-tool-layer).
+After `new-package` finishes, the package **compiles** but has mechanical one-tool-per-endpoint stubs. Bring it to "actually useful" with stage (4) — see [Curating the tool layer](#4-curating-the-tool-layer).
 
 ---
 
@@ -67,7 +67,7 @@ After `new-app` finishes, the app **compiles** but has mechanical one-tool-per-e
 aomi-build gen-specs    <p>   # discover/fetch OpenAPI → write YAML spec
 aomi-build gen-client   <p>   # OpenAPI YAML → progenitor → typed Rust client
 aomi-build gen-tool     <p>   # generated client → scaffold app + stub tools
-aomi-build new-app      <p>   # orchestrator: all three above + cargo build
+aomi-build new-package  <p>   # orchestrator: all three above + cargo build
 aomi-build tighten-spec <p>   # sharpen additionalProperties:true from real samples
 aomi-build test-schema  <p>   # schemathesis validation against live API
 cargo build --target wasm32-wasip2 --release   # build a package component
@@ -415,7 +415,7 @@ The component exports `describe` and `call-tool` through `aomi_sdk::package!`; s
 Or, in one line for a happy-path platform:
 
 ```sh
-aomi-build new-app <platform>             # 2 + 3 + 4 + cargo build
+aomi-build new-package <platform>             # 2 + 3 + 4 + cargo build
 # then curate the tools
 ```
 

@@ -44,7 +44,7 @@ For one release cycle, `aomi-build status` aliases `aomi-build deploy status`,
 `aomi-build activate` aliases `aomi-build deploy activate`, and
 `aomi-build deploy --preflight` aliases `aomi-build deploy preflight`.
 
-(The `gen-specs` / `gen-client` / `gen-tool` / `new-app` / `tighten-spec`
+(The `gen-specs` / `gen-client` / `gen-tool` / `new-package` / `tighten-spec`
 commands are for *generating* an app from an API spec — out of scope here.)
 
 ---

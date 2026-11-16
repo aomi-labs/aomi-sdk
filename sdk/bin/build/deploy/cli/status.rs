@@ -72,7 +72,7 @@ impl StatusArgs {
             // A deployment.json written before ids were recorded still gets
             // them in the report; status leaves the file untouched.
             state
-                .record_application_ids(&session.client, backend_url.as_deref())
+                .record_agent_ids(&session.client, backend_url.as_deref())
                 .await;
         }
         let mut report = StatusResult::collect(&state, backend_url, token).await;

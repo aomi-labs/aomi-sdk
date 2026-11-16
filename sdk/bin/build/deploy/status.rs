@@ -71,9 +71,9 @@ impl AttemptStatus {
 pub struct AppStatus {
     pub name: String,
     pub release_tag: String,
-    /// Backend application id, once the app has been activated.
+    /// Backend agent id, once the app has been activated.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub application_id: Option<i64>,
+    pub agent_id: Option<i64>,
     /// What the local `.aomi/deployment.json` last recorded.
     pub activated_locally: bool,
     /// What the backend reports, when reachable.
@@ -142,7 +142,7 @@ impl StatusResult {
             apps.push(AppStatus {
                 name: app.name.clone(),
                 release_tag: app.release_tag.clone(),
-                application_id: app.application_id,
+                agent_id: app.agent_id,
                 activated_locally: app.activated.unwrap_or(false),
                 backend,
             });
@@ -220,8 +220,8 @@ impl StatusResult {
         }
         for app in &self.apps {
             let _ = writeln!(out, "  - {} ({})", app.name, app.release_tag);
-            if let Some(id) = app.application_id {
-                let _ = writeln!(out, "      app id    : {id}");
+            if let Some(id) = app.agent_id {
+                let _ = writeln!(out, "      agent id  : {id}");
             }
             let _ = writeln!(out, "      local     : activated={}", app.activated_locally);
             match &app.backend {
@@ -314,11 +314,11 @@ mod tests {
     }
 
     #[test]
-    fn report_prints_application_id() {
-        let app = |application_id| AppStatus {
+    fn report_prints_agent_id() {
+        let app = |agent_id| AppStatus {
             name: "playground-example".into(),
             release_tag: "apps-1-r00a1b2c3d4-playground-example-abc1234".into(),
-            application_id,
+            agent_id,
             activated_locally: true,
             backend: BackendAppStatus::NotChecked,
         };
@@ -336,12 +336,12 @@ mod tests {
             apps: vec![app(Some(2937816)), app(None)],
         };
         let rendered = report.render();
-        assert_eq!(rendered.matches("app id    :").count(), 1);
+        assert_eq!(rendered.matches("agent id  :").count(), 1);
         assert!(rendered.contains(
-            "  - playground-example (apps-1-r00a1b2c3d4-playground-example-abc1234)\n      app id    : 2937816\n"
+            "  - playground-example (apps-1-r00a1b2c3d4-playground-example-abc1234)\n      agent id  : 2937816\n"
         ));
         let json = serde_json::to_value(&report).unwrap();
-        assert_eq!(json["apps"][0]["application_id"], 2937816);
-        assert!(json["apps"][1].get("application_id").is_none());
+        assert_eq!(json["apps"][0]["agent_id"], 2937816);
+        assert!(json["apps"][1].get("agent_id").is_none());
     }
 }

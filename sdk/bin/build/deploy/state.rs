@@ -132,10 +132,10 @@ impl LocalDeployment {
         self.state.activated = !self.deployment.platform.apps.is_empty();
     }
 
-    /// Record each deployed app's application id from application rows. A row
+    /// Record each deployed app's agent id from application rows. A row
     /// with the app's exact release tag wins. Otherwise the app takes the id of
     /// the only row with its name; several rows with one name leave it unset.
-    pub fn apply_application_ids(&mut self, apps: &[PlatformAppStatus]) {
+    pub fn apply_agent_ids(&mut self, apps: &[PlatformAppStatus]) {
         for app in &mut self.deployment.platform.apps {
             let same_release = apps
                 .iter()
@@ -146,30 +146,26 @@ impl LocalDeployment {
                 _ => None,
             };
             if let Some(id) = same_release.or(only_by_name).and_then(|row| row.id) {
-                app.application_id = Some(id);
+                app.agent_id = Some(id);
             }
         }
     }
 
-    /// Fill missing application ids. The Builder's Project app list comes
+    /// Fill missing agent ids. The Builder's Project app list comes
     /// first. Apps it leaves without an id are looked up in the public Chat
     /// catalog of the backend's environment by exact release tag, so a
     /// private app stays without one. Every lookup failure is tolerated: the
     /// id is informational.
-    pub async fn record_application_ids(
-        &mut self,
-        client: &BuildClient,
-        backend_url: Option<&str>,
-    ) {
+    pub async fn record_agent_ids(&mut self, client: &BuildClient, backend_url: Option<&str>) {
         if let Ok(apps) = client.project_apps(self.project_id).await {
-            self.apply_application_ids(&apps.apps);
+            self.apply_agent_ids(&apps.apps);
         }
         if self
             .deployment
             .platform
             .apps
             .iter()
-            .all(|app| app.application_id.is_some())
+            .all(|app| app.agent_id.is_some())
         {
             return;
         }
@@ -184,7 +180,7 @@ impl LocalDeployment {
                     .as_deref()
                     .is_some_and(|tag| self.release_tag_for(&row.name) == Some(tag))
             });
-            self.apply_application_ids(&rows);
+            self.apply_agent_ids(&rows);
         }
     }
 
@@ -215,7 +211,7 @@ impl LocalDeployment {
         for activated in &response.activation.apps {
             for app in self.deployment.platform.apps.iter_mut() {
                 if app.name == activated.name {
-                    app.application_id = activated.application_id.or(app.application_id);
+                    app.agent_id = activated.agent_id.or(app.agent_id);
                     app.activated = Some(
                         activated.is_active
                             && activated.artifact_ready

@@ -5,7 +5,7 @@ use super::*;
 // ── deployment.json round-trip via the state file ───────────────────────────
 
 #[test]
-fn project_apps_record_application_ids_in_deployment_json() {
+fn project_apps_record_agent_ids_in_deployment_json() {
     // Build BFF `GET /api/build/deployments/apps?projectId=…` response.
     let apps: crate::deploy::types::ProjectAppsResult = serde_json::from_value(json!({
         "ok": true,
@@ -21,25 +21,22 @@ fn project_apps_record_application_ids_in_deployment_json() {
     .unwrap();
     let mut state = sample_state();
     state.apply_live_attempt();
-    state.apply_application_ids(&apps.apps);
-    assert_eq!(
-        state.deployment.platform.apps[0].application_id,
-        Some(2937816)
-    );
-    assert_eq!(state.deployment.platform.apps[1].application_id, None);
+    state.apply_agent_ids(&apps.apps);
+    assert_eq!(state.deployment.platform.apps[0].agent_id, Some(2937816));
+    assert_eq!(state.deployment.platform.apps[1].agent_id, None);
 
     let repo = TestRepo::new();
     state.write(repo.root()).unwrap();
     let raw: serde_json::Value =
         serde_json::from_slice(&std::fs::read(repo.root().join(".aomi/deployment.json")).unwrap())
             .unwrap();
-    assert_eq!(raw["platform"]["apps"][0]["application_id"], 2937816);
-    assert!(raw["platform"]["apps"][1].get("application_id").is_none());
+    assert_eq!(raw["platform"]["apps"][0]["agent_id"], 2937816);
+    assert!(raw["platform"]["apps"][1].get("agent_id").is_none());
     assert_eq!(LocalDeployment::read(repo.root()).unwrap().unwrap(), state);
 }
 
 #[test]
-fn application_ids_prefer_exact_release_tag_over_shared_names() {
+fn agent_ids_prefer_exact_release_tag_over_shared_names() {
     // Public Chat catalog rows: `application_id`, many rows sharing a name.
     let rows: Vec<crate::deploy::types::PlatformAppStatus> = serde_json::from_value(json!([
         { "name": "bot", "application_id": 11, "platform": "krexa",
@@ -53,13 +50,10 @@ fn application_ids_prefer_exact_release_tag_over_shared_names() {
     ]))
     .unwrap();
     let mut state = sample_state();
-    state.apply_application_ids(&rows);
-    assert_eq!(
-        state.deployment.platform.apps[0].application_id,
-        Some(2937816)
-    );
+    state.apply_agent_ids(&rows);
+    assert_eq!(state.deployment.platform.apps[0].agent_id, Some(2937816));
     // bot2's own release is absent (a private app) and its name is ambiguous.
-    assert_eq!(state.deployment.platform.apps[1].application_id, None);
+    assert_eq!(state.deployment.platform.apps[1].agent_id, None);
 }
 
 #[test]

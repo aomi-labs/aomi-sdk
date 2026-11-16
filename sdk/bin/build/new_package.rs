@@ -8,7 +8,7 @@ use crate::specs::{GenSpecsArgs, Source};
 use crate::tool::GenToolArgs;
 
 #[derive(Args, Debug)]
-pub struct NewAppArgs {
+pub struct NewPackageArgs {
     /// Platform name.
     pub platform: String,
 
@@ -20,11 +20,11 @@ pub struct NewAppArgs {
     #[arg(long)]
     pub all: bool,
 
-    /// Overwrite existing spec, generated client, and app sources.
+    /// Overwrite existing spec, generated client, and package sources.
     #[arg(long)]
     pub force: bool,
 
-    /// Stop after gen-client (don't scaffold the app).
+    /// Stop after gen-client (don't scaffold the package).
     #[arg(long)]
     pub no_tool: bool,
 
@@ -32,12 +32,12 @@ pub struct NewAppArgs {
     #[arg(long)]
     pub no_build: bool,
 
-    /// Treat as a shared library (lives under ext/). Default is app-local.
+    /// Treat as a shared library (lives under ext/). Default is package-local.
     #[arg(long)]
     pub shared: bool,
 }
 
-pub fn run(args: NewAppArgs) -> Result<()> {
+pub fn run(args: NewPackageArgs) -> Result<()> {
     let platform = args.platform.clone();
 
     println!("=== [1/3] gen-specs {platform} ===");
@@ -99,6 +99,6 @@ pub fn run(args: NewAppArgs) -> Result<()> {
     }
 
     println!();
-    println!("✓ new-app {platform} complete");
+    println!("✓ new-package {platform} complete");
     Ok(())
 }

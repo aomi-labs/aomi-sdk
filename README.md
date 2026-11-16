@@ -11,7 +11,7 @@ Aomi runtime loads it, calls its tools and enforces the capabilities its
 ## What lives here
 
 - `sdk`: the `aomi-sdk` crate (the `Tool` trait, `package!`, `http`, `secrets`, `testing`) and its WIT in `sdk/wit`
-- `sdk/bin/build`: the `aomi-build` CLI, which scaffolds packages (`init`, `new-app`), generates clients from OpenAPI specs and deploys. See [`docs/aomi-build.md`](./docs/aomi-build.md)
+- `sdk/bin/build`: the `aomi-build` CLI, which scaffolds packages (`init`, `new-package`), generates clients from OpenAPI specs and deploys. See [`docs/aomi-build.md`](./docs/aomi-build.md)
 - `sdk/examples/hello-reader`, `sdk/examples/keyed-header`: example packages
 - `progenitor-impl`, `progenitor-client`: the OpenAPI client generator and its runtime
 - `docs/`: [`repo-structure.md`](./docs/repo-structure.md) (package layout), [`host-interop.md`](./docs/host-interop.md) (host capabilities), deployment and auth guides

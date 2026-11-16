@@ -1,5 +1,5 @@
 //! Public app catalog on the Aomi Chat host. It needs no credential, so the
-//! CLI reads application ids from it when the Builder routes cannot serve them.
+//! CLI reads agent ids from it when the Builder routes cannot serve them.
 
 use anyhow::{Context, Result};
 
