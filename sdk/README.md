@@ -1,7 +1,7 @@
 # aomi-sdk
 
 The guest SDK for Aomi packages. A package is a WebAssembly component for the
-`aomi:package@1.0.0` world (contract version 1, WIT in [`../wit`](../wit)),
+`aomi:package@1.0.0` world (contract version 1, WIT in [`wit/`](wit)),
 built for `wasm32-wasip2`. The backend runs each call on a fresh sandboxed
 instance.
 

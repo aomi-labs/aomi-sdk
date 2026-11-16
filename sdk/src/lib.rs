@@ -41,7 +41,7 @@ mod tool;
 #[doc(hidden)]
 pub mod bindings {
     wit_bindgen::generate!({
-        path: "../wit",
+        path: "wit",
         world: "%package",
         generate_all,
         pub_export_macro: true,
