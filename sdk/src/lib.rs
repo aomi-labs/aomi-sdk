@@ -36,6 +36,8 @@ pub mod http;
 mod outcome;
 pub mod secrets;
 pub mod simulation;
+#[cfg(feature = "svm")]
+pub mod svm;
 pub mod testing;
 mod tool;
 

@@ -65,6 +65,7 @@ code. See the two examples:
 | `chain::evm(id)` | `call`, `balance`, `code`, `nonce`, `block_number`, `receipt`, `transaction`, `read`, `.at(View)`; feature `alloy`: `.provider()`, an alloy `RootProvider` over the same reads (a "pending" block argument reads as "latest"; alloy crates re-exported as `aomi_sdk::alloy`) |
 | `chain::svm(cluster)` | `account`, `balance`, `token_accounts`, `signatures`, `transaction`, `read` |
 | `simulation::run(&Request)` | `Request::new(chain_id, from)` with `prefix` (staged ids), `calls` and `reads`; returns a `Report` (block, per-call status, return data, gas, logs; per-read bytes). Serde with `0x` hex bytes |
+| `svm::Transaction::from_base64(..)` (feature `svm`) | checked legacy/v0 decode; `message.resolve(&chain::svm(cluster))` reads lookup tables with `getAccountInfo` and returns `Instruction`s that serialize as `svm_stage_ix` entries |
 | `log::emit(Level, msg)` | to the backend's log, tagged with the package and call |
 
 ## Build and test
