@@ -78,7 +78,7 @@ pub fn run(args: TestSchemaArgs) -> Result<()> {
     let spec_path = args
         .spec
         .clone()
-        .unwrap_or_else(|| Mode::AppLocal.spec_path(&root, &args.platform));
+        .unwrap_or_else(|| Mode::PackageLocal.spec_path(&root, &args.platform));
     if !spec_path.exists() {
         bail!("spec not found at {}", spec_path.display());
     }

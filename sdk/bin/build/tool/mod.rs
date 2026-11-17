@@ -33,7 +33,7 @@ pub struct GenToolArgs {
 
     /// The client is the shared crate `<platform>-client` under crates/clients/.
     /// Auto-detected when omitted: a client module at
-    /// `packages/<platform>/src/client/` implies app-local.
+    /// `packages/<platform>/src/client/` implies package-local.
     #[arg(long)]
     pub shared: bool,
 }
@@ -48,14 +48,14 @@ pub fn run(args: GenToolArgs) -> Result<()> {
         .join("client");
     let app_local = !args.shared && app_client_dir.exists();
     let mode = if app_local {
-        Mode::AppLocal
+        Mode::PackageLocal
     } else {
         Mode::Shared
     };
     println!(
         "Mode: {}",
         match mode {
-            Mode::AppLocal => "app-local (client in packages/<platform>/src/client/)",
+            Mode::PackageLocal => "package-local (client in packages/<platform>/src/client/)",
             Mode::Shared => "shared (client crate crates/clients/<platform>)",
         }
     );
@@ -167,7 +167,7 @@ pub fn run(args: GenToolArgs) -> Result<()> {
     let cargo = render::cargo_toml(&args.platform, mode);
     let cargo = match mode {
         Mode::Shared => cargo,
-        Mode::AppLocal => {
+        Mode::PackageLocal => {
             let client = std::fs::read_to_string(src_dir.join("client").join("client.rs"))
                 .unwrap_or_default();
             ensure_deps(&cargo, &detect_generated_deps(&client))?

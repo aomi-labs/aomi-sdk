@@ -14,7 +14,7 @@ use crate::specs::workspace_root;
 
 #[derive(Args, Debug)]
 pub struct InitArgs {
-    /// New package name. Lowercase alphanumeric with hyphens (e.g. `my-app`).
+    /// New package name. Lowercase alphanumeric with hyphens (e.g. `my-package`).
     pub name: String,
 }
 
@@ -80,7 +80,7 @@ pub fn run(args: InitArgs) -> Result<()> {
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
     {
-        bail!("package name must be lowercase alphanumeric with hyphens (e.g. 'my-app')");
+        bail!("package name must be lowercase alphanumeric with hyphens (e.g. 'my-package')");
     }
 
     let root = workspace_root()?;
@@ -130,7 +130,6 @@ mod tests {
         assert!(CARGO_TOML.contains(r#"crate-type = ["cdylib"]"#));
         assert!(LIB_RS.contains("impl Tool for Example"));
         assert!(LIB_RS.contains("aomi_sdk::package!(Example);"));
-        assert!(!LIB_RS.contains("dyn_aomi_app"));
         assert!(AOMI_TOML.contains("contract = 1"));
     }
 

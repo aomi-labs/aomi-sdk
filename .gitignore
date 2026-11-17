@@ -1,7 +1,6 @@
 /target
 **/target
 /.cargo-home
-/plugins
 .DS_Store
 .env
 .env.*

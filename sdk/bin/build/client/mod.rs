@@ -48,7 +48,7 @@ pub struct GenClientArgs {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Mode {
     /// A module in `packages/<platform>/src/client/`; the tool layer uses `crate::client`.
-    AppLocal,
+    PackageLocal,
     /// A crate `crates/clients/<platform>` named `<platform>-client`.
     Shared,
 }
@@ -56,14 +56,14 @@ pub(crate) enum Mode {
 impl Mode {
     pub(crate) fn spec_path(self, root: &Path, platform: &str) -> PathBuf {
         match self {
-            Self::AppLocal => root.join("packages").join(platform).join("openapi.yaml"),
+            Self::PackageLocal => root.join("packages").join(platform).join("openapi.yaml"),
             Self::Shared => self.out_dir(root, platform).join("openapi.yaml"),
         }
     }
 
     fn out_dir(self, root: &Path, platform: &str) -> PathBuf {
         match self {
-            Self::AppLocal => root
+            Self::PackageLocal => root
                 .join("packages")
                 .join(platform)
                 .join("src")
@@ -118,7 +118,7 @@ fn run_in(root: &Path, args: GenClientArgs) -> Result<()> {
     let mode = if args.shared {
         Mode::Shared
     } else {
-        Mode::AppLocal
+        Mode::PackageLocal
     };
     let platform = args.platform.as_str();
     let spec_path = args
@@ -130,7 +130,7 @@ fn run_in(root: &Path, args: GenClientArgs) -> Result<()> {
         .clone()
         .unwrap_or_else(|| mode.out_dir(root, platform));
     let (src_dir, mod_name) = match mode {
-        Mode::AppLocal => (out_dir.clone(), "mod.rs"),
+        Mode::PackageLocal => (out_dir.clone(), "mod.rs"),
         Mode::Shared => (out_dir.join("src"), "lib.rs"),
     };
     let client_path = src_dir.join("client.rs");
@@ -192,7 +192,7 @@ fn run_in(root: &Path, args: GenClientArgs) -> Result<()> {
 }
 
 /// Plans the manifest edits: the workspace dependency table, and either the
-/// client crate's manifest (shared) or the package's (app-local).
+/// client crate's manifest (shared) or the package's (package-local).
 fn wire_manifests(
     root: &Path,
     out_dir: &Path,
@@ -216,7 +216,7 @@ fn wire_manifests(
             });
             (path, text)
         }
-        Mode::AppLocal => {
+        Mode::PackageLocal => {
             let path = root.join("packages").join(platform).join("Cargo.toml");
             // No package crate yet: gen-tool writes the manifest with these deps.
             let Ok(text) = std::fs::read_to_string(&path) else {

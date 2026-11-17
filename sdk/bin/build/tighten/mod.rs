@@ -52,7 +52,7 @@ pub fn run(args: TightenSpecArgs) -> Result<()> {
     let spec_path = args
         .spec
         .clone()
-        .unwrap_or_else(|| Mode::AppLocal.spec_path(&root, &args.platform));
+        .unwrap_or_else(|| Mode::PackageLocal.spec_path(&root, &args.platform));
     let samples_dir = args
         .samples
         .clone()

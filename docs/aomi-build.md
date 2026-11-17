@@ -1,18 +1,13 @@
 # aomi-build
 
-CLI for scaffolding, building, deploying, activating, and testing Aomi apps.
-
-`aomi-build` is the deterministic Rust CLI and lightweight wizard for codegen,
-deploy, status, and activate. For app-from-scratch work that needs
-Codex/Claude, approvals, resumable workflow state, validation loops, and local
-smoke orchestration, use `aomi-workbench` from `../aomi-widget`.
+CLI for scaffolding Aomi packages and generating API clients and tools.
 
 ```
 gen-specs ──▶ gen-client ──▶ gen-tool ──▶ curate ──▶ cargo build
    (1)          (2)            (3)         (4)          (5)
 ```
 
-Each stage is independently runnable; `aomi-build new-app` is the one-shot orchestrator for stages 1–3 + 5.
+Each stage is independently runnable; `aomi-build new-package` is the one-shot orchestrator for stages 1–3 + 5.
 
 ---
 
@@ -23,7 +18,7 @@ External docs / OpenAPI
         │
         ▼
 (1) gen-specs           crates/clients/<platform>/openapi.yaml   — OR — packages/<platform>/openapi.yaml
-        │                  (--shared)                                    (default, app-local)
+        │                  (--shared)                                    (default, package-local)
         ▼
 (2) gen-client          crates/clients/<platform>/src/            — OR — packages/<platform>/src/client/
         │
@@ -37,11 +32,11 @@ External docs / OpenAPI
 (5) cargo build         packages/<platform>/ --target wasm32-wasip2           ← package component
 ```
 
-Files marked `--shared` live in a client crate under `crates/clients/` and are reusable across several packages that wrap the same upstream (e.g. several packages wrapping Binance). The default is **app-local** — every artefact lives under `packages/<platform>/`.
+Files marked `--shared` live in a client crate under `crates/clients/` and are reusable across several packages that wrap the same upstream (e.g. several packages wrapping Binance). The default is **package-local** — every artefact lives under `packages/<platform>/`.
 
 ---
 
-## Quick start: new app from scratch
+## Quick start: new package from scratch
 
 ```sh
 # One-shot orchestrator. Chains gen-specs → gen-client → gen-tool → cargo build.
@@ -66,197 +61,14 @@ After `new-package` finishes, the package **compiles** but has mechanical one-to
 ```
 aomi-build gen-specs    <p>   # discover/fetch OpenAPI → write YAML spec
 aomi-build gen-client   <p>   # OpenAPI YAML → progenitor → typed Rust client
-aomi-build gen-tool     <p>   # generated client → scaffold app + stub tools
+aomi-build gen-tool     <p>   # generated client → scaffold package + stub tools
 aomi-build new-package  <p>   # orchestrator: all three above + cargo build
 aomi-build tighten-spec <p>   # sharpen additionalProperties:true from real samples
 aomi-build test-schema  <p>   # schemathesis validation against live API
 cargo build --target wasm32-wasip2 --release   # build a package component
-aomi-build deploy             # full hosted deploy lifecycle
-aomi-build deploy preflight   # validate source/backend/platform inputs only
-aomi-build deploy run         # create/update backend deployment
-aomi-build deploy activate    # activate release tags from deployment.json
-aomi-build deploy status      # local deployment.json + backend load status
-aomi-build request            # legacy ops onboarding request
 ```
 
-For one release cycle, `aomi-build status` aliases `aomi-build deploy status`,
-`aomi-build activate` aliases `aomi-build deploy activate`, and
-`aomi-build deploy --preflight` aliases `aomi-build deploy preflight`.
-
-All stage-1/2/3 commands accept `--shared` (default off → app-local). `gen-tool` auto-detects the shared/app-local mode by checking for `packages/<p>/src/client/`; `--shared` forces it.
-
----
-
-## Hosted deployment
-
-`aomi-build deploy` is the hosted-app command surface. It is a backend relay:
-the CLI discovers local git facts, checks the SDK pin, sends a source-bound
-request to the platform backend, waits for the backend-owned platform PR/CI
-deployment, activates the release tag, verifies the runtime loaded the app, and
-writes `.aomi/deployment.json` in the source repository. The CLI does not hold a
-GitHub token, clone a platform repo, push branches, mint release tags, or write
-manifests. The backend owns those operations through the platform-bound Project.
-
-Community contributors should start with the step-by-step
-[community deployment guide](./community-deployment.md). This section is the
-lower-level command reference.
-
-Prerequisite inputs can be passed as flags for a single run, or set as env vars
-for repeated runs:
-
-| Input | Flag | Env fallback | Used by |
-|---|---|---|---|
-| Backend URL | `--backend <url>` | `AOMI_BACKEND_URL` | deploy group, project creation, token commands, apps list, sdk check/fix |
-| Activation token | `--activation-token <token>` | `AOMI_APP_ACTIVATION_TOKEN` | deploy group, project creation, token list/revoke, apps list |
-| Admin signing key | `--admin-key <pkcs8-pem-or-path>` | `AOMI_ADMIN_KEY` | token mint |
-| Admin key id | `--admin-kid <kid>` | `AOMI_ADMIN_KID` | token mint |
-
-```sh
-aomi-build project create \
-  --platform community \
-  --repo owner/repo \
-  --backend https://api.aomi.dev \
-  --activation-token <platform-or-app-token>
-git add .aomi/config.json && git commit && git push
-aomi-build deploy
-```
-
-That is enough for the happy path when the repo is committed, the Aomi GitHub
-App is installed, the source is bound or syncable, and the app pins the platform
-SDK version. A developer receiving only the `aomi-build` binary still needs:
-
-- a committed and pushed source repo containing `.aomi/config.json` and its referenced manifests
-- the Aomi GitHub App installed on that repo
-- backend URL and a valid platform/app activation token
-- an explicitly created Project for that repository
-
-They do not need a GitHub PAT, platform repo write access, database access, or
-an admin private key.
-
-### Lifecycle
-
-```
-aomi-build deploy
-  ├─ sdk check
-  ├─ deploy preflight
-  ├─ deploy run
-  ├─ wait until deployment status is ready
-  ├─ deploy activate
-  └─ verify is_active=true, artifact_ready=true, loaded=true
-```
-
-Use `aomi-build deploy --fix-sdk` when the CLI should run `sdk fix` before the
-backend deploy/activate work.
-
-Resolution order:
-
-| Input | Resolution |
-|---|---|
-| backend | `--backend` → `AOMI_BACKEND_URL` → saved config |
-| token | `--activation-token` → `AOMI_APP_ACTIVATION_TOKEN` → saved config |
-| project | repository origin → existing backend Project |
-| commit | `--commit` → local `HEAD`; branches are rejected |
-
-### `deploy preflight`
-
-`deploy preflight` validates backend/source/app inputs without platform repo
-writes:
-
-```sh
-aomi-build deploy preflight --repo owner/repo
-```
-
-It resolves the repository's existing Project and sends `preflight: true` to
-`POST /api/projects/:project_id/deploy`. If a
-required input is missing, the CLI stops with the next command to run instead of
-falling into documentation.
-
-### `deploy run`
-
-`deploy run` creates or updates the platform deployment and writes
-`.aomi/deployment.json`:
-
-```json
-{
-  "source_ref": "<commit-sha>",
-  "preflight": false
-}
-```
-
-Successful deploys record the backend deployment id, platform PR/CI state,
-release tags, source commit, and local state:
-
-```json
-{
-  "project_id": 123,
-  "id": "...",
-  "status": "pr_created",
-  "source": {
-    "installation_id": 1,
-    "repository_id": 2,
-    "repository_link": "https://github.com/acme/source-apps",
-    "ref": { "kind": "commit", "value": "<sha>" },
-    "commit_hash": "<sha>",
-    "aomi_toml_paths": ["apps/foo/aomi.toml"]
-  },
-  "platform": {
-    "platform": "community",
-    "repository": "aomi-labs/community-apps",
-    "platform_branch": "...",
-    "deploy_branch": "...",
-    "pr_url": "https://github.com/aomi-labs/community-apps/pull/9",
-    "apps": [
-      {
-        "name": "foo",
-        "path": "apps/foo",
-        "aomi_toml_path": "apps/foo/aomi.toml",
-        "release_tag": "apps-..."
-      }
-    ]
-  },
-  "state": {
-    "deployed": true,
-    "ci_passed": false,
-    "activated": false
-  }
-}
-```
-
-### `deploy status`
-
-`deploy status` is read-only. It reads `.aomi/deployment.json`, queries the
-backend deployment status when available, and checks the platform app endpoint
-for the recorded apps. Pass `--json` for machine-readable output.
-
-### `deploy activate`
-
-`deploy activate` waits for readiness if needed, then sends release tags from
-`.aomi/deployment.json` to `POST /api/platforms/:platform/apps/activate`:
-
-```sh
-aomi-build deploy activate                 # all apps from deployment.json
-aomi-build deploy activate foo bar         # named subset
-aomi-build deploy activate --release-tag apps-foo-abc1234
-```
-
-```json
-{
-  "target": { "kind": "release_tags", "value": ["apps-..."] },
-  "apps": ["foo"],
-  "target_tags": ["prod"]
-}
-```
-
-When app names are provided with `--release-tag`, their count must match the tag
-count and the backend verifies each app name matches its release tag. Activation
-is considered successful only after final verification shows every selected app
-has `is_active=true`, `artifact_ready=true`, and `loaded=true`.
-
-### `request`
-
-`aomi-build request` remains available for legacy ops onboarding. It posts an
-activation-details request to the Aomi apps Discord and never includes an
-activation token in the payload.
+All stage-1/2/3 commands accept `--shared` (default off → package-local). `gen-tool` auto-detects the shared/package-local mode by checking for `packages/<p>/src/client/`; `--shared` forces it.
 
 ---
 
@@ -272,7 +84,7 @@ Discovers an OpenAPI 3.x YAML/JSON for the platform from one of:
 
 Outputs to `packages/<p>/openapi.yaml` (or `crates/clients/<p>/openapi.yaml` with `--shared`).
 
-If discovery fails, **draft a spec by hand** using the [`aomi-app-client-api-gen`](../.claude/skills/aomi-app-client-api-gen/SKILL.md) skill — it reads platform docs and produces an OpenAPI 3.0 YAML.
+If discovery fails, **draft a spec by hand** using the [`aomi-package-client-api-gen`](../.claude/skills/aomi-package-client-api-gen/SKILL.md) skill — it reads platform docs and produces an OpenAPI 3.0 YAML.
 
 ---
 
@@ -296,7 +108,7 @@ packages/<platform>/openapi.yaml      ← source-of-truth (you/skill edit this)
 
 ### Source vs. debug dump
 
-- **`openapi.yaml`** — the **only** file you (or the skill) ever edit. `tighten-spec`, `gen-specs`, the `aomi-app-client-api-gen` skill, and you-by-hand all write to this file.
+- **`openapi.yaml`** — the **only** file you (or the skill) ever edit. `tighten-spec`, `gen-specs`, the `aomi-package-client-api-gen` skill, and you-by-hand all write to this file.
 - **the preprocessed dump** — a **byproduct** `gen-client --preprocessed <path>` writes after `load_and_preprocess` runs. When progenitor blows up cryptically, `diff` the two to see exactly what the preprocessor rewrote, then debug from there. Don't edit it (overwritten on every `gen-client` run) and don't commit it (it's regenerable).
 
 ### The 7 preprocessing passes
@@ -324,7 +136,7 @@ Every pass that fires prints a line like `dropped 209 duplicate success response
 
 ## (3) `gen-tool` — scaffold the package crate
 
-App-local layout (the default; verified end-to-end on petstore):
+Package-local layout (the default; verified end-to-end on petstore):
 
 ```
 packages/petstore/
@@ -404,7 +216,7 @@ The component exports `describe` and `call-tool` through `aomi_sdk::package!`; s
 ## End-to-end author workflow (skills + CLI together)
 
 ```
-1. aomi-app-client-api-gen        ─▶  packages/<p>/openapi.yaml      (when no public spec exists)
+1. aomi-package-client-api-gen        ─▶  packages/<p>/openapi.yaml      (when no public spec exists)
 2. aomi-build gen-specs           ─▶  packages/<p>/openapi.yaml      (when one does)
 3. aomi-build gen-client          ─▶  packages/<p>/src/client/
 4. aomi-build gen-tool            ─▶  package crate + stub tools

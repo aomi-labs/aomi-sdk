@@ -10,7 +10,7 @@ pub fn cargo_toml(platform: &str, mode: Mode) -> String {
             format!("{platform}-client = {{ path = \"../../crates/clients/{platform}\" }}\n")
         }
         // The generated module's own deps are added by `ensure_deps`.
-        Mode::AppLocal => String::new(),
+        Mode::PackageLocal => String::new(),
     };
     format!(
         r#"[package]
@@ -67,7 +67,7 @@ pub fn lib_rs(platform: &str, ops: &[Op], mode: Mode) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     let client = match mode {
-        Mode::AppLocal => "#[allow(clippy::all, dead_code, unused_imports)]\nmod client;\n",
+        Mode::PackageLocal => "#[allow(clippy::all, dead_code, unused_imports)]\nmod client;\n",
         Mode::Shared => "",
     };
     format!(
@@ -91,7 +91,7 @@ pub fn tool_rs(platform: &str, ops: &[Op], mode: Mode) -> String {
     let _ = writeln!(out);
     let client = match mode {
         Mode::Shared => format!("{}_client", platform.replace('-', "_")),
-        Mode::AppLocal => "crate::client".to_string(),
+        Mode::PackageLocal => "crate::client".to_string(),
     };
     let _ = writeln!(out, "use {client}::Client as GenClient;");
     let _ = writeln!(out, "#[allow(unused_imports)]\nuse {client}::types::*;");

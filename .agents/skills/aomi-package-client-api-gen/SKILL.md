@@ -1,9 +1,9 @@
 ---
-name: aomi-app-client-api-gen
-description: Draft an OpenAPI 3.0 spec for a third-party platform (e.g. Binance, Dune, DefiLlama) by reading its public documentation. By default writes to `packages/<platform>/openapi.yaml` (app-local mode); writes to `crates/clients/<platform>/openapi.yaml` when the platform is a shared client (Binance, Bybit, etc. — several packages may wrap it). Use when the user wants to add or update an Aomi app for a platform that does NOT have an official OpenAPI spec discoverable via `aomi-build gen-specs`. Output feeds `aomi-build gen-client` downstream. Triggers include "draft openapi spec for X", "/aomi-app-client-api-gen", "no spec found, run the skill", or asking to add an Aomi app for an API without a discoverable OpenAPI surface.
+name: aomi-package-client-api-gen
+description: Draft an OpenAPI 3.0 spec for a third-party platform (e.g. Binance, Dune, DefiLlama) by reading its public documentation. By default writes to `packages/<platform>/openapi.yaml` (package-local mode); writes to `crates/clients/<platform>/openapi.yaml` when the platform is a shared client (Binance, Bybit, etc. — several packages may wrap it). Use when the user wants to add or update an Aomi package for a platform that does NOT have an official OpenAPI spec discoverable via `aomi-build gen-specs`. Output feeds `aomi-build gen-client` downstream. Triggers include "draft openapi spec for X", "/aomi-package-client-api-gen", "no spec found, run the skill", or asking to add an Aomi package for an API without a discoverable OpenAPI surface.
 ---
 
-# aomi-app-client-api-gen
+# aomi-package-client-api-gen
 
 You are drafting an OpenAPI 3.1 spec for a third-party platform from its docs. The output feeds the `aomi-build gen-client` step downstream — quality matters because Rust client codegen will rely on it.
 
@@ -63,7 +63,7 @@ The signing logic is hand-written in `<auth-shim path>` — the spec only descri
 the resulting header (`X-MBX-APIKEY`) for codegen purposes.
 ```
 
-The auth shim path depends on mode: for app-local providers it's
+The auth shim path depends on mode: for package-local providers it's
 `packages/<platform>/src/auth.rs`; for shared providers (--shared) it's
 `crates/clients/<platform>/src/auth.rs`.
 
@@ -83,12 +83,12 @@ Before writing the file, sanity-check yourself:
 
 Choose mode first:
 
-- **App-local (default)**: spec lives at `packages/<platform>/openapi.yaml`. Use this for one-off integrations or platforms whose client is unlikely to be shared across multiple Aomi apps. The whole crate (spec, generated client, tool layer) is then self-contained.
-- **Shared (`--shared` downstream)**: spec lives at `crates/clients/<platform>/openapi.yaml`. Use this only for big-party platforms (Binance, Bybit, OKX) whose client is genuinely shared by multiple Aomi apps.
+- **Package-local (default)**: spec lives at `packages/<platform>/openapi.yaml`. Use this for one-off integrations or platforms whose client is unlikely to be shared across multiple Aomi packages. The whole crate (spec, generated client, tool layer) is then self-contained.
+- **Shared (`--shared` downstream)**: spec lives at `crates/clients/<platform>/openapi.yaml`. Use this only for big-party platforms (Binance, Bybit, OKX) whose client is genuinely shared by multiple Aomi packages.
 
-If you don't know, default to **app-local**. The user can always promote later by moving files and passing `--shared` to subsequent gen commands.
+If you don't know, default to **package-local**. The user can always promote later by moving files and passing `--shared` to subsequent gen commands.
 
-Write two files (paths below assume app-local mode; for shared, swap to `crates/clients/<platform>/openapi.{yaml,meta.json}`):
+Write two files (paths below assume package-local mode; for shared, swap to `crates/clients/<platform>/openapi.{yaml,meta.json}`):
 
 **`packages/<platform>/openapi.yaml`** — the spec itself.
 
@@ -137,12 +137,12 @@ To stay safe:
 - **Don't fabricate.** If the docs are unclear about a response field's type, mark it `type: object` with `additionalProperties: true` and note it in `completeness.notes`. Never guess.
 - **Don't over-spec.** This is a starting point for codegen, not a contract. 80% accurate covering the endpoints the user wants is better than 95% accurate covering endpoints they don't.
 - **Don't run `cargo build` or codegen here.** This skill ends at the spec file. The user will run `aomi-build gen-client` (and `gen-tool`) next.
-- **Don't co-locate when shared, don't centralize when app-local.** A spec in the wrong place breaks gen-client's path resolution.
+- **Don't co-locate when shared, don't centralize when package-local.** A spec in the wrong place breaks gen-client's path resolution.
 
 ## Example invocations
 
 ```
-/aomi-app-client-api-gen dune https://docs.dune.com/api-reference/overview
-/aomi-app-client-api-gen defillama https://defillama.com/docs/api
-/aomi-app-client-api-gen binance  # → you ask for docs URL
+/aomi-package-client-api-gen dune https://docs.dune.com/api-reference/overview
+/aomi-package-client-api-gen defillama https://defillama.com/docs/api
+/aomi-package-client-api-gen binance  # → you ask for docs URL
 ```
