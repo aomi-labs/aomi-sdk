@@ -10,7 +10,7 @@ description = "Guest SDK for Aomi packages (aomi:package@1.0.0 WebAssembly compo
 default = []
 # Compile the `aomi-build` binary and its supporting
 # modules. Off by default so library consumers don't drag in
-# clap/tokio/reqwest/progenitor/syn just to depend on the SDK. Enable via
+# clap/reqwest/progenitor/syn just to depend on the SDK. Enable via
 # `cargo install aomi-sdk --features cli` or
 # `cargo build -p aomi-sdk --features cli`.
 cli = [
