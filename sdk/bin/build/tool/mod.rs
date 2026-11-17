@@ -41,13 +41,13 @@ pub struct GenToolArgs {
 pub fn run(args: GenToolArgs) -> Result<()> {
     let root = workspace_root()?;
     // Detect mode: explicit --shared OR auto-detect from filesystem.
-    let app_client_dir = root
+    let package_client_dir = root
         .join("packages")
         .join(&args.platform)
         .join("src")
         .join("client");
-    let app_local = !args.shared && app_client_dir.exists();
-    let mode = if app_local {
+    let package_local = !args.shared && package_client_dir.exists();
+    let mode = if package_local {
         Mode::PackageLocal
     } else {
         Mode::Shared
