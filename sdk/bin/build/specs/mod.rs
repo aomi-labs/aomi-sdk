@@ -1,3 +1,4 @@
+use crate::client::Mode;
 use clap::{Args, ValueEnum};
 use eyre::{Context, Result, bail};
 use std::path::{Path, PathBuf};
@@ -33,8 +34,8 @@ pub struct GenSpecsArgs {
     #[arg(long, value_enum, default_value_t = Source::All)]
     pub source: Source,
 
-    /// Output path for the YAML spec. Defaults to apps/<platform>/openapi.yaml
-    /// (or ext/specs/<platform>.yaml when --shared is set), resolved against
+    /// Output path for the YAML spec. Defaults to packages/<platform>/openapi.yaml
+    /// (or crates/clients/<platform>/openapi.yaml when --shared is set), resolved against
     /// the workspace root.
     #[arg(long)]
     pub out: Option<PathBuf>,
@@ -47,23 +48,22 @@ pub struct GenSpecsArgs {
     #[arg(long)]
     pub from_url: Option<String>,
 
-    /// Treat this provider as a shared library (lives under ext/). Default is
-    /// app-local — the spec, generated client, and tool layer all live inside
-    /// `apps/<platform>/`. Use --shared for big platforms (Binance, Bybit, …)
-    /// where the same client is reused by multiple Aomi apps.
+    /// Treat this provider as a shared library (a crate under crates/clients/). Default is
+    /// package-local — the spec, generated client, and tool layer all live inside
+    /// `packages/<platform>/`. Use --shared for big platforms (Binance, Bybit, …)
+    /// where the same client is reused by multiple Aomi packages.
     #[arg(long)]
     pub shared: bool,
 }
 
 impl GenSpecsArgs {
     pub fn default_spec_path(&self, root: &Path) -> PathBuf {
-        if self.shared {
-            root.join("ext")
-                .join("specs")
-                .join(format!("{}.yaml", self.platform))
+        let mode = if self.shared {
+            Mode::Shared
         } else {
-            root.join("apps").join(&self.platform).join("openapi.yaml")
-        }
+            Mode::PackageLocal
+        };
+        mode.spec_path(root, &self.platform)
     }
 }
 
@@ -163,9 +163,9 @@ fn skill_handoff_message(platform: &str) -> String {
         "no spec found for `{platform}` from any source.\n\n\
          If you know the spec's URL, retry with --from-url:\n\n  \
          aomi-build gen-specs {platform} --from-url https://example.com/openapi.json\n\n\
-         Otherwise, draft one from docs via the `aomi-app-client-api-gen` skill in Claude Code:\n\n  \
-         /aomi-app-client-api-gen {platform} <docs-url>\n\n\
-         The skill will produce ext/specs/{platform}.yaml from the platform's docs."
+         Otherwise, draft one from docs via the `aomi-package-client-api-gen` skill in Claude Code:\n\n  \
+         /aomi-package-client-api-gen {platform} <docs-url>\n\n\
+         The skill will produce packages/{platform}/openapi.yaml from the platform's docs."
     )
 }
 

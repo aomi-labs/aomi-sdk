@@ -1,36 +1,25 @@
 # Repo Structure
 
-The recommended layout for a new app crate is:
+A package is one crate with a manifest, built as a `wasm32-wasip2` component:
 
 ```text
-apps/my-app/
-├─ Cargo.toml
-└─ src/
-   ├─ lib.rs
-   ├─ client.rs
-   └─ tool.rs
+packages/my-package/
+├─ Cargo.toml     crate-type = ["cdylib"], depends on aomi-sdk
+├─ aomi.toml      identity, network hosts, secrets, capabilities, limits
+├─ icon.svg       Library icon (optional)
+└─ src/lib.rs     Tool impls and aomi_sdk::package!(..)
 ```
 
-## File Roles
+- `Tool` impls hold typed args (`JsonSchema`, documented fields) and the behaviour.
+- A generated client from `aomi-build gen-client` lives in `src/client/` or a shared `crates/clients/<name>`.
+- `icon.svg` is optional. It is an SVG of at most 32 KB with a square `viewBox`, drawn only
+  in `currentColor` (every `fill`, `stroke`, `color` and `stop-color` is `currentColor` or
+  `none`), with no `<script>`, event attributes, `<foreignObject>`, `<image>`, `<style>`,
+  processing instructions, DOCTYPE or ENTITY, `href` or `url()` outside the file, or CSS
+  escapes. The Library draws it as a mask in the accent colour; without one it shows the
+  generic package icon. `aomi-build check-icon packages/my-package` applies the host's rules.
+- `aomi.toml` is the only source of the package's capabilities; code does not widen it.
 
-- `lib.rs`
-  - Defines the app preamble.
-  - Registers the app with `dyn_aomi_app!`.
-  - Keeps the manifest surface easy to scan.
-
-- `client.rs`
-  - Owns HTTP client setup, auth headers, data models, and response normalization.
-  - Keeps third-party API details out of tool implementations.
-
-- `tool.rs`
-  - Implements `DynAomiTool`.
-  - Contains typed tool args and user-facing descriptions.
-  - Maps client responses into stable JSON results.
-
-## Authoring Guidelines
-
-- Prefer one app crate per external product or ecosystem.
-- Keep tool args typed and documented with `JsonSchema`.
-- Normalize upstream API errors into short actionable strings.
-- Avoid leaking host-specific or private operational assumptions into prompts.
-- If your app needs signing or execution, depend only on the public host conventions in `docs/host-interop.md`.
+Guidelines: one package per external product; normalize upstream errors into short
+actionable `err(code, message)` values; depend only on the host functions in
+`host-interop.md`. The full author guide is [`sdk/README.md`](../sdk/README.md).

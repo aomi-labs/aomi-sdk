@@ -1,0 +1,106 @@
+openapi: 3.0.3
+info:
+  title: Verbs fixture
+  version: '2'
+  description: Every request and reply shape the generated clients use, in one small spec.
+paths:
+  /orders/{orderId}:
+    put:
+      operationId: replaceOrder
+      parameters:
+        - { in: path, name: orderId, required: true, schema: { type: string } }
+        - { in: header, name: X-Api-Key, required: true, schema: { type: string } }
+        - { in: header, name: X-Trace, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Order' }
+      responses:
+        '200':
+          description: Replaced.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '4XX':
+          description: Rejected.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    patch:
+      operationId: renameOrder
+      parameters:
+        - { in: path, name: orderId, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema: { type: string }
+      responses:
+        '204': { description: Renamed. }
+    delete:
+      operationId: cancelOrder
+      parameters:
+        - { in: path, name: orderId, required: true, schema: { type: string } }
+        - in: query
+          name: side
+          schema: { type: string, enum: [buy, sell] }
+      responses:
+        '204': { description: Cancelled. }
+        '404':
+          description: Unknown order.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /orders:
+    post:
+      operationId: createOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Order' }
+      responses:
+        '201':
+          description: Created.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+  /exports/{id}.csv:
+    get:
+      operationId: exportCsv
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: integer, format: int64 } }
+        - in: query
+          name: columns
+          schema: { type: array, items: { type: string } }
+      responses:
+        '200':
+          description: CSV rows.
+          content:
+            text/csv:
+              schema: { type: string }
+  /uploads:
+    post:
+      operationId: upload
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '200': { description: Stored. }
+components:
+  schemas:
+    Order:
+      type: object
+      required: [symbol, qty]
+      properties:
+        symbol: { type: string }
+        qty: { type: string }
+        createdAt: { type: string, format: date-time }
+    Problem:
+      type: object
+      required: [code]
+      properties:
+        code: { type: string }

@@ -1,0 +1,16 @@
+[package]
+name = "keyed-header"
+description = "Jupiter token prices with the builder's API key."
+icon = "icon.svg"
+contract = 1
+
+[[secrets]]
+name = "JUPITER_API_KEY"
+owner = "builder"
+description = "Jupiter API key from portal.jup.ag"
+required = false
+hosts = ["api.jup.ag"]
+header = "x-api-key"
+
+[network]
+hosts = ["api.jup.ag"]

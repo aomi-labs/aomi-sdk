@@ -1,0 +1,19 @@
+[package]
+name = "aomi-progenitor-fixture"
+version = "0.0.0"
+edition = "2024"
+license = "MPL-2.0"
+publish = false
+description = "Clients generated from small specs at build time; proves the generator output compiles natively and for wasm32-wasip2"
+
+[dependencies]
+aomi-progenitor-client = { path = ".." }
+aomi-sdk = { path = "../../sdk" }
+chrono = { version = "0.4", default-features = false, features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[build-dependencies]
+aomi-progenitor-impl = { path = "../../progenitor-impl" }
+openapiv3 = "2.2"
+serde_yaml = "0.9"

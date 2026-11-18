@@ -1,18 +1,13 @@
 # aomi-build
 
-CLI for scaffolding, building, deploying, activating, and testing Aomi apps.
-
-`aomi-build` is the deterministic Rust CLI and lightweight wizard for codegen,
-compile, deploy, status, and activate. For app-from-scratch work that needs
-Codex/Claude, approvals, resumable workflow state, validation loops, and local
-smoke orchestration, use `aomi-workbench` from `../aomi-widget`.
+CLI for scaffolding Aomi packages and generating API clients and tools.
 
 ```
-gen-specs ──▶ gen-client ──▶ gen-tool ──▶ curate ──▶ cargo build ──▶ test.json + e2e runner
-   (1)          (2)            (3)         (4)          (5)              (6)
+gen-specs ──▶ gen-client ──▶ gen-tool ──▶ curate ──▶ cargo build
+   (1)          (2)            (3)         (4)          (5)
 ```
 
-Each stage is independently runnable; `aomi-build new-app` is the one-shot orchestrator for stages 1–3 + 5.
+Each stage is independently runnable; `aomi-build new-package` is the one-shot orchestrator for stages 1–3 + 5.
 
 ---
 
@@ -22,45 +17,42 @@ Each stage is independently runnable; `aomi-build new-app` is the one-shot orche
 External docs / OpenAPI
         │
         ▼
-(1) gen-specs           ext/specs/<platform>.yaml          — OR — apps/<platform>/openapi.yaml
-        │                  (--shared)                              (default, app-local)
+(1) gen-specs           crates/clients/<platform>/openapi.yaml   — OR — packages/<platform>/openapi.yaml
+        │                  (--shared)                                    (default, package-local)
         ▼
-(2) gen-client          ext/src/<platform>/client.rs       — OR — apps/<platform>/src/client/
+(2) gen-client          crates/clients/<platform>/src/            — OR — packages/<platform>/src/client/
         │
         ▼
-(3) gen-tool            apps/<platform>/src/{lib.rs, tool.rs, Cargo.toml}    ← mechanical stubs
+(3) gen-tool            packages/<platform>/src/{lib.rs, tool.rs, Cargo.toml}    ← mechanical stubs
         │
         ▼
-(4) curate              apps/<platform>/src/tool.rs                           ← user-centric tools
-        │               apps/<platform>/src/lib.rs (PREAMBLE)
+(4) curate              packages/<platform>/src/tool.rs                           ← user-centric tools
+        │               packages/<platform>/src/lib.rs (PREAMBLE)
         ▼
-(5) cargo build         apps/<platform>/target/debug/lib<platform>.dylib      ← cdylib plugin
-        │
-        ▼
-(6) e2e test            apps/<platform>/test.json + cargo test app_e2e_specs  ← real LLM, real APIs
+(5) cargo build         packages/<platform>/ --target wasm32-wasip2           ← package component
 ```
 
-Files marked `--shared` live under `ext/` and are reusable across multiple Aomi apps that wrap the same upstream (e.g. multiple apps wrapping Binance). The default is **app-local** — every artefact lives under `apps/<platform>/`.
+Files marked `--shared` live in a client crate under `crates/clients/` and are reusable across several packages that wrap the same upstream (e.g. several packages wrapping Binance). The default is **package-local** — every artefact lives under `packages/<platform>/`.
 
 ---
 
-## Quick start: new app from scratch
+## Quick start: new package from scratch
 
 ```sh
 # One-shot orchestrator. Chains gen-specs → gen-client → gen-tool → cargo build.
-aomi-build new-app petstore
+aomi-build new-package petstore
 
 # With explicit URL when discovery doesn't find the spec:
-aomi-build new-app petstore --from-url https://example.com/openapi.json
+aomi-build new-package petstore --from-url https://example.com/openapi.json
 
 # Stop after gen-client (skip tool scaffolding):
-aomi-build new-app petstore --no-tool
+aomi-build new-package petstore --no-tool
 
-# Treat as shared (lives under ext/, not apps/):
-aomi-build new-app binance --shared
+# Treat as shared (client crate under crates/clients/):
+aomi-build new-package binance --shared
 ```
 
-After `new-app` finishes, the app **compiles** but has mechanical one-tool-per-endpoint stubs. Bring it to "actually useful" with stage (4) — see [Curating the tool layer](#4-curating-the-tool-layer).
+After `new-package` finishes, the package **compiles** but has mechanical one-tool-per-endpoint stubs. Bring it to "actually useful" with stage (4) — see [Curating the tool layer](#4-curating-the-tool-layer).
 
 ---
 
@@ -69,199 +61,15 @@ After `new-app` finishes, the app **compiles** but has mechanical one-tool-per-e
 ```
 aomi-build gen-specs    <p>   # discover/fetch OpenAPI → write YAML spec
 aomi-build gen-client   <p>   # OpenAPI YAML → progenitor → typed Rust client
-aomi-build gen-tool     <p>   # generated client → scaffold app + stub tools
-aomi-build new-app      <p>   # orchestrator: all three above + cargo build
+aomi-build gen-tool     <p>   # generated client → scaffold package + stub tools
+aomi-build new-package  <p>   # orchestrator: all three above + cargo build
 aomi-build tighten-spec <p>   # sharpen additionalProperties:true from real samples
 aomi-build test-schema  <p>   # schemathesis validation against live API
-aomi-build compile            # build local cdylib plugins into plugins/
-aomi-build deploy             # full hosted deploy lifecycle
-aomi-build deploy preflight   # validate source/backend/platform inputs only
-aomi-build deploy run         # create/update backend deployment
-aomi-build deploy activate    # activate release tags from deployment.json
-aomi-build deploy status      # local deployment.json + backend load status
-aomi-build sdk check          # verify the app pins the platform SDK version
-aomi-build sdk fix            # update the app's SDK pin when possible
-aomi-build request            # legacy ops onboarding request
+aomi-build check-icon [dir]   # a package's [package] icon against the host's icon rule
+cargo build --target wasm32-wasip2 --release   # build a package component
 ```
 
-For one release cycle, `aomi-build status` aliases `aomi-build deploy status`,
-`aomi-build activate` aliases `aomi-build deploy activate`, and
-`aomi-build deploy --preflight` aliases `aomi-build deploy preflight`.
-
-All stage-1/2/3 commands accept `--shared` (default off → app-local). `gen-tool` auto-detects the shared/app-local mode by checking for `apps/<p>/src/client/`; `--shared` forces it.
-
----
-
-## Hosted deployment
-
-`aomi-build deploy` is the hosted-app command surface. It is a backend relay:
-the CLI discovers local git facts, checks the SDK pin, sends a source-bound
-request to the platform backend, waits for the backend-owned platform PR/CI
-deployment, activates the release tag, verifies the runtime loaded the app, and
-writes `.aomi/deployment.json` in the source repository. The CLI does not hold a
-GitHub token, clone a platform repo, push branches, mint release tags, or write
-manifests. The backend owns those operations through the platform-bound Project.
-
-Community contributors should start with the step-by-step
-[community deployment guide](./community-deployment.md). This section is the
-lower-level command reference.
-
-Prerequisite inputs can be passed as flags for a single run, or set as env vars
-for repeated runs:
-
-| Input | Flag | Env fallback | Used by |
-|---|---|---|---|
-| Backend URL | `--backend <url>` | `AOMI_BACKEND_URL` | deploy group, project creation, token commands, apps list, sdk check/fix |
-| Activation token | `--activation-token <token>` | `AOMI_APP_ACTIVATION_TOKEN` | deploy group, project creation, token list/revoke, apps list |
-| Admin signing key | `--admin-key <pkcs8-pem-or-path>` | `AOMI_ADMIN_KEY` | token mint |
-| Admin key id | `--admin-kid <kid>` | `AOMI_ADMIN_KID` | token mint |
-
-```sh
-aomi-build project create \
-  --platform community \
-  --repo owner/repo \
-  --backend https://api.aomi.dev \
-  --activation-token <platform-or-app-token>
-git add .aomi/config.json && git commit && git push
-aomi-build deploy
-```
-
-That is enough for the happy path when the repo is committed, the Aomi GitHub
-App is installed, the source is bound or syncable, and the app pins the platform
-SDK version. A developer receiving only the `aomi-build` binary still needs:
-
-- a committed and pushed source repo containing `.aomi/config.json` and its referenced manifests
-- the Aomi GitHub App installed on that repo
-- backend URL and a valid platform/app activation token
-- an explicitly created Project for that repository
-
-They do not need a GitHub PAT, platform repo write access, database access, or
-an admin private key.
-
-### Lifecycle
-
-```
-aomi-build deploy
-  ├─ sdk check
-  ├─ deploy preflight
-  ├─ deploy run
-  ├─ wait until deployment status is ready
-  ├─ deploy activate
-  └─ verify is_active=true, artifact_ready=true, loaded=true
-```
-
-Use `aomi-build deploy --fix-sdk` when the CLI should run `sdk fix` before the
-backend deploy/activate work.
-
-Resolution order:
-
-| Input | Resolution |
-|---|---|
-| backend | `--backend` → `AOMI_BACKEND_URL` → saved config |
-| token | `--activation-token` → `AOMI_APP_ACTIVATION_TOKEN` → saved config |
-| project | repository origin → existing backend Project |
-| commit | `--commit` → local `HEAD`; branches are rejected |
-
-### `deploy preflight`
-
-`deploy preflight` validates backend/source/app inputs without platform repo
-writes:
-
-```sh
-aomi-build deploy preflight --repo owner/repo
-```
-
-It resolves the repository's existing Project and sends `preflight: true` to
-`POST /api/projects/:project_id/deploy`. If a
-required input is missing, the CLI stops with the next command to run instead of
-falling into documentation.
-
-### `deploy run`
-
-`deploy run` creates or updates the platform deployment and writes
-`.aomi/deployment.json`:
-
-```json
-{
-  "source_ref": "<commit-sha>",
-  "preflight": false
-}
-```
-
-Successful deploys record the backend deployment id, platform PR/CI state,
-release tags, source commit, and local state:
-
-```json
-{
-  "project_id": 123,
-  "id": "...",
-  "status": "pr_created",
-  "source": {
-    "installation_id": 1,
-    "repository_id": 2,
-    "repository_link": "https://github.com/acme/source-apps",
-    "ref": { "kind": "commit", "value": "<sha>" },
-    "commit_hash": "<sha>",
-    "aomi_toml_paths": ["apps/foo/aomi.toml"]
-  },
-  "platform": {
-    "platform": "community",
-    "repository": "aomi-labs/community-apps",
-    "platform_branch": "...",
-    "deploy_branch": "...",
-    "pr_url": "https://github.com/aomi-labs/community-apps/pull/9",
-    "apps": [
-      {
-        "name": "foo",
-        "path": "apps/foo",
-        "aomi_toml_path": "apps/foo/aomi.toml",
-        "release_tag": "apps-..."
-      }
-    ]
-  },
-  "state": {
-    "deployed": true,
-    "ci_passed": false,
-    "activated": false
-  }
-}
-```
-
-### `deploy status`
-
-`deploy status` is read-only. It reads `.aomi/deployment.json`, queries the
-backend deployment status when available, and checks the platform app endpoint
-for the recorded apps. Pass `--json` for machine-readable output.
-
-### `deploy activate`
-
-`deploy activate` waits for readiness if needed, then sends release tags from
-`.aomi/deployment.json` to `POST /api/platforms/:platform/apps/activate`:
-
-```sh
-aomi-build deploy activate                 # all apps from deployment.json
-aomi-build deploy activate foo bar         # named subset
-aomi-build deploy activate --release-tag apps-foo-abc1234
-```
-
-```json
-{
-  "target": { "kind": "release_tags", "value": ["apps-..."] },
-  "apps": ["foo"],
-  "target_tags": ["prod"]
-}
-```
-
-When app names are provided with `--release-tag`, their count must match the tag
-count and the backend verifies each app name matches its release tag. Activation
-is considered successful only after final verification shows every selected app
-has `is_active=true`, `artifact_ready=true`, and `loaded=true`.
-
-### `request`
-
-`aomi-build request` remains available for legacy ops onboarding. It posts an
-activation-details request to the Aomi apps Discord and never includes an
-activation token in the payload.
+All stage-1/2/3 commands accept `--shared` (default off → package-local). `gen-tool` auto-detects the shared/package-local mode by checking for `packages/<p>/src/client/`; `--shared` forces it.
 
 ---
 
@@ -275,34 +83,34 @@ Discovers an OpenAPI 3.x YAML/JSON for the platform from one of:
 - `well-known` — try `/openapi.yaml`, `/swagger.json` etc. on the platform's docs origin
 - `postman` — search Postman public API network
 
-Outputs to `apps/<p>/openapi.yaml` (or `ext/specs/<p>.yaml` with `--shared`).
+Outputs to `packages/<p>/openapi.yaml` (or `crates/clients/<p>/openapi.yaml` with `--shared`).
 
-If discovery fails, **draft a spec by hand** using the [`aomi-app-client-api-gen`](../.claude/skills/aomi-app-client-api-gen/SKILL.md) skill — it reads platform docs and produces an OpenAPI 3.0 YAML.
+If discovery fails, **draft a spec by hand** using the [`aomi-package-client-api-gen`](../.claude/skills/aomi-package-client-api-gen/SKILL.md) skill — it reads platform docs and produces an OpenAPI 3.0 YAML.
 
 ---
 
 ## (2) `gen-client` — typed Rust client via progenitor
 
 ```
-ext/specs/<platform>.yaml             ← source-of-truth (you/skill edit this)
+packages/<platform>/openapi.yaml      ← source-of-truth (you/skill edit this)
         │
         ▼
-   load_and_preprocess()              ← in aomi-build/src/spec_load.rs
+   load_and_preprocess()              ← in sdk/bin/build/spec_load
    (7 normalisation passes)
         │
-        ├──▶  ext/specs/<platform>.preprocessed.yaml   ← debug dump
+        ├──▶  --preprocessed <path>   ← optional debug dump
         │
         ▼
    in-memory openapiv3::OpenAPI       ← passed to progenitor
         │
         ▼
-   ext/src/<platform>/client.rs       ← typed Rust client
+   packages/<platform>/src/client/    ← typed Rust client
 ```
 
 ### Source vs. debug dump
 
-- **`<platform>.yaml`** — the **only** file you (or the skill) ever edit. `tighten-spec`, `gen-specs`, the `aomi-app-client-api-gen` skill, and you-by-hand all write to this file.
-- **`<platform>.preprocessed.yaml`** — a **byproduct** dumped to disk by `gen-client` after `load_and_preprocess` runs. When progenitor blows up cryptically, `diff` the two to see exactly what the preprocessor rewrote, then debug from there. Don't edit it (overwritten on every `gen-client` run) and don't commit it (it's regenerable).
+- **`openapi.yaml`** — the **only** file you (or the skill) ever edit. `tighten-spec`, `gen-specs`, the `aomi-package-client-api-gen` skill, and you-by-hand all write to this file.
+- **the preprocessed dump** — a **byproduct** `gen-client --preprocessed <path>` writes after `load_and_preprocess` runs. When progenitor blows up cryptically, `diff` the two to see exactly what the preprocessor rewrote, then debug from there. Don't edit it (overwritten on every `gen-client` run) and don't commit it (it's regenerable).
 
 ### The 7 preprocessing passes
 
@@ -322,22 +130,21 @@ Every pass that fires prints a line like `dropped 209 duplicate success response
 
 ### Workflow
 
-- Edit `neynar.yaml` → run `aomi-build gen-client neynar --shared --force` → `neynar.preprocessed.yaml` updates as a side effect → `client.rs` regenerates from the in-memory preprocessed spec.
-- When progenitor errors, `diff neynar.yaml neynar.preprocessed.yaml` to see what the preprocessor did, then either patch `neynar.yaml` to avoid the issue or add a new preprocessing pass to `spec_load.rs` if it's a generic problem.
-- The `.preprocessed.yaml` files are gitignored by convention — safe to delete; they come back on next `gen-client`.
+- Edit `openapi.yaml` → run `aomi-build gen-client neynar --force` → the client regenerates from the in-memory preprocessed spec.
+- When progenitor errors, rerun with `--preprocessed /tmp/neynar.pre.yaml` and `diff` it against `openapi.yaml` to see what the preprocessor did, then either patch the spec or add a new preprocessing pass to `spec_load` if it's a generic problem.
 
 ---
 
-## (3) `gen-tool` — scaffold the app crate
+## (3) `gen-tool` — scaffold the package crate
 
-App-local layout (the default; verified end-to-end on petstore):
+Package-local layout (the default; verified end-to-end on petstore):
 
 ```
-apps/petstore/
+packages/petstore/
 ├── openapi.yaml + openapi.meta.json
 ├── Cargo.toml          # progenitor-client, chrono, reqwest 0.13 directly
 └── src/
-    ├── lib.rs                         # mod client; mod tool; + dyn_aomi_app!
+    ├── lib.rs                         # Tool impls + aomi_sdk::package!
     ├── client/{mod.rs, client.rs}     # generated
     └── tool.rs                        # use crate::client::Client as GenClient;
 ```
@@ -345,12 +152,12 @@ apps/petstore/
 Shared layout (when `--shared`):
 
 ```
-ext/src/<platform>/client.rs   ← shared client
-apps/<platform>/
-├── Cargo.toml                  # depends on aomi-ext::<platform> feature
+crates/clients/<platform>/      ← shared client crate `<platform>-client`
+packages/<platform>/
+├── Cargo.toml                  # depends on <platform>-client
 └── src/
     ├── lib.rs
-    └── tool.rs                 # use aomi_ext::<platform>::Client;
+    └── tool.rs                 # uses the shared client crate
 ```
 
 `gen-tool` writes **one stub per OpenAPI operationId**, names like `dune_getv1_query_queryid_results`. The stubs compile, but they're not user-facing — every `--all` op becomes a tool. Curate them next.
@@ -359,30 +166,27 @@ apps/<platform>/
 
 ## (4) Curating the tool layer
 
-**Run the [`aomi-app-ux-tool-maker`](../.claude/skills/aomi-app-ux-tool-maker/SKILL.md) skill.**
+Rewrite the stubs in `packages/<p>/src/tool.rs` by hand into a curated set of 5–12 user-centric tools:
 
-It rewrites `apps/<p>/src/tool.rs` from mechanical stubs into a curated set of 5–12 user-centric tools, plus a domain-specific PREAMBLE in `lib.rs`. The skill:
+- Map user stories to tools, with verb-led names (`defillama_get_token_price`, `lifi_quote_swap`).
+- Compose endpoints into one tool when one user goal needs several.
+- Drop endpoints that aren't valuable as tools (admin, internal, niche).
+- Trim arg surfaces (≤6 args/tool) and compute derivable values in Rust.
+- Keep tool descriptions true to behaviour; they are model-facing.
 
-- Categorises the platform (price oracle / swap / lend / perps / prediction / social).
-- Maps user stories to tools — verb-led names (`defillama_get_token_price`, `lifi_quote_swap`).
-- Composes endpoints into composite tools when one user goal needs several.
-- Drops endpoints that aren't valuable as tools (admin, internal, niche).
-- Trims arg surfaces (≤6 args/tool) and computes derivable values in Rust.
-- Authors the PREAMBLE with capabilities, conventions, workflow guidance.
-
-Verify with `cd apps/<p> && cargo build`.
+Verify with `cargo build -p <p> --target wasm32-wasip2` and test the tool logic natively with `aomi_sdk::testing`.
 
 ---
 
 ## (Optional) `tighten-spec` — sharpen response schemas from samples
 
-Many APIs ship specs with `additionalProperties: true` everywhere, which makes the generated client return `serde_json::Map<String, Value>` for every body — usable but typeless. `tighten-spec` infers concrete schemas from real captured JSON in `ext/specs/<p>.samples/`:
+Many APIs ship specs with `additionalProperties: true` everywhere, which makes the generated client return `serde_json::Map<String, Value>` for every body — usable but typeless. `tighten-spec` infers concrete schemas from real captured JSON in `packages/<p>/openapi.samples/`:
 
 ```sh
-mkdir -p ext/specs/khalani.samples/get_quote
-curl ... > ext/specs/khalani.samples/get_quote/sample.json
+mkdir -p packages/khalani/openapi.samples
+curl ... > packages/khalani/openapi.samples/getQuote.200.json
 aomi-build tighten-spec khalani
-aomi-build gen-client khalani --shared --force   # regenerate with tighter types
+aomi-build gen-client khalani --force   # regenerate with tighter types
 ```
 
 ---
@@ -399,136 +203,33 @@ Auto-detects whether `schemathesis` is installed; otherwise prints install instr
 
 ---
 
-## (5) `cargo build` — produce the cdylib
+## (5) `cargo build`: produce the component
 
 ```sh
-cd apps/<platform> && cargo build
-# → apps/<platform>/target/debug/lib<platform>.dylib  (or .so / .dll)
+cargo build -p <platform> --target wasm32-wasip2 --release
+# → target/wasm32-wasip2/release/<platform>.wasm
 ```
 
-The cdylib is what the runtime loads via `DynFnHandle::load`. The `dyn_aomi_app!` macro at the bottom of `src/lib.rs` exports the FFI `aomi_manifest()` and tool-dispatch entrypoints.
-
----
-
-## (6) End-to-end testing — `test.json` + the runner
-
-Each app has a single canonical e2e spec at:
-
-```
-apps/<platform>/test.json
-```
-
-The spec describes a real-LLM scenario: wallet seed, user prompts, expected tool calls per turn, optional wallet-callback injection, and a final state assertion. The runner lives in `product-mono` at `aomi/crates/runtime/tests/local-app-e2e.rs` and is invoked by setting `AOMI_E2E_APP_PATH` to the compiled dylib:
-
-```sh
-cd apps/khalani && cargo build
-
-cd ~/Code/product-mono/aomi
-AOMI_E2E_APP_PATH=~/Code/aomi-sdk/apps/khalani/target/debug/libkhalani.dylib \
-  cargo test -p aomi-runtime --test local-app-e2e app_e2e_specs -- --nocapture
-```
-
-The runner:
-1. Walks up from `AOMI_E2E_APP_PATH` looking for `test.json`.
-2. Loads the plugin with `AppLoader`, opens a `DefaultSessionState`.
-3. Applies `wallet_seed` (if set) to `user_state`.
-4. For each `turn`: sends `prompt`, waits for the LLM to settle, checks `expected_tools`, then optionally injects `callback_after`.
-5. Evaluates `final_assertion` (state + transcript invariants).
-6. **Fail-fast** with a transcript dump on the first failed assertion.
-
-### Spec schema
-
-```json
-{
-  "user_story": "Plain-English description shown in the test banner",
-  "wallet_seed": {                          // optional — most apps need a connected wallet
-    "address": "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
-    "chain_id": 1,
-    "is_connected": true
-  },
-  "turns": [
-    {
-      "prompt": "Swap 100 USDC from Ethereum to ETH on Optimism via X.",
-      "expected_tools": {
-        "must_call": ["x_quote", "x_build_deposit"]
-        // OR: "any_of": ["x_quote", "x_search_tokens"]
-      }
-    },
-    {
-      "prompt": "Looks good, ship it.",
-      "expected_tools": { "must_call": ["x_build_deposit"] },
-      "callback_after": {                   // optional wallet-style callback after this turn
-        "type": "wallet:tx_complete",
-        "status": "confirmed",
-        "transaction_hash": "0xdeadbeef...0001",
-        "tx_hashes": ["0xdeadbeef...0001"],
-        "pending_tx_ids": "from_state"      // resolved at injection time from user_state
-      }
-    }
-  ],
-  "final_assertion": {
-    "user_state": {
-      "pending_txs": {
-        "min_count": 1,
-        "expect_any": [
-          { "kind": "swap", "chain_id": 1, "data_starts_with": "0x", "data_min_len": 10 }
-        ]
-      },
-      "pending_eip712s": { "max_count": 0 }
-    },
-    "tool_responses": { "any_returned_substring": "USDC" },   // optional substring scan
-    "no_errors": true,                                         // fail on any tool_call_failed
-    "max_turns": 30                                            // cap on assistant tool turns
-  }
-}
-```
-
-### Required env
-
-| Var | Purpose |
-|---|---|
-| `AOMI_E2E_APP_PATH` | Absolute path to the compiled dylib (or a manifest bundle directory) |
-| `ANTHROPIC_API_KEY` | Provider key for the real LLM call |
-
-Both are honored by the existing test conventions. When unset, the test skips cleanly.
-
-### Optional env
-
-| Var | Purpose |
-|---|---|
-| `AOMI_E2E_SPEC` | Override `test.json` discovery and run a single explicit spec file |
-
-### Authoring `test.json`
-
-Use the [`aomi-app-e2e-tester`](../.claude/skills/aomi-app-e2e-tester/SKILL.md) skill — it expands a seed `user_story` (typically written by `aomi-app-ux-tool-maker`) into a complete spec and runs it.
-
-### Limitations of the v1 spec format
-
-1. **`expected_tools` matches visible tool-result topics, not always raw tool names.** App-defined tools normally surface their tool name. Host tools (`evm_stage_tx`, `evm_simulate`, `evm_commit_txs`) may carry an LLM-set `topic` arg, and routed enforcement can fire them internally, so prefer asserting app tools unless you have verified the visible topic in a transcript.
-2. **`callback_after` consumes pending_txs.** A terminal `wallet:tx_complete` callback discards `pending_txs`, so `final_assertion.user_state.pending_txs.min_count: 1` after a callback fires will always fail. For wallet-bridge scenarios use `max_count: 0` (assert the callback consumed them) or split into two specs.
-3. **No mid-turn topic assertions.** If you want to assert a tool fired *after* a callback, drive the LLM in a subsequent turn and observe via `expected_tools` on that turn's diff.
-4. **No regex.** Topic and body matching is substring + exact only.
+The component exports `describe` and `call-tool` through `aomi_sdk::package!`; see [`sdk/README.md`](../sdk/README.md).
 
 ---
 
 ## End-to-end author workflow (skills + CLI together)
 
 ```
-1. aomi-app-client-api-gen        ─▶  apps/<p>/openapi.yaml          (when no public spec exists)
-2. aomi-build gen-specs           ─▶  apps/<p>/openapi.yaml          (when one does)
-3. aomi-build gen-client          ─▶  client.rs
-4. aomi-build gen-tool            ─▶  app crate + stub tools
-5. aomi-app-ux-tool-maker         ─▶  curated tool.rs + PREAMBLE
-6. cargo build                    ─▶  lib<p>.dylib
-7. aomi-app-e2e-tester            ─▶  apps/<p>/test.json
-8. AOMI_E2E_APP_PATH=… cargo test ─▶  pass / transcript-dumped failure
+1. aomi-package-client-api-gen        ─▶  packages/<p>/openapi.yaml      (when no public spec exists)
+2. aomi-build gen-specs           ─▶  packages/<p>/openapi.yaml      (when one does)
+3. aomi-build gen-client          ─▶  packages/<p>/src/client/
+4. aomi-build gen-tool            ─▶  package crate + stub tools
+5. curate by hand                 ─▶  curated tool.rs
+6. cargo build                    ─▶  <p>.wasm
 ```
 
 Or, in one line for a happy-path platform:
 
 ```sh
-aomi-build new-app <platform>             # 2 + 3 + 4 + cargo build
-# then run the curate + e2e-test skills
+aomi-build new-package <platform>             # 2 + 3 + 4 + cargo build
+# then curate the tools
 ```
 
 ---
@@ -537,11 +238,8 @@ aomi-build new-app <platform>             # 2 + 3 + 4 + cargo build
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| `progenitor` panics during `gen-client` | Spec violation not yet covered by a preprocessing pass | `diff <p>.yaml <p>.preprocessed.yaml` to see what the preprocessor did, then either patch the spec or add a pass to `spec_load.rs` |
+| `progenitor` panics during `gen-client` | Spec violation not yet covered by a preprocessing pass | Diff the spec against the `--preprocessed` dump to see what the preprocessor did, then either patch the spec or add a pass to `spec_load.rs` |
 | `gen-tool` produces a tool with a wildly long name | Spec's `operationId` is path-derived | Pre-rewrite the operationId in the spec, or curate the name in stage (4) |
-| `cargo build` errors on an app | Args struct mismatch with progenitor's positional API | Look at `client.rs` signature for the method; adjust the `client.method(...)` call in `tool.rs` |
-| `test.json` fails on `expected_tools.must_call` | LLM took an unexpected path (introspecting balances, retrying quotes, etc.) | Tighten the prompt; loosen `must_call` to `any_of`; add a wallet seed that won't trigger error-recovery branches |
-| `test.json` fails on `pending_txs.min_count` after a callback | Callback consumed pending_txs | Set `max_count: 0` instead, or remove `callback_after` from that scenario |
-| Runner says "no test.json discovered" | Dylib path not under `apps/<p>/` | Set `AOMI_E2E_SPEC` to the explicit JSON path |
+| `cargo build` errors on a package | Args struct mismatch with progenitor's positional API | Look at `client.rs` signature for the method; adjust the `client.method(...)` call in `tool.rs` |
 
 For deeper runtime issues (routed enforcement not firing, alias binding, namespace mismatches), see the runtime test fixtures and route handling in `product-mono/aomi/crates/core/src/internal_action.rs` and `product-mono/aomi/crates/runtime/src/pending.rs`.

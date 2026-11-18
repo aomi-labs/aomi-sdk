@@ -1,7 +1,0 @@
-{
-  "platform": "dune",
-  "source": "well-known",
-  "source_url": "https://api.dune.com/openapi.json",
-  "fetched_at": "2026-05-09T15:21:35.914972Z",
-  "upstream_version": null
-}

@@ -1,0 +1,8 @@
+[package]
+name = "hello-reader"
+description = "Current token prices from DefiLlama. No key needed."
+icon = "icon.svg"
+contract = 1
+
+[network]
+hosts = ["coins.llama.fi"]
