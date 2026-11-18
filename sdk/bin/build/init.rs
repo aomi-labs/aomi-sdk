@@ -38,11 +38,15 @@ serde_json.workspace = true
 const AOMI_TOML: &str = r#"[package]
 name = "{name}"
 description = "TODO: one line for the Library card."
-icon = "icon.png"
+icon = "icon.svg"
 contract = 1
 
 [network]
 hosts = []
+"#;
+
+/// A placeholder package outline, drawn in `currentColor` like every icon.
+const ICON_SVG: &str = r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 7v10l9 5 9-5V7z"/><path d="m3 7 9 5 9-5M12 12v10"/></svg>
 "#;
 
 const LIB_RS: &str = r#"//! TODO: describe what this package does.
@@ -91,15 +95,17 @@ pub fn run(args: InitArgs) -> Result<()> {
     fs::create_dir_all(dir.join("src"))?;
     fs::write(dir.join("Cargo.toml"), CARGO_TOML.replace("{name}", name))?;
     fs::write(dir.join("aomi.toml"), AOMI_TOML.replace("{name}", name))?;
+    fs::write(dir.join("icon.svg"), ICON_SVG)?;
     fs::write(dir.join("src/lib.rs"), LIB_RS)?;
     list_in_project(&root.join("aomi.toml"), name)?;
 
-    println!("created packages/{name}/ (Cargo.toml, aomi.toml, src/lib.rs)");
+    println!("created packages/{name}/ (Cargo.toml, aomi.toml, icon.svg, src/lib.rs)");
     println!();
     println!("next steps:");
-    println!("  1. fill in aomi.toml (description, hosts) and add icon.png");
-    println!("  2. implement your tools in src/lib.rs");
-    println!("  3. cargo build -p {name} --target wasm32-wasip2 --release");
+    println!("  1. fill in aomi.toml (description, hosts)");
+    println!("  2. replace icon.svg with your own monochrome SVG icon drawn in currentColor");
+    println!("  3. implement your tools in src/lib.rs");
+    println!("  4. cargo build -p {name} --target wasm32-wasip2 --release");
     Ok(())
 }
 
@@ -131,6 +137,16 @@ mod tests {
         assert!(LIB_RS.contains("impl Tool for Example"));
         assert!(LIB_RS.contains("aomi_sdk::package!(Example);"));
         assert!(AOMI_TOML.contains("contract = 1"));
+    }
+
+    #[test]
+    fn placeholder_icon_passes_the_bundle_check() {
+        assert!(AOMI_TOML.contains(r#"icon = "icon.svg""#));
+        assert!(ICON_SVG.starts_with("<svg") && ICON_SVG.len() <= 32 * 1024);
+        assert!(ICON_SVG.contains(r#"stroke="currentColor""#));
+        for banned in ["<script", "<foreignObject", "<image", " on", "href", "<!"] {
+            assert!(!ICON_SVG.contains(banned), "{banned}");
+        }
     }
 
     #[test]

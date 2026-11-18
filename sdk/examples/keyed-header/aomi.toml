@@ -1,7 +1,7 @@
 [package]
 name = "keyed-header"
 description = "Jupiter token prices with the builder's API key."
-icon = "icon.png"
+icon = "icon.svg"
 contract = 1
 
 [[secrets]]

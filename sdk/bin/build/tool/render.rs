@@ -44,7 +44,7 @@ pub fn aomi_toml(platform: &str, ops: &[Op]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     let mut out = format!(
-        "[package]\nname = \"{platform}\"\ndescription = \"{platform} API tools generated from its OpenAPI spec.\"\n# icon = \"icon.png\"\ncontract = 1\n\n[network]\nhosts = [{list}]\n"
+        "[package]\nname = \"{platform}\"\ndescription = \"{platform} API tools generated from its OpenAPI spec.\"\n# icon = \"icon.svg\"\ncontract = 1\n\n[network]\nhosts = [{list}]\n"
     );
     for host in hosts {
         let _ = write!(
