@@ -2,6 +2,7 @@ use clap::{Parser, Subcommand};
 use eyre::Result;
 
 mod client;
+mod icon;
 mod init;
 mod new_package;
 mod spec_load;
@@ -39,6 +40,8 @@ enum Cmd {
     /// Scaffold a package under `packages/<NAME>/` (guest `Tool`, `aomi.toml`). Greenfield counterpart
     /// to `new-package` (which is OpenAPI-driven).
     Init(init::InitArgs),
+    /// Check a package folder's `[package] icon` against the Library icon rule the host enforces.
+    CheckIcon(icon::CheckIconArgs),
 }
 
 fn main() -> Result<()> {
@@ -51,5 +54,6 @@ fn main() -> Result<()> {
         Cmd::NewPackage(args) => new_package::run(args),
         Cmd::TightenSpec(args) => tighten::run(args),
         Cmd::Init(args) => init::run(args),
+        Cmd::CheckIcon(args) => icon::run(args),
     }
 }

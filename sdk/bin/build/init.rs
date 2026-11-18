@@ -103,7 +103,9 @@ pub fn run(args: InitArgs) -> Result<()> {
     println!();
     println!("next steps:");
     println!("  1. fill in aomi.toml (description, hosts)");
-    println!("  2. replace icon.svg with your own monochrome SVG icon drawn in currentColor");
+    println!(
+        "  2. replace icon.svg with your own square SVG drawn in currentColor, or drop the icon line (aomi-build check-icon packages/{name})"
+    );
     println!("  3. implement your tools in src/lib.rs");
     println!("  4. cargo build -p {name} --target wasm32-wasip2 --release");
     Ok(())
@@ -140,13 +142,9 @@ mod tests {
     }
 
     #[test]
-    fn placeholder_icon_passes_the_bundle_check() {
+    fn placeholder_icon_passes_the_icon_rule() {
         assert!(AOMI_TOML.contains(r#"icon = "icon.svg""#));
-        assert!(ICON_SVG.starts_with("<svg") && ICON_SVG.len() <= 32 * 1024);
-        assert!(ICON_SVG.contains(r#"stroke="currentColor""#));
-        for banned in ["<script", "<foreignObject", "<image", " on", "href", "<!"] {
-            assert!(!ICON_SVG.contains(banned), "{banned}");
-        }
+        crate::icon::check_icon("icon.svg", ICON_SVG.as_bytes()).unwrap();
     }
 
     #[test]

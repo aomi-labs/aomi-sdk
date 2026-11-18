@@ -23,6 +23,7 @@ The runtime and loader are not in this repository.
 ```bash
 cargo install aomi-sdk --features cli
 aomi-build init my-package        # packages/my-package: Cargo.toml, aomi.toml, icon.svg, src/lib.rs
+aomi-build check-icon packages/my-package   # the host's icon rule, locally
 cargo build -p my-package --target wasm32-wasip2 --release
 ```
 

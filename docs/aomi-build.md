@@ -65,6 +65,7 @@ aomi-build gen-tool     <p>   # generated client → scaffold package + stub too
 aomi-build new-package  <p>   # orchestrator: all three above + cargo build
 aomi-build tighten-spec <p>   # sharpen additionalProperties:true from real samples
 aomi-build test-schema  <p>   # schemathesis validation against live API
+aomi-build check-icon [dir]   # a package's [package] icon against the host's icon rule
 cargo build --target wasm32-wasip2 --release   # build a package component
 ```
 

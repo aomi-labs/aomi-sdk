@@ -29,6 +29,7 @@ cli = [
     "dep:toml_edit",
     "dep:eyre",
     "dep:sha2",
+    "dep:roxmltree",
 ]
 # `chain::evm(id).at(view).provider()`: an alloy `RootProvider` over the
 # host's `evm-read`. Pins the alloy core crates to one coherent release.
@@ -92,6 +93,7 @@ toml_edit = { version = "0.22", optional = true }
 base64 = { workspace = true, optional = true }
 eyre = { workspace = true, optional = true }
 sha2 = { workspace = true, optional = true }
+roxmltree = { version = "0.21", optional = true }
 
 [[bin]]
 name = "aomi-build"
