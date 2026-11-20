@@ -9,7 +9,7 @@
 //! use aomi_sdk::DynFnHandle;
 //! use std::path::Path;
 //!
-//! // Load the plugin (validates SDK version and resolves symbols)
+//! // Load the plugin (validates FFI compatibility and resolves symbols)
 //! let handle = unsafe { DynFnHandle::load(Path::new("./libmy_plugin.so"))? };
 //!
 //! // Read the manifest to discover tools
@@ -29,11 +29,12 @@ use eyre::{Context, Result, bail};
 use serde_json::Value;
 
 use crate::{
-    AOMI_CREATE, AOMI_DESTROY, AOMI_DYN_EXEC_CANCEL, AOMI_DYN_EXEC_POLL, AOMI_FREE_STRING,
-    AOMI_MANIFEST, AOMI_SDK_VERSION, AsyncExecPool, DynCreateFn, DynDestroyFn, DynExecCancel,
-    DynFreeStringFn, DynInstancePtr, DynManifest, DynManifestFn, DynSdkVersionFn, DynToolCancelFn,
-    DynToolPollFn, DynToolResult, DynToolStart, DynToolStartFn, SYM_AOMI_ASYNC_TOOL_START,
-    SYM_AOMI_SDK_VERSION,
+    AOMI_CREATE, AOMI_DESTROY, AOMI_DYN_EXEC_CANCEL, AOMI_DYN_EXEC_POLL, AOMI_FFI_VERSION,
+    AOMI_FREE_STRING, AOMI_MANIFEST, AsyncExecPool, DynCreateFn, DynDestroyFn, DynExecCancel,
+    DynFfiVersionFn, DynFreeStringFn, DynInstancePtr, DynManifest, DynManifestFn, DynSdkVersionFn,
+    DynToolCancelFn, DynToolPollFn, DynToolResult, DynToolStart, DynToolStartFn,
+    SYM_AOMI_ASYNC_TOOL_START, SYM_AOMI_FFI_VERSION, SYM_AOMI_SDK_VERSION, validate_ffi_interfaces,
+    validate_ffi_version,
 };
 
 /// Handle to a loaded dynamic plugin library.
@@ -44,11 +45,13 @@ use crate::{
 ///
 /// # Safety
 ///
-/// The loaded library must be a valid aomi-sdk plugin compiled against the
-/// same SDK version. The handle is `Send + Sync` because plugin
+/// The loaded library must be a valid aomi-sdk plugin compiled against
+/// a supported FFI version. The handle is `Send + Sync` because plugin
 /// instances are designed to be thread-safe (the generated code uses
 /// `Mutex` for shared state).
 pub struct DynFnHandle {
+    sdk_version: String,
+    explicit_ffi_version: bool,
     instance: DynInstancePtr,
     fn_manifest: DynManifestFn,
     fn_tool_start: DynToolStartFn,
@@ -73,6 +76,20 @@ impl DynFnHandle {
                 .with_context(|| format!("failed to dlopen {}", path.display()))?
         };
 
+        let declared_ffi = unsafe { library.get::<DynFfiVersionFn>(SYM_AOMI_FFI_VERSION) }
+            .ok()
+            .map(|version| unsafe { version() });
+        // An unsupported export is rejected before any other plugin code runs,
+        // so the diagnostic SDK string is not available for this message.
+        if let Some(version) = declared_ffi
+            && version != AOMI_FFI_VERSION
+        {
+            bail!(
+                "incompatible plugin {}: FFI version mismatch: plugin={version}, host={AOMI_FFI_VERSION}; rebuild for a supported FFI version",
+                path.display()
+            );
+        }
+
         let fn_sdk_version: DynSdkVersionFn = unsafe {
             *library
                 .get::<DynSdkVersionFn>(SYM_AOMI_SDK_VERSION)
@@ -80,17 +97,13 @@ impl DynFnHandle {
         };
         let plugin_sdk_version =
             Self::read_static_c_string(unsafe { fn_sdk_version() }, "aomi_sdk_version")?;
-        if plugin_sdk_version != AOMI_SDK_VERSION {
-            bail!(
-                "SDK version mismatch: plugin={plugin_sdk_version}, host={AOMI_SDK_VERSION} ({})",
-                path.display()
-            );
-        }
+        validate_ffi_version(declared_ffi, &plugin_sdk_version)
+            .with_context(|| format!("incompatible plugin {}", path.display()))?;
 
         let fn_create: DynCreateFn = unsafe {
             *library
                 .get::<DynCreateFn>(AOMI_CREATE)
-                .context("symbol aomi_dyn_create not found")?
+                .context("symbol aomi_create not found")?
         };
         let fn_manifest: DynManifestFn = unsafe {
             *library
@@ -128,7 +141,9 @@ impl DynFnHandle {
             bail!("aomi_create returned null ({})", path.display());
         }
 
-        Ok(Self {
+        let handle = Self {
+            sdk_version: plugin_sdk_version,
+            explicit_ffi_version: declared_ffi.is_some(),
             instance,
             fn_manifest,
             fn_tool_start,
@@ -137,7 +152,11 @@ impl DynFnHandle {
             fn_destroy,
             fn_free_string,
             _library: library,
-        })
+        };
+        // Validate the wire declaration and required interfaces before a
+        // caller can start tools. Failure drops the instance before dlclose.
+        handle.call_manifest()?;
+        Ok(handle)
     }
 
     fn read_c_string(&self, raw: *mut c_char, label: &str) -> Result<String> {
@@ -165,7 +184,17 @@ impl DynFnHandle {
     pub fn call_manifest(&self) -> Result<DynManifest> {
         let raw = unsafe { (self.fn_manifest)(self.instance) };
         let json_str = self.read_c_string(raw, "aomi_manifest")?;
-        serde_json::from_str(&json_str).context("failed to parse manifest JSON")
+        let manifest: DynManifest =
+            serde_json::from_str(&json_str).context("failed to parse manifest JSON")?;
+        if manifest.sdk_version != self.sdk_version {
+            bail!("manifest SDK version disagrees with aomi_sdk_version export");
+        }
+        if self.explicit_ffi_version && manifest.ffi_version.is_none() {
+            bail!("versioned plugin manifest is missing ffi_version");
+        }
+        validate_ffi_version(manifest.ffi_version, &manifest.sdk_version)?;
+        validate_ffi_interfaces(&manifest.required_interfaces)?;
+        Ok(manifest)
     }
 
     /// Start a tool execution.

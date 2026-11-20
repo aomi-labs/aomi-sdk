@@ -34,10 +34,84 @@ pub fn check_project_sdk(path: &Path, required: &str) -> Result<SdkCheckReport> 
         manifest_path,
         lockfile_path,
         required_version: required.to_string(),
+        ffi_version: None,
+        required_ffi_version: None,
         dependency,
         lockfile,
         ok,
     })
+}
+
+/// Inspect the resolved dependency's own package metadata. Reading an arbitrary
+/// SDK semver range cannot establish FFI compatibility; Cargo resolves the exact
+/// package and the built plugin is checked again by CI and the runtime loader.
+pub(super) fn check_project_ffi(path: &Path, required: u32) -> Result<SdkCheckReport> {
+    if required != aomi_sdk::AOMI_FFI_VERSION {
+        bail!(
+            "the backend requires ffi_version {required}, but this aomi-build only understands \
+             ffi_version {}; update aomi-build",
+            aomi_sdk::AOMI_FFI_VERSION
+        );
+    }
+    let manifest = manifest_path(path)?;
+    // A missing lockfile is allowed (the fix path generates one); only an
+    // existing lockfile is held to `--locked`, so a stale pin is reported
+    // below instead of surfacing as a cargo error.
+    let locked = find_lockfile(&manifest).is_some();
+    let mut command = Command::new("cargo");
+    command
+        .args(["metadata", "--format-version", "1", "--manifest-path"])
+        .arg(&manifest);
+    if locked {
+        command.arg("--locked");
+    }
+    let output = command
+        .output()
+        .context("failed to resolve the app's SDK dependency")?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        if locked {
+            // The declared pin is what `cargo update --precise` must restore.
+            // `requirement_status` against an empty requirement yields `Stale`
+            // carrying the declared version for both `=x` and `x` forms.
+            let doc = fs::read_to_string(&manifest)?.parse::<DocumentMut>()?;
+            if let DependencyStatus::Stale { version } = dependency_status(&doc, "") {
+                let mut report = check_project_sdk(&manifest, &version)?;
+                report.required_ffi_version = Some(required);
+                if !report.ok {
+                    return Ok(report);
+                }
+            }
+        }
+        bail!("cargo metadata failed: {stderr}");
+    }
+    let metadata: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let packages = metadata["packages"]
+        .as_array()
+        .context("Cargo packages missing")?;
+    let mut sdks = packages
+        .iter()
+        .filter(|package| package["name"] == "aomi-sdk");
+    let sdk = sdks
+        .next()
+        .context("Cargo graph has no aomi-sdk dependency")?;
+    if sdks.next().is_some() {
+        bail!("Cargo graph contains multiple aomi-sdk versions; select one FFI contract");
+    }
+    let version = sdk["version"]
+        .as_str()
+        .context("SDK package version missing")?;
+    let declared = sdk["metadata"]["aomi"]["ffi_version"]
+        .as_u64()
+        .map(u32::try_from)
+        .transpose()
+        .context("SDK ffi_version exceeds u32")?;
+    let ffi =
+        aomi_sdk::validate_ffi_version(declared, version).map_err(|error| anyhow!("{error:#}"))?;
+    let mut report = check_project_sdk(&manifest, version)?;
+    report.ffi_version = Some(ffi);
+    report.required_ffi_version = Some(required);
+    Ok(report)
 }
 
 pub(super) fn manifest_path(path: &Path) -> Result<PathBuf> {
@@ -52,6 +126,39 @@ pub(super) fn manifest_path(path: &Path) -> Result<PathBuf> {
         path.join("Cargo.toml")
     };
     if candidate.exists() {
+        let text = fs::read_to_string(&candidate)?;
+        let doc: toml::Value = text.parse()?;
+        if doc
+            .get("dependencies")
+            .and_then(|deps| deps.get("aomi-sdk"))
+            .and_then(|sdk| sdk.get("workspace"))
+            .and_then(toml::Value::as_bool)
+            == Some(true)
+        {
+            for parent in candidate
+                .parent()
+                .into_iter()
+                .flat_map(Path::ancestors)
+                .skip(1)
+            {
+                let workspace = parent.join("Cargo.toml");
+                let Ok(text) = fs::read_to_string(&workspace) else {
+                    continue;
+                };
+                let Ok(doc) = text.parse::<toml::Value>() else {
+                    continue;
+                };
+                if doc
+                    .get("workspace")
+                    .and_then(|workspace| workspace.get("dependencies"))
+                    .and_then(|deps| deps.get("aomi-sdk"))
+                    .is_some()
+                {
+                    return Ok(workspace.canonicalize().unwrap_or(workspace));
+                }
+            }
+            bail!("workspace-inherited aomi-sdk has no workspace dependency declaration");
+        }
         Ok(candidate.canonicalize().unwrap_or(candidate))
     } else {
         bail!("no Cargo.toml found at {}", candidate.display())

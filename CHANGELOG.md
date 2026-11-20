@@ -1,5 +1,12 @@
 # Changelog
 
+## 5.1.2
+
+### Fixed
+
+- The published crate now includes the MIT `LICENSE` text, not only the
+  `license = "MIT"` tag.
+
 ## 5.1.1
 
 ### Added
