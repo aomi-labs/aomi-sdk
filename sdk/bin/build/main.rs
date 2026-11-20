@@ -84,11 +84,12 @@ async fn main() -> Result<()> {
         return deploy::wizard::run().await.map_err(git_error);
     };
     match cmd {
-        Cmd::GenSpecs(args) => specs::run(args),
+        // OpenAPI discovery uses reqwest's blocking client, including at shutdown.
+        Cmd::GenSpecs(args) => tokio::task::spawn_blocking(move || specs::run(args)).await?,
         Cmd::GenClient(args) => client::run(args),
         Cmd::GenTool(args) => tool::run(args),
         Cmd::TestSchema(args) => test_schema::run(args),
-        Cmd::NewApp(args) => new_app::run(args),
+        Cmd::NewApp(args) => tokio::task::spawn_blocking(move || new_app::run(args)).await?,
         Cmd::TightenSpec(args) => tighten::run(args),
         Cmd::Init(args) => init::run(args),
         Cmd::Compile(args) => compile::run(args),
