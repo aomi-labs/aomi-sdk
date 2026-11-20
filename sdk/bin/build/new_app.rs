@@ -83,20 +83,30 @@ pub fn run(args: NewAppArgs) -> Result<()> {
     .with_context(|| "gen-tool failed")?;
 
     if !args.no_build {
-        println!();
-        println!("=== [verify] cargo build -p {platform} ===");
-        let root = workspace_root()?;
-        let status = Command::new("cargo")
-            .args(["build", "-p", &platform])
-            .current_dir(&root)
-            .status()
-            .with_context(|| "failed to spawn cargo")?;
-        if !status.success() {
-            eyre::bail!("cargo build -p {platform} failed");
-        }
+        build_generated_app(&platform)?;
     }
 
-    println!();
     println!("✓ new-app {platform} complete");
+    Ok(())
+}
+
+pub(crate) fn build_generated_app(platform: &str) -> Result<()> {
+    let root = workspace_root()?;
+    // Generated apps are excluded from the SDK workspace and build independently.
+    let manifest = root.join("apps").join(platform).join("Cargo.toml");
+    println!();
+    println!(
+        "=== [verify] cargo build --manifest-path {} ===",
+        manifest.display()
+    );
+    let status = Command::new("cargo")
+        .args(["build", "--manifest-path"])
+        .arg(&manifest)
+        .current_dir(root)
+        .status()
+        .with_context(|| "failed to spawn cargo")?;
+    if !status.success() {
+        eyre::bail!("cargo build failed for {}", manifest.display());
+    }
     Ok(())
 }

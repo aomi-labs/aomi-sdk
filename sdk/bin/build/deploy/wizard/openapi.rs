@@ -3,14 +3,11 @@
 //! Pure local codegen — it never touches Build, which is why it needs no
 //! session and sits apart from the deploy branch.
 
-use std::process::Command;
-
 use anyhow::{Context, Result, anyhow, bail};
 use inquire::{Confirm, Select, Text};
 
 use super::print_step_error;
-use crate::new_app::NewAppArgs;
-use crate::specs::workspace_root;
+use crate::new_app::{NewAppArgs, build_generated_app};
 
 /// Create an app inside the current Aomi workspace using the OpenAPI-driven
 /// codegen pipeline, then optionally hand off the generated stubs to Codex or
@@ -136,17 +133,7 @@ fn run_existing_spec_app_flow(
     .with_context(|| "gen-tool failed")?;
 
     if build {
-        println!();
-        println!("=== [verify] cargo build -p {platform} ===");
-        let root = workspace_root().map_err(|e| anyhow!("{e:#}"))?;
-        let status = Command::new("cargo")
-            .args(["build", "-p", platform])
-            .current_dir(&root)
-            .status()
-            .with_context(|| "failed to spawn cargo")?;
-        if !status.success() {
-            bail!("cargo build -p {platform} failed");
-        }
+        build_generated_app(platform).map_err(|e| anyhow!("{e:#}"))?;
     }
 
     println!();
