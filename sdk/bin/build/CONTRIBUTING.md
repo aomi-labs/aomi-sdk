@@ -273,7 +273,7 @@ one-shot when you want a working agent in your account with zero local setup.
 
 | Where | What |
 |---|---|
-| `https://staging-api.aomi.dev` / `https://api.aomi.dev` | staging / production backend |
+| `https://api-staging.aomi.dev` / `https://api.aomi.dev` | staging / production backend |
 | `POST /api/platforms/:platform/deploy` | source fetch, staging, manifest generation |
 | `POST /api/platforms/:platform/apps/activate` | artifact resolution + activation |
 | platform app endpoint | app verification (`is_active` / `artifact_ready` / `loaded`) |

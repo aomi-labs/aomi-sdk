@@ -157,7 +157,7 @@ Resolution order:
 
 | Input | Resolution |
 |---|---|
-| backend | `--backend` → `AOMI_BACKEND_URL` → saved config |
+| backend | `--backend` → `AOMI_BACKEND_URL` → saved config. Use the API host (`https://api-staging.aomi.dev`, `https://api.aomi.dev`). A chat host such as `chat-staging.aomi.dev` is a frontend. |
 | token | `--activation-token` → `AOMI_APP_ACTIVATION_TOKEN` → saved config |
 | project | repository origin → existing backend Project |
 | commit | `--commit` → local `HEAD`; branches are rejected |
@@ -172,7 +172,9 @@ aomi-build deploy preflight --repo owner/repo
 ```
 
 It resolves the repository's existing Project and sends `preflight: true` to
-`POST /api/projects/:project_id/deploy`. If a
+`POST /api/projects/:project_id/deploy`. It also checks that the commit is the
+pushed tip of the checked-out branch, because the deployment attempt builds a
+branch tip. Deploy from a branch checkout such as `main`. If a
 required input is missing, the CLI stops with the next command to run instead of
 falling into documentation.
 

@@ -516,7 +516,9 @@ impl DeployStepArgs {
     async fn run_step(self, preflight: bool) -> Result<()> {
         // Preflight's stdout is the JSON plan; keep the human card off it.
         let mut prepared = self.prepare(!self.json && !preflight).await?;
-        let branch = (!preflight && Prepared::uses_attempt(&self))
+        // Preflight checks the branch too, so a plan that passes here cannot
+        // fail the run on a detached or unpushed HEAD.
+        let branch = Prepared::uses_attempt(&self)
             .then(|| prepared.attempt_branch())
             .transpose()?;
         // A first deploy has no project id yet; preflight resolves it.
